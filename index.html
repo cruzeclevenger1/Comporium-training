@@ -112,6 +112,23 @@
   .error-msg{ color:var(--red); font-size:12.5px; font-family:var(--mono); margin:-6px 0 12px; }
   .info-msg{ color:var(--cyan); font-size:12.5px; font-family:var(--mono); margin:-6px 0 12px; }
   @media (max-width:640px){ .hero h1{ font-size:21px; } .card{ padding:18px; } }
+  html.theme-light{
+    --bg:#F3F5FA; --panel:#FFFFFF; --stroke:#DCE3F0; --text:#1B2233; --text-dim:#5B6478; --text-faint:#8891A3;
+  }
+  html.theme-light body{ background:#F3F5FA; }
+  html.theme-light .card .body p, html.theme-light .card .body ul, html.theme-light .opt span.txt{ color:#333d52; }
+  html.theme-light .explain{ background:#eef1f8; }
+  html.theme-light .opt{ background:#eef1f8; }
+  html.theme-light .sub-card{ background:#eef1f8; }
+  html.theme-light .export-textarea{ background:#eef1f8; color:#1b6b52; }
+
+  .gear-btn{ width:34px; height:34px; border-radius:8px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); cursor:pointer; font-size:15px; display:flex; align-items:center; justify-content:center; }
+  html.theme-light .gear-btn{ background:#eef1f8; }
+  .gear-btn:hover{ border-color:#3a4a70; color:var(--text); }
+  .theme-switch{ display:flex; gap:8px; }
+  .theme-switch button{ flex:1; padding:12px; border-radius:9px; border:1px solid var(--stroke); background:#0e1626; color:var(--text-dim); cursor:pointer; font-family:var(--mono); font-size:12.5px; }
+  html.theme-light .theme-switch button{ background:#eef1f8; }
+  .theme-switch button.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
 </style>
 </head>
 <body>
@@ -272,11 +289,12 @@ function renderShell(inner){
   root.innerHTML = `
     <header class="top">
       <div class="brand">
+        <button class="gear-btn" id="open-settings" title="Settings">⚙</button>
         <div class="brand-mark"><i></i><i></i><i></i></div>
         <div class="brand-text"><div class="name">COMPORIUM TRAINING MODULES</div><div class="tag">TIER 1 FIELD &amp; SIGNAL TRAINING</div></div>
       </div>
       <div class="top-right">
-        <nav class="crumbs">${ view==="dashboard" ? "" : `<button id="crumb-home">DASHBOARD</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':''))}`}</nav>
+        <nav class="crumbs">${ view==="dashboard" ? "" : `<button id="crumb-home">DASHBOARD</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':view==='settings'?'SETTINGS':''))}`}</nav>
         <span class="pill-btn" style="cursor:default;">${escapeHtml(profile ? profile.name : "")}</span>
         ${isAdmin() ? `<span class="admin-badge">ADMIN</span><button class="pill-btn" id="go-team">Team progress</button>` : ""}
         <button class="pill-btn" id="logout-btn">Log out</button>
@@ -286,6 +304,7 @@ function renderShell(inner){
     <footer class="foot">SIGNAL HELD · PROGRESS SAVED AUTOMATICALLY</footer>
   `;
   const crumb = document.getElementById("crumb-home"); if(crumb) crumb.addEventListener("click", ()=>{ view="dashboard"; render(); });
+  document.getElementById("open-settings").addEventListener("click", ()=>{ view="settings"; render(); });
   document.getElementById("logout-btn").addEventListener("click", logout);
   const goTeam = document.getElementById("go-team"); if(goTeam) goTeam.addEventListener("click", openTeamProgress);
 }
@@ -293,6 +312,12 @@ function renderShell(inner){
 /* ============================================================
    DASHBOARD
    ============================================================ */
+function resumeLessonIdx(m){
+  const s = progressMap[m.id];
+  const viewed = s && s.lessonsViewed ? s.lessonsViewed : [];
+  const idx = m.lessons.findIndex(l=> !viewed.includes(l.id));
+  return idx === -1 ? Math.max(m.lessons.length-1, 0) : idx;
+}
 function moduleStatus(id){ const s=progressMap[id]; if(!s) return "new"; if(s.best===s.total) return "mastered"; return "attempted"; }
 
 function renderDashboard(){
@@ -328,7 +353,8 @@ function renderDashboard(){
 
   root.querySelectorAll(".mod-card").forEach(el=> el.addEventListener("click",(e)=>{
     if(e.target.closest("[data-edit]")||e.target.closest("[data-del]")) return;
-    currentModId = el.getAttribute("data-mod"); currentLessonIdx=0; view="lesson"; render();
+    const id = el.getAttribute("data-mod"); const m = modById(id);
+    currentModId = id; currentLessonIdx = resumeLessonIdx(m); view="lesson"; render();
   }));
   root.querySelectorAll("[data-edit]").forEach(el=> el.addEventListener("click",(e)=>{ e.stopPropagation(); openEditor(el.getAttribute("data-edit")); }));
   root.querySelectorAll("[data-del]").forEach(el=> el.addEventListener("click", async (e)=>{
@@ -396,6 +422,13 @@ async function finishQuiz(){
   await supabase.from("progress").upsert({
     user_id: session.user.id, module_id: m.id, best_score: record.best, total: record.total, last_score: record.lastScore, attempts: record.attempts, lessons_viewed: record.lessonsViewed, updated_at: new Date().toISOString()
   }, { onConflict: "user_id,module_id" });
+
+  const answerDetail = m.quiz.map((q,i)=>({
+    question: q.q, options: q.opts, selected: quizAnswers[i], correct: q.correct, is_correct: quizAnswers[i]===q.correct
+  }));
+  await supabase.from("quiz_attempts").insert({
+    user_id: session.user.id, module_id: m.id, score: correctCount, total: m.quiz.length, answers: answerDetail
+  });
   view = "results"; render();
 }
 
@@ -422,7 +455,14 @@ async function openTeamProgress(){
   teamRows = (people||[]).map(p=>{
     const rows = (allProgress||[]).filter(pr=>pr.user_id===p.id);
     const perModule = {};
-    MODULES.forEach(m=>{ const r = rows.find(rr=>rr.module_id===m.id); perModule[m.id] = r ? Math.round((r.best_score/r.total)*100) : 0; });
+    MODULES.forEach(m=>{
+      const r = rows.find(rr=>rr.module_id===m.id);
+      const totalLessons = m.lessons.length || 1;
+      const viewedCount = r && r.lessons_viewed ? r.lessons_viewed.length : 0;
+      const lessonFraction = Math.min(viewedCount/totalLessons, 1);
+      const quizFraction = r && m.quiz.length ? (r.best_score||0)/m.quiz.length : 0;
+      perModule[m.id] = Math.round((lessonFraction*0.5 + quizFraction*0.5) * 100);
+    });
     return { id:p.id, name:p.name, role:p.role, perModule };
   });
   view = "team"; render();
@@ -431,23 +471,70 @@ async function openTeamProgress(){
 function renderTeam(){
   const headerCols = MODULES.map(m=>`<th>${escapeHtml(m.title)}</th>`).join("");
   const rows = teamRows.map(r=>{
-    const cells = MODULES.map(m=>`<td>${r.perModule[m.id]}%</td>`).join("");
-    const roleTag = r.role==='admin' ? `<span class="role-tag admin">ADMIN</span>` : `<span class="role-tag">AGENT</span>`;
-    const toggleBtn = r.id!==profile.id ? `<button class="mini-btn" data-toggle-role="${r.id}" data-current-role="${r.role}">${r.role==='admin'?'Remove admin':'Make admin'}</button>` : "";
-    return `<tr><td>${escapeHtml(r.name)}</td><td>${roleTag}</td>${cells}<td>${toggleBtn}</td></tr>`;
+    const cells = MODULES.map(m=>`<td><button class="mini-btn" data-view-attempt="${r.id}:${m.id}">${r.perModule[m.id]}%</button></td>`).join("");
+    const isSelf = r.id===profile.id;
+    const roleSelect = isSelf
+      ? `<span class="role-tag ${r.role==='admin'?'admin':''}">${r.role.toUpperCase()} (YOU)</span>`
+      : `<select class="mini-btn" data-role-select="${r.id}"><option value="agent" ${r.role==='agent'?'selected':''}>User</option><option value="admin" ${r.role==='admin'?'selected':''}>Admin</option></select>`;
+    const resetBtn = !isSelf ? `<button class="mini-btn" data-reset-pw="${r.id}" data-reset-name="${escapeHtml(r.name)}">Reset password</button>` : "";
+    return `<tr><td>${escapeHtml(r.name)}</td><td>${roleSelect}</td>${cells}<td>${resetBtn}</td></tr>`;
   }).join("");
   renderShell(`
     <div class="card">
       <div class="k-label">ADMIN VIEW</div><h2>Team progress</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">Best-score completion per person, per module.</p>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">Combined lesson + quiz completion per person. Click a percentage to see missed questions on their latest attempt.</p>
       <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th>${headerCols}<th></th></tr></thead><tbody>${rows}</tbody></table></div>
-    </div>`);
-  root.querySelectorAll("[data-toggle-role]").forEach(el=> el.addEventListener("click", async ()=>{
-    const id = el.getAttribute("data-toggle-role"); const current = el.getAttribute("data-current-role");
-    const newRole = current==='admin' ? 'agent' : 'admin';
-    await supabase.from("profiles").update({ role:newRole }).eq("id", id);
+    </div>
+    <div id="attempt-detail" style="margin-top:16px;"></div>
+  `);
+  root.querySelectorAll("[data-role-select]").forEach(el=> el.addEventListener("change", async ()=>{
+    const id = el.getAttribute("data-role-select");
+    await supabase.from("profiles").update({ role: el.value }).eq("id", id);
     await openTeamProgress();
   }));
+  root.querySelectorAll("[data-reset-pw]").forEach(el=> el.addEventListener("click", async ()=>{
+    const id = el.getAttribute("data-reset-pw"); const name = el.getAttribute("data-reset-name");
+    const newPw = prompt(`New password for ${name} (at least 6 characters):`);
+    if(!newPw) return;
+    if(newPw.length < 6){ alert("Password must be at least 6 characters."); return; }
+    el.textContent = "Saving…"; el.disabled = true;
+    const { data, error } = await supabase.functions.invoke("admin-reset-password", { body: { userId: id, newPassword: newPw } });
+    if(error || (data && data.error)){ alert("Couldn't reset password: " + (data && data.error ? data.error : error.message)); }
+    else { alert(`Password updated for ${name}.`); }
+    el.textContent = "Reset password"; el.disabled = false;
+  }));
+  root.querySelectorAll("[data-view-attempt]").forEach(el=> el.addEventListener("click", async ()=>{
+    const [userId, moduleId] = el.getAttribute("data-view-attempt").split(":");
+    await showAttemptDetail(userId, moduleId);
+  }));
+}
+
+async function showAttemptDetail(userId, moduleId){
+  const holder = document.getElementById("attempt-detail");
+  holder.innerHTML = `<div class="card"><p style="color:var(--text-faint);font-family:var(--mono);font-size:12px;">Loading latest attempt…</p></div>`;
+  const { data: attempts } = await supabase.from("quiz_attempts").select("*").eq("user_id", userId).eq("module_id", moduleId).order("created_at", { ascending:false }).limit(1);
+  const person = teamRows.find(r=>r.id===userId);
+  const m = modById(moduleId);
+  if(!attempts || !attempts.length){
+    holder.innerHTML = `<div class="card"><p style="color:var(--text-dim);font-size:13.5px;">${escapeHtml(person?person.name:'This person')} hasn't taken the ${escapeHtml(m?m.title:'')} quiz yet.</p></div>`;
+    return;
+  }
+  const a = attempts[0];
+  const missed = (a.answers||[]).filter(x=>!x.is_correct);
+  const missedHtml = missed.length ? missed.map(x=>`
+    <div class="sub-card">
+      <div style="font-size:14px;margin-bottom:8px;">${escapeHtml(x.question)}</div>
+      <div style="font-size:13px;color:var(--red);margin-bottom:4px;">Their answer: ${escapeHtml(x.options[x.selected] ?? '(no answer)')}</div>
+      <div style="font-size:13px;color:var(--green);">Correct answer: ${escapeHtml(x.options[x.correct])}</div>
+    </div>
+  `).join("") : `<p style="color:var(--green);font-size:13.5px;">No missed questions on their latest attempt — clean sweep.</p>`;
+  holder.innerHTML = `
+    <div class="card">
+      <div class="k-label">LATEST ATTEMPT · ${escapeHtml(person?person.name:'')} · ${escapeHtml(m?m.title:'')}</div>
+      <h2 style="margin-bottom:16px;">${a.score}/${a.total} correct</h2>
+      ${missedHtml}
+    </div>
+  `;
 }
 
 /* ============================================================
@@ -558,6 +645,76 @@ function wireEditorEvents(){
 }
 
 /* ============================================================
+   SETTINGS (name, own password, theme)
+   ============================================================ */
+function currentTheme(){ return localStorage.getItem("lineup-theme") || "dark"; }
+function applyTheme(t){
+  if(t==="light") document.documentElement.classList.add("theme-light");
+  else document.documentElement.classList.remove("theme-light");
+  localStorage.setItem("lineup-theme", t);
+}
+
+function renderSettings(){
+  const t = currentTheme();
+  renderShell(`
+    <div class="card">
+      <div class="k-label">ACCOUNT SETTINGS</div>
+      <h2 style="margin-bottom:20px;">Settings</h2>
+
+      <div class="field"><label>Display name</label><input type="text" id="set-name" value="${escapeHtml(profile.name)}"></div>
+      <button class="btn primary" id="save-name" style="margin-bottom:10px;">Save name</button>
+      <div id="name-status" class="info-msg" style="margin:6px 0 0;min-height:16px;"></div>
+
+      <div class="editor-section">
+        <div class="editor-section-head"><h3>Change your password</h3></div>
+        <div class="field"><label>New password</label><input type="password" id="set-pw1" placeholder="At least 6 characters"></div>
+        <div class="field"><label>Confirm new password</label><input type="password" id="set-pw2"></div>
+        <button class="btn primary" id="save-pw">Update password</button>
+        <div id="pw-status" class="info-msg" style="margin:6px 0 0;min-height:16px;"></div>
+      </div>
+
+      <div class="editor-section">
+        <div class="editor-section-head"><h3>Appearance</h3></div>
+        <div class="theme-switch">
+          <button id="theme-dark" class="${t==='dark'?'active':''}">🌙 Dark</button>
+          <button id="theme-light" class="${t==='light'?'active':''}">☀️ Light</button>
+        </div>
+      </div>
+
+      <div class="nav-buttons"><button class="btn" id="back-dash-settings">← Back to dashboard</button><div></div></div>
+    </div>
+  `);
+
+  document.getElementById("back-dash-settings").addEventListener("click", ()=>{ view="dashboard"; render(); });
+
+  document.getElementById("save-name").addEventListener("click", async ()=>{
+    const newName = document.getElementById("set-name").value.trim();
+    const status = document.getElementById("name-status");
+    if(!newName){ status.textContent = "Name can't be empty."; status.style.color = "var(--red)"; return; }
+    const { error } = await supabase.from("profiles").update({ name:newName }).eq("id", session.user.id);
+    if(error){ status.textContent = "Couldn't save: " + error.message; status.style.color = "var(--red)"; return; }
+    profile.name = newName;
+    status.textContent = "Saved."; status.style.color = "var(--green)";
+    const pill = document.querySelector(".pill-btn"); if(pill) pill.textContent = newName;
+  });
+
+  document.getElementById("save-pw").addEventListener("click", async ()=>{
+    const pw1 = document.getElementById("set-pw1").value;
+    const pw2 = document.getElementById("set-pw2").value;
+    const status = document.getElementById("pw-status");
+    if(pw1.length < 6){ status.textContent = "Password must be at least 6 characters."; status.style.color = "var(--red)"; return; }
+    if(pw1 !== pw2){ status.textContent = "Passwords don't match."; status.style.color = "var(--red)"; return; }
+    const { error } = await supabase.auth.updateUser({ password: pw1 });
+    if(error){ status.textContent = "Couldn't update: " + error.message; status.style.color = "var(--red)"; return; }
+    status.textContent = "Password updated."; status.style.color = "var(--green)";
+    document.getElementById("set-pw1").value = ""; document.getElementById("set-pw2").value = "";
+  });
+
+  document.getElementById("theme-dark").addEventListener("click", ()=>{ applyTheme("dark"); renderSettings(); });
+  document.getElementById("theme-light").addEventListener("click", ()=>{ applyTheme("light"); renderSettings(); });
+}
+
+/* ============================================================
    ROUTER
    ============================================================ */
 function render(){
@@ -569,12 +726,14 @@ function render(){
   else if(view==="results") renderResults();
   else if(view==="editor") renderEditor();
   else if(view==="team") renderTeam();
+  else if(view==="settings") renderSettings();
 }
 
 /* ============================================================
    INIT
    ============================================================ */
 (async function init(){
+  applyTheme(currentTheme());
   view="loading"; render();
   const { data } = await supabase.auth.getSession();
   if(data.session){ session = data.session; await afterLogin(); }
