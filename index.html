@@ -144,6 +144,38 @@
   .top-nav-btn.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
   .two-col-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
   @media (max-width:640px){ .two-col-grid{ grid-template-columns:1fr; } }
+  .ref-layout{ display:flex; gap:22px; align-items:flex-start; }
+  .ref-sidebar{ width:230px; flex:none; }
+  .ref-content{ flex:1; min-width:0; }
+  .ref-sidebar-list{ display:flex; flex-direction:column; gap:2px; }
+  .ref-row{ display:flex; align-items:center; justify-content:space-between; gap:6px; padding:9px 10px; border-radius:8px; cursor:pointer; font-size:13px; color:var(--text-dim); }
+  .ref-row:hover{ background:#141d30; } html.theme-light .ref-row:hover{ background:#eef1f8; }
+  .ref-row.active{ background:var(--cyan-dim); color:var(--cyan); }
+  .ref-row.child{ margin-left:16px; font-size:12.5px; }
+  .ref-row-title{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ref-row-tools{ display:none; gap:3px; flex:none; }
+  .ref-row:hover .ref-row-tools{ display:flex; }
+  .ref-row-tools .mini-btn{ padding:2px 6px; font-size:9px; }
+  @media (max-width:768px){ .ref-layout{ flex-direction:column; } .ref-sidebar{ width:100%; } }
+
+  .bell-wrap{ position:relative; }
+  .notif-dot{ position:absolute; top:4px; right:4px; width:8px; height:8px; border-radius:50%; background:var(--red); box-shadow:0 0 6px var(--red); }
+  .notif-panel{ position:absolute; top:100%; right:0; margin-top:8px; width:320px; max-height:420px; overflow-y:auto; background:var(--panel); border:1px solid var(--stroke); border-radius:12px; padding:14px; z-index:60; box-shadow:0 12px 30px #00000055; }
+  .notif-panel-head{ font-family:var(--mono); font-size:12px; letter-spacing:.05em; text-transform:uppercase; color:var(--text-faint); margin-bottom:10px; }
+  .notif-section-title{ font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--text-faint); margin:14px 0 6px; }
+  .notif-item{ background:#0e1626; border:1px solid var(--stroke); border-radius:8px; padding:9px 10px; margin-bottom:6px; font-size:12.5px; }
+  html.theme-light .notif-item{ background:#eef1f8; }
+  .notif-item.unread{ border-color:var(--cyan-dim); }
+  .notif-item-body{ color:var(--text); margin-bottom:4px; }
+  .notif-item-meta{ color:var(--text-faint); font-size:10.5px; font-family:var(--mono); margin-bottom:4px; }
+  .notif-empty{ color:var(--text-faint); font-size:12px; }
+
+  .admin-menu{ position:relative; }
+  .admin-menu-panel{ display:none; flex-direction:column; gap:2px; position:absolute; top:100%; right:0; margin-top:6px; background:var(--panel); border:1px solid var(--stroke); border-radius:10px; padding:6px; min-width:210px; z-index:60; box-shadow:0 12px 30px #00000055; }
+  .admin-menu:hover .admin-menu-panel{ display:flex; }
+  .admin-menu-panel button{ text-align:left; background:none; border:none; color:var(--text-dim); font-family:var(--mono); font-size:12px; padding:9px 10px; border-radius:6px; cursor:pointer; }
+  .admin-menu-panel button:hover{ background:#1c2740; color:var(--text); }
+  html.theme-light .admin-menu-panel button:hover{ background:#eef1f8; }
   .theme-switch button.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
 </style>
 </head>
@@ -181,9 +213,15 @@ let quizAnswers = []; let quizRevealed = []; let quizIdx = 0;
 let draftModule = null; let editingExistingId = null;
 let teamRows = [];
 let REFERENCE_PAGES = [];
-let currentRefIdx = 0;
+let currentRefId = null;
 let refEditing = false;
 let refDraft = null;
+
+let NOTIF_ANNOUNCEMENTS = [];
+let NOTIF_REPLIES = [];
+let NOTIF_ADMIN_UNREAD = 0;
+let notifOpen = false;
+let INBOX_ITEMS = [];
 
 const root = document.getElementById("app");
 function escapeHtml(s){ const d=document.createElement("div"); d.textContent=s==null?"":s; return d.innerHTML; }
@@ -209,7 +247,9 @@ async function markLessonViewed(m, lessonId){
     lessons_viewed: existing.lessonsViewed, updated_at: new Date().toISOString()
   }, { onConflict: "user_id,module_id" });
 }
+let editMode = false;
 function isAdmin(){ return profile && profile.role === "admin"; }
+function canEdit(){ return isAdmin() && editMode; }
 
 /* ============================================================
    DATA LOADING
@@ -293,6 +333,7 @@ async function afterLogin(){
   view = "loading"; render();
   await loadProfile();
   await loadEverything();
+  await loadNotifications();
   view = "home"; render();
 }
 
@@ -319,9 +360,22 @@ function renderShell(inner){
         <div class="brand-text"><div class="name">COMPORIUM TRAINING MODULES</div><div class="tag">TIER 1 FIELD &amp; SIGNAL TRAINING</div></div>
       </div>
       <div class="top-right">
-        <nav class="crumbs">${ (view==="home"||view==="dashboard"||view==="reference") ? "" : `<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':view==='settings'?'SETTINGS':''))}`}</nav>
+        <nav class="crumbs">${ (view==="home"||view==="dashboard"||view==="reference") ? "" : `<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':view==='settings'?'SETTINGS':view==='inbox'?'ADMIN INBOX':''))}`}</nav>
+        <div class="bell-wrap">
+          <button class="gear-btn" id="notif-bell" title="Notifications">🔔${bellBadgeCount()>0?`<span class="notif-dot"></span>`:''}</button>
+          ${notifOpen ? renderNotifPanel() : ""}
+        </div>
         <span class="pill-btn" style="cursor:default;">${escapeHtml(profile ? profile.name : "")}</span>
-        ${isAdmin() ? `<span class="admin-badge">ADMIN</span><button class="pill-btn" id="go-team">Team progress</button>` : ""}
+        ${isAdmin() ? `
+          <div class="admin-menu">
+            <span class="admin-badge">ADMIN ▾</span>
+            <div class="admin-menu-panel">
+              <button id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>
+              <button id="open-announce">📣 Make announcement to everyone</button>
+              <button id="go-team-menu">Team progress</button>
+              <button id="go-inbox-menu">Admin inbox${NOTIF_ADMIN_UNREAD>0?` (${NOTIF_ADMIN_UNREAD})`:""}</button>
+            </div>
+          </div>` : ""}
         <button class="pill-btn" id="logout-btn">Log out</button>
       </div>
     </header>
@@ -339,7 +393,20 @@ function renderShell(inner){
   document.getElementById("nav-reference").addEventListener("click", openReference);
   document.getElementById("open-settings").addEventListener("click", ()=>{ view="settings"; render(); });
   document.getElementById("logout-btn").addEventListener("click", logout);
-  const goTeam = document.getElementById("go-team"); if(goTeam) goTeam.addEventListener("click", openTeamProgress);
+  document.getElementById("notif-bell").addEventListener("click", (e)=>{ e.stopPropagation(); toggleNotifPanel(); });
+  root.querySelectorAll("[data-dismiss-notif]").forEach(el=> el.addEventListener("click", async (e)=>{
+    e.stopPropagation();
+    await supabase.from("messages").delete().eq("id", el.getAttribute("data-dismiss-notif"));
+    await loadNotifications(); render();
+  }));
+  const toggleEdit = document.getElementById("toggle-edit-mode");
+  if(toggleEdit) toggleEdit.addEventListener("click", ()=>{ editMode = !editMode; render(); });
+  const openAnnounce = document.getElementById("open-announce");
+  if(openAnnounce) openAnnounce.addEventListener("click", composeAnnouncement);
+  const goTeamMenu = document.getElementById("go-team-menu");
+  if(goTeamMenu) goTeamMenu.addEventListener("click", openTeamProgress);
+  const goInboxMenu = document.getElementById("go-inbox-menu");
+  if(goInboxMenu) goInboxMenu.addEventListener("click", openInbox);
 }
 
 /* ============================================================
@@ -361,14 +428,14 @@ function renderDashboard(){
       : `<span class="status-pill">Not started</span>`;
     const on = status!=="new"; const mastered = status==="mastered";
     const leds = `<span class="led ${on?'on-green':''}"></span><span class="led ${on?(mastered?'on-green':'on-amber blink'):''}"></span><span class="led ${mastered?'on-green':''}"></span>`;
-    const tools = isAdmin() ? `<div class="card-tools"><button class="icon-btn" data-edit="${m.id}" title="Edit module">✎</button><button class="icon-btn danger" data-del="${m.id}" title="Delete module">✕</button></div>` : "";
+    const tools = canEdit() ? `<div class="card-tools"><button class="icon-btn" data-edit="${m.id}" title="Edit module">✎</button><button class="icon-btn danger" data-del="${m.id}" title="Delete module">✕</button></div>` : "";
     return `<div class="mod-card" data-mod="${m.id}">${tools}
       <div class="row-top"><div><h3>${escapeHtml(m.title)}</h3><p class="sub">${escapeHtml(m.short)}</p></div><div class="led-strip">${leds}</div></div>
       <div class="meta"><span>${m.lessons.length} LESSONS</span><span>${m.quiz.length} QUIZ Q's</span>${pillHtml}</div>
       <div class="progress-bar"><div style="width:${overallPct(m)}%"></div></div></div>`;
   }).join("");
 
-  const addCard = isAdmin() ? `<div class="add-mod-card" id="add-module">+ ADD MODULE</div>` : "";
+  const addCard = canEdit() ? `<div class="add-mod-card" id="add-module">+ ADD MODULE</div>` : "";
   const totalQ = MODULES.reduce((a,m)=>a+m.quiz.length,0);
   const doneQ = Object.values(progressMap).reduce((a,s)=>a+(s.best||0),0);
   const modsMastered = MODULES.filter(m=>moduleStatus(m.id)==="mastered").length;
@@ -409,12 +476,13 @@ function renderLesson(){
   if(lesson.id) markLessonViewed(m, lesson.id);
   const tabs = m.lessons.map((l,i)=>`<button class="lesson-tab ${i===currentLessonIdx?'active':''}" data-idx="${i}">${i+1}. ${escapeHtml(l.title)}</button>`).join("");
   const isLast = currentLessonIdx === m.lessons.length-1;
-  const editBtn = isAdmin() ? `<button class="lesson-tab" id="edit-mod" style="border-color:var(--amber);color:var(--amber);">✎ Edit module</button>` : "";
+  const editBtn = canEdit() ? `<button class="lesson-tab" id="edit-mod" style="border-color:var(--amber);color:var(--amber);">✎ Edit module</button>` : "";
   renderShell(`
     <div class="lesson-nav">${tabs}${editBtn}<button class="lesson-tab quiz" id="go-quiz">TAKE QUIZ →</button></div>
     <div class="card"><div class="k-label">${escapeHtml(lesson.label)}</div><h2>${escapeHtml(lesson.title)}</h2><div class="body">${lesson.body}</div>
       <div class="nav-buttons"><button class="btn" id="prev-lesson" ${currentLessonIdx===0?'disabled':''}>← Previous</button>
       ${isLast? `<button class="btn primary" id="to-quiz-btn">Start module quiz →</button>` : `<button class="btn primary" id="next-lesson">Next lesson →</button>`}</div>
+      <div class="nav-buttons" style="margin-top:8px;"><div style="display:flex;gap:10px;"><button class="mini-btn" id="comment-lesson">💬 Comment</button><button class="mini-btn" id="highlight-lesson">✨ Highlight for admins</button></div><div></div></div>
     </div>`);
   root.querySelectorAll(".lesson-tab[data-idx]").forEach(el=> el.addEventListener("click", ()=>{ currentLessonIdx=parseInt(el.getAttribute("data-idx")); render(); }));
   document.getElementById("go-quiz").addEventListener("click", startQuiz);
@@ -422,6 +490,8 @@ function renderLesson(){
   const next=document.getElementById("next-lesson"); if(next) next.addEventListener("click", ()=>{ currentLessonIdx++; render(); });
   const toQuiz=document.getElementById("to-quiz-btn"); if(toQuiz) toQuiz.addEventListener("click", startQuiz);
   const editMod=document.getElementById("edit-mod"); if(editMod) editMod.addEventListener("click", ()=>openEditor(m.id));
+  document.getElementById("comment-lesson").addEventListener("click", ()=> sendToAdmins("comment", `${m.title} — ${lesson.title}`));
+  document.getElementById("highlight-lesson").addEventListener("click", ()=> sendToAdmins("highlight", `${m.title} — ${lesson.title}`));
 }
 
 function startQuiz(){ const m=modById(currentModId); quizAnswers=new Array(m.quiz.length).fill(null); quizRevealed=new Array(m.quiz.length).fill(false); quizIdx=0; view="quiz"; render(); }
@@ -433,17 +503,19 @@ function renderQuiz(){
     return `<div class="${cls}" data-idx="${i}"><div class="dot"></div><span class="txt">${escapeHtml(opt)}</span></div>`; }).join("");
   const explain = revealed ? `<div class="explain"><strong>${selected===q.correct?'Correct.':'Not quite.'}</strong> ${escapeHtml(q.explain)}</div>` : "";
   const isLast = quizIdx === m.quiz.length-1;
-  const editBtn = isAdmin() ? `<button class="btn" id="edit-mod-q" style="border-color:var(--amber);color:var(--amber);">✎ Edit module</button>` : "";
+  const editBtn = canEdit() ? `<button class="btn" id="edit-mod-q" style="border-color:var(--amber);color:var(--amber);">✎ Edit module</button>` : "";
   renderShell(`
     <div class="q-progress">MODULE QUIZ · ${escapeHtml(m.title.toUpperCase())} · QUESTION ${quizIdx+1} OF ${m.quiz.length}</div>
     <div class="card"><div class="q-block"><h3>${escapeHtml(q.q)}</h3>${opts}</div>${explain}
       <div class="nav-buttons"><div style="display:flex;gap:10px;"><button class="btn" id="quiz-prev" ${quizIdx===0?'disabled':''}>← Previous</button>${editBtn}</div>
       <button class="btn primary" id="quiz-next" ${selected===null?'disabled':''}>${isLast?(revealed?'See results →':'Check answer'):(revealed?'Next question →':'Check answer')}</button></div>
+      <div class="nav-buttons" style="margin-top:8px;"><button class="mini-btn" id="flag-question">🚩 Flag this question</button><div></div></div>
     </div>`);
   if(!revealed) root.querySelectorAll(".opt").forEach(el=> el.addEventListener("click", ()=>{ quizAnswers[quizIdx]=parseInt(el.getAttribute("data-idx")); render(); }));
   document.getElementById("quiz-prev").addEventListener("click", ()=>{ if(quizIdx>0){ quizIdx--; render(); } });
   document.getElementById("quiz-next").addEventListener("click", ()=>{ if(!revealed){ quizRevealed[quizIdx]=true; render(); } else if(isLast){ finishQuiz(); } else { quizIdx++; render(); } });
   const editModQ=document.getElementById("edit-mod-q"); if(editModQ) editModQ.addEventListener("click", ()=>openEditor(m.id));
+  document.getElementById("flag-question").addEventListener("click", ()=> sendToAdmins("flag", `${m.title} — Q${quizIdx+1}: ${q.q}`));
 }
 
 async function finishQuiz(){
@@ -569,6 +641,118 @@ async function showAttemptDetail(userId, moduleId){
     </div>
   `;
 }
+
+/* ============================================================
+   NOTIFICATIONS / MESSAGING
+   ============================================================ */
+async function loadNotifications(){
+  const { data: announcements } = await supabase.from("messages").select("*").eq("audience","all").order("created_at",{ascending:false}).limit(8);
+  NOTIF_ANNOUNCEMENTS = announcements || [];
+  const { data: replies } = await supabase.from("messages").select("*").eq("audience","user").eq("recipient_id", session.user.id).order("created_at",{ascending:false}).limit(8);
+  NOTIF_REPLIES = replies || [];
+  if(isAdmin()){
+    const { count } = await supabase.from("messages").select("*", { count:"exact", head:true }).eq("audience","admins").eq("is_read", false);
+    NOTIF_ADMIN_UNREAD = count || 0;
+  } else {
+    NOTIF_ADMIN_UNREAD = 0;
+  }
+}
+function bellBadgeCount(){ return NOTIF_REPLIES.filter(r=>!r.is_read).length + NOTIF_ADMIN_UNREAD; }
+
+function renderNotifPanel(){
+  const announceHtml = NOTIF_ANNOUNCEMENTS.length ? NOTIF_ANNOUNCEMENTS.map(a=>`
+    <div class="notif-item">
+      <div class="notif-item-body">${escapeHtml(a.body)}</div>
+      <div class="notif-item-meta">${escapeHtml(a.sender_name)} · ${new Date(a.created_at).toLocaleDateString()}</div>
+    </div>`).join("") : `<p class="notif-empty">No announcements yet.</p>`;
+
+  const repliesHtml = NOTIF_REPLIES.length ? NOTIF_REPLIES.map(r=>`
+    <div class="notif-item ${!r.is_read?'unread':''}">
+      <div class="notif-item-body">${escapeHtml(r.body)}</div>
+      <div class="notif-item-meta">Re: ${escapeHtml(r.context||'your feedback')} · ${new Date(r.created_at).toLocaleDateString()}</div>
+      <button class="mini-btn" data-dismiss-notif="${r.id}">Dismiss</button>
+    </div>`).join("") : `<p class="notif-empty">Nothing yet.</p>`;
+
+  return `
+    <div class="notif-panel" id="notif-panel">
+      <div class="notif-panel-head">Notifications</div>
+      <div class="notif-section-title">Announcements</div>
+      ${announceHtml}
+      <div class="notif-section-title">Replies to you</div>
+      ${repliesHtml}
+    </div>`;
+}
+
+async function toggleNotifPanel(){
+  notifOpen = !notifOpen;
+  if(notifOpen){
+    await loadNotifications();
+    const unreadIds = NOTIF_REPLIES.filter(r=>!r.is_read).map(r=>r.id);
+    if(unreadIds.length){ await supabase.from("messages").update({ is_read:true }).in("id", unreadIds); await loadNotifications(); }
+  }
+  render();
+}
+
+async function sendToAdmins(type, context){
+  const prompts = { flag:"What's wrong with this question?", highlight:"What would you like to highlight for admins?", comment:"Your comment for admins:" };
+  const text = prompt(prompts[type] || "Your message:");
+  if(!text || !text.trim()) return;
+  await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"admins", type, body:text.trim(), context });
+  alert("Sent to admins — thanks!");
+}
+
+async function composeAnnouncement(){
+  const text = prompt("Announcement to send to everyone:");
+  if(!text || !text.trim()) return;
+  await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement", body:text.trim() });
+  alert("Announcement sent to everyone.");
+  await loadNotifications(); render();
+}
+
+async function openInbox(){
+  const { data } = await supabase.from("messages").select("*").eq("audience","admins").order("created_at",{ascending:false});
+  INBOX_ITEMS = data || [];
+  const unreadIds = INBOX_ITEMS.filter(m=>!m.is_read).map(m=>m.id);
+  if(unreadIds.length) await supabase.from("messages").update({ is_read:true }).in("id", unreadIds);
+  await loadNotifications();
+  view = "inbox"; render();
+}
+
+function renderInbox(){
+  const typeLabel = { flag:"🚩 FLAG", highlight:"✨ HIGHLIGHT", comment:"💬 COMMENT" };
+  const rows = INBOX_ITEMS.map(m=>`
+    <div class="sub-card">
+      <div class="sub-card-head">
+        <span class="tag">${typeLabel[m.type]||m.type.toUpperCase()} · ${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</span>
+        <button class="mini-btn danger" data-discard-inbox="${m.id}">Discard</button>
+      </div>
+      ${m.context ? `<div style="font-size:12px;color:var(--text-faint);margin-bottom:6px;">${escapeHtml(m.context)}</div>` : ""}
+      <div style="font-size:14px;margin-bottom:10px;color:var(--text);">${escapeHtml(m.body)}</div>
+      <div class="field"><label>Reply</label><textarea id="reply-${m.id}" style="min-height:60px;" placeholder="Type a reply..."></textarea></div>
+      <button class="mini-btn" data-send-reply="${m.id}">Send reply</button>
+    </div>
+  `).join("") || `<p style="color:var(--text-dim);font-size:14px;">Inbox is empty — nothing flagged or commented right now.</p>`;
+
+  renderShell(`<div class="card"><div class="k-label">ADMIN INBOX</div><h2 style="margin-bottom:16px;">Flagged questions &amp; comments</h2>${rows}</div>`);
+
+  root.querySelectorAll("[data-discard-inbox]").forEach(el=> el.addEventListener("click", async ()=>{
+    if(confirm("Discard this item?")){ await supabase.from("messages").delete().eq("id", el.getAttribute("data-discard-inbox")); await openInbox(); }
+  }));
+  root.querySelectorAll("[data-send-reply]").forEach(el=> el.addEventListener("click", async ()=>{
+    const id = el.getAttribute("data-send-reply");
+    const original = INBOX_ITEMS.find(m=>m.id===id);
+    const text = document.getElementById(`reply-${id}`).value.trim();
+    if(!text) return;
+    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: original.sender_id, audience:"user", type:"reply", body:text, context: original.context, thread_id: id });
+    alert("Reply sent.");
+    document.getElementById(`reply-${id}`).value = "";
+  }));
+}
+document.addEventListener("click", (e)=>{
+  if(!notifOpen) return;
+  if(e.target.closest(".bell-wrap")) return;
+  notifOpen = false; render();
+});
 
 /* ============================================================
    EDITOR (admin only) — module / lessons / quiz CRUD
@@ -751,24 +935,19 @@ function renderSettings(){
    HOME (landing selector)
    ============================================================ */
 function renderHome(){
-  const totalQ = MODULES.reduce((a,m)=>a+m.quiz.length,0);
-  const doneQ = Object.values(progressMap).reduce((a,s)=>a+(s.best||0),0);
-  const modsMastered = MODULES.filter(m=>moduleStatus(m.id)==="mastered").length;
   renderShell(`
     <section class="hero">
-      <div class="eyebrow">Welcome back</div>
-      <h1>Where do you want to go?</h1>
-      <p>Training Modules for structured onboarding lessons and quizzes. Reference Guide for quick lookups anytime, for everyone on the team.</p>
-      <div class="panel-row"><div class="stat"><div class="num">${modsMastered}/${MODULES.length}</div><div class="lbl">MODULES MASTERED</div></div>
-      <div class="stat"><div class="num">${doneQ}/${totalQ}</div><div class="lbl">BEST-SCORE QUESTIONS CORRECT</div></div></div>
+      <h1 style="font-size:32px;">Welcome back, ${escapeHtml(profile.name)}</h1>
+      <p style="margin-top:10px;"><strong style="color:var(--text);">Training Modules</strong> — structured lessons and scored quizzes for onboarding and skill-building.</p>
+      <p style="margin-top:-6px;"><strong style="color:var(--text);">Reference Guide</strong> — a living knowledge base the whole team can look things up in, anytime.</p>
     </section>
     <div class="two-col-grid">
       <div class="mod-card" id="go-modules-card">
         <div class="row-top"><div><h3>Training Modules</h3><p class="sub">Structured lessons and scored quizzes for onboarding and skill-building.</p></div><div class="led-strip"><span class="led on-green"></span><span class="led on-amber blink"></span><span class="led on-green"></span></div></div>
-        <div class="meta"><span>${MODULES.length} MODULES</span><span>${totalQ} TOTAL QUESTIONS</span></div>
+        <div class="meta"><span>${MODULES.length} MODULES</span></div>
       </div>
       <div class="mod-card" id="go-reference-card">
-        <div class="row-top"><div><h3>Reference Guide</h3><p class="sub">A living knowledge base the whole team can look things up in, not just new hires.</p></div><div class="led-strip"><span class="led on-cyan" style="background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 8px var(--cyan);"></span></div></div>
+        <div class="row-top"><div><h3>Reference Guide</h3><p class="sub">A living knowledge base the whole team can look things up in, not just new hires.</p></div><div class="led-strip"><span class="led" style="background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 8px var(--cyan);"></span></div></div>
         <div class="meta"><span>ALWAYS UP TO DATE</span></div>
       </div>
     </div>
@@ -783,36 +962,62 @@ function renderHome(){
 async function loadReference(){
   const { data } = await supabase.from("reference_pages").select("*").order("sort_order");
   REFERENCE_PAGES = data || [];
-  if(currentRefIdx >= REFERENCE_PAGES.length) currentRefIdx = 0;
+  if(!REFERENCE_PAGES.find(p=>p.id===currentRefId)) currentRefId = null;
 }
 async function openReference(){
   await loadReference();
   refEditing = false;
+  if(!currentRefId){ const top = REFERENCE_PAGES.find(p=>!p.parent_id); if(top) currentRefId = top.id; }
   view = "reference"; render();
 }
+function topLevelPages(){ return REFERENCE_PAGES.filter(p=>!p.parent_id).sort((a,b)=>a.sort_order-b.sort_order); }
+function childPages(parentId){ return REFERENCE_PAGES.filter(p=>p.parent_id===parentId).sort((a,b)=>a.sort_order-b.sort_order); }
 
 function renderReference(){
-  const tabs = REFERENCE_PAGES.map((p,i)=>`<button class="lesson-tab ${i===currentRefIdx?'active':''}" data-ref-idx="${i}">${escapeHtml(p.title)}</button>`).join("");
-  const addBtn = isAdmin() ? `<button class="lesson-tab" id="add-ref-page" style="border-color:var(--cyan);color:var(--cyan);">+ Add page</button>` : "";
-  const page = REFERENCE_PAGES[currentRefIdx];
+  const editOn = canEdit();
+  const tops = topLevelPages();
 
-  let bodyHtml;
+  function sidebarRow(p, isChild){
+    const active = p.id===currentRefId;
+    const siblings = isChild ? childPages(p.parent_id) : tops;
+    const idx = siblings.findIndex(s=>s.id===p.id);
+    const tools = editOn ? `
+      <span class="ref-row-tools">
+        <button class="mini-btn" data-ref-up="${p.id}" ${idx===0?'disabled':''}>↑</button>
+        <button class="mini-btn" data-ref-down="${p.id}" ${idx===siblings.length-1?'disabled':''}>↓</button>
+        ${!isChild ? `<button class="mini-btn" data-ref-addsub="${p.id}">+ Sub</button>` : ""}
+        <button class="mini-btn danger" data-ref-del="${p.id}">✕</button>
+      </span>` : "";
+    return `<div class="ref-row ${active?'active':''} ${isChild?'child':''}" data-ref-select="${p.id}"><span class="ref-row-title">${escapeHtml(p.title)}</span>${tools}</div>`;
+  }
+
+  const sidebarHtml = tops.map(p=>{
+    const kids = childPages(p.id);
+    return sidebarRow(p,false) + kids.map(k=>sidebarRow(k,true)).join("");
+  }).join("") || `<p style="color:var(--text-faint);font-size:12.5px;padding:10px;">No pages yet.</p>`;
+
+  const addTopBtn = editOn ? `<button class="dashed-btn" id="add-ref-page" style="margin-top:10px;">+ Add page</button>` : "";
+
+  const page = REFERENCE_PAGES.find(p=>p.id===currentRefId);
+  let contentHtml;
   if(!REFERENCE_PAGES.length){
-    bodyHtml = `<div class="card"><p style="color:var(--text-dim);font-size:14px;">Nothing here yet.${isAdmin() ? ' Click "+ Add page" above to start building it out.' : ' Check back once an admin has added content.'}</p></div>`;
+    contentHtml = `<div class="card"><p style="color:var(--text-dim);font-size:14px;">Nothing here yet.${editOn ? ' Click "+ Add page" to start building it out.' : ' Check back once an admin has added content.'}</p></div>`;
+  } else if(!page){
+    contentHtml = `<div class="card"><p style="color:var(--text-dim);font-size:14px;">Select a page from the left.</p></div>`;
   } else if(refEditing){
-    bodyHtml = `
+    contentHtml = `
       <div class="card">
         <div class="k-label">EDITING PAGE</div>
         <div class="field"><label>Page title</label><input type="text" id="ref-title" value="${escapeHtml(refDraft.title)}"></div>
-        <div class="field"><label>Body (HTML)</label><textarea id="ref-body" style="min-height:260px;">${escapeHtml(refDraft.body)}</textarea><div class="hint">Supports basic tags: &lt;p&gt; &lt;strong&gt; &lt;ul&gt;&lt;li&gt;.</div></div>
+        <div class="field"><label>Body (HTML)</label><textarea id="ref-body" style="min-height:280px;">${escapeHtml(refDraft.body)}</textarea><div class="hint">Supports basic tags: &lt;p&gt; &lt;strong&gt; &lt;ul&gt;&lt;li&gt;.</div></div>
         <div class="nav-buttons">
           <div style="display:flex;gap:10px;"><button class="btn" id="ref-cancel">Cancel</button><button class="btn danger" id="ref-delete">Delete page</button></div>
           <button class="btn primary" id="ref-save">Save page</button>
         </div>
       </div>`;
   } else {
-    const editBtn = isAdmin() ? `<button class="btn" id="ref-edit" style="border-color:var(--amber);color:var(--amber);">✎ Edit page</button>` : "";
-    bodyHtml = `
+    const editBtn = editOn ? `<button class="btn" id="ref-edit" style="border-color:var(--amber);color:var(--amber);">✎ Edit page</button>` : "";
+    contentHtml = `
       <div class="card">
         <div class="k-label">REFERENCE GUIDE</div>
         <h2>${escapeHtml(page.title)}</h2>
@@ -821,15 +1026,39 @@ function renderReference(){
       </div>`;
   }
 
-  renderShell(`<div class="lesson-nav">${tabs}${addBtn}</div>${bodyHtml}`);
+  renderShell(`
+    <div class="ref-layout">
+      <div class="ref-sidebar"><div class="ref-sidebar-list">${sidebarHtml}</div>${addTopBtn}</div>
+      <div class="ref-content">${contentHtml}</div>
+    </div>
+  `);
 
-  root.querySelectorAll("[data-ref-idx]").forEach(el=> el.addEventListener("click", ()=>{ currentRefIdx=+el.getAttribute("data-ref-idx"); refEditing=false; render(); }));
+  root.querySelectorAll("[data-ref-select]").forEach(el=> el.addEventListener("click", ()=>{ currentRefId = el.getAttribute("data-ref-select"); refEditing=false; render(); }));
 
   const addPageBtn = document.getElementById("add-ref-page");
   if(addPageBtn) addPageBtn.addEventListener("click", async ()=>{
-    const { data, error } = await supabase.from("reference_pages").insert({ title:"New page", body:"<p>Write here.</p>", sort_order: REFERENCE_PAGES.length }).select().single();
-    if(!error){ await loadReference(); currentRefIdx = REFERENCE_PAGES.findIndex(p=>p.id===data.id); refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
+    const { data, error } = await supabase.from("reference_pages").insert({ title:"New page", body:"<p>Write here.</p>", parent_id:null, sort_order: tops.length }).select().single();
+    if(!error){ await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
   });
+  root.querySelectorAll("[data-ref-addsub]").forEach(el=> el.addEventListener("click", async ()=>{
+    const parentId = el.getAttribute("data-ref-addsub");
+    const kids = childPages(parentId);
+    const { data, error } = await supabase.from("reference_pages").insert({ title:"New subsection", body:"<p>Write here.</p>", parent_id:parentId, sort_order: kids.length }).select().single();
+    if(!error){ await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
+  }));
+  root.querySelectorAll("[data-ref-up]").forEach(el=> el.addEventListener("click", async ()=>{ await moveRefPage(el.getAttribute("data-ref-up"), -1); }));
+  root.querySelectorAll("[data-ref-down]").forEach(el=> el.addEventListener("click", async ()=>{ await moveRefPage(el.getAttribute("data-ref-down"), 1); }));
+  root.querySelectorAll("[data-ref-del]").forEach(el=> el.addEventListener("click", async ()=>{
+    const id = el.getAttribute("data-ref-del");
+    const target = REFERENCE_PAGES.find(p=>p.id===id);
+    const hasKids = childPages(id).length>0;
+    if(confirm(`Delete "${target.title}"?${hasKids?' This will also delete its subsections.':''}`)){
+      await supabase.from("reference_pages").delete().eq("id", id);
+      if(currentRefId===id) currentRefId = null;
+      await loadReference(); render();
+    }
+  }));
+
   const editBtn = document.getElementById("ref-edit");
   if(editBtn) editBtn.addEventListener("click", ()=>{ refDraft = { title:page.title, body:page.body }; refEditing = true; render(); });
   const cancelBtn = document.getElementById("ref-cancel");
@@ -845,9 +1074,21 @@ function renderReference(){
   if(deleteBtn) deleteBtn.addEventListener("click", async ()=>{
     if(confirm(`Delete "${page.title}"? This can't be undone.`)){
       await supabase.from("reference_pages").delete().eq("id", page.id);
-      refEditing = false; currentRefIdx = 0; await loadReference(); render();
+      refEditing = false; currentRefId = null; await loadReference(); render();
     }
   });
+}
+
+async function moveRefPage(id, direction){
+  const p = REFERENCE_PAGES.find(x=>x.id===id);
+  const siblings = (p.parent_id ? childPages(p.parent_id) : topLevelPages());
+  const idx = siblings.findIndex(s=>s.id===id);
+  const swapIdx = idx + direction;
+  if(swapIdx < 0 || swapIdx >= siblings.length) return;
+  const other = siblings[swapIdx];
+  await supabase.from("reference_pages").update({ sort_order: other.sort_order }).eq("id", p.id);
+  await supabase.from("reference_pages").update({ sort_order: p.sort_order }).eq("id", other.id);
+  await loadReference(); render();
 }
 
 /* ============================================================
@@ -865,6 +1106,7 @@ function render(){
   else if(view==="team") renderTeam();
   else if(view==="settings") renderSettings();
   else if(view==="reference") renderReference();
+  else if(view==="inbox") renderInbox();
 }
 
 /* ============================================================
