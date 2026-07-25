@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LINEUP — Tier 1 Field &amp; Signal Training</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+  :root{
+    --bg:#0A0F1A; --panel:#121A2B; --stroke:#24304a; --text:#E7ECF6; --text-dim:#8A96AD; --text-faint:#5A6480;
+    --green:#34D399; --green-dim:#34D39933; --amber:#F0A93D; --amber-dim:#F0A93D33; --red:#EF5D5D; --red-dim:#EF5D5D33;
+    --cyan:#52D5E0; --cyan-dim:#52D5E033; --mono:'IBM Plex Mono',monospace; --sans:'IBM Plex Sans',sans-serif;
+  }
+  *{box-sizing:border-box;} html,body{margin:0;padding:0;}
+  body{ background:radial-gradient(circle at 15% -10%,#17233d 0%,transparent 45%),radial-gradient(circle at 100% 0%,#142234 0%,transparent 40%),var(--bg); color:var(--text); font-family:var(--sans); min-height:100vh; -webkit-font-smoothing:antialiased; }
+  a,button,input,textarea{font-family:inherit;}
+  #app{ max-width:980px; margin:0 auto; padding:28px 20px 90px; }
+  header.top{ display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; padding-bottom:22px; margin-bottom:26px; border-bottom:1px solid var(--stroke); }
+  .brand{ display:flex; align-items:center; gap:12px; }
+  .brand-mark{ width:34px; height:34px; border-radius:7px; background:linear-gradient(155deg,#17213a,#0d1424); border:1px solid var(--stroke); display:flex; align-items:center; justify-content:center; gap:3px; }
+  .brand-mark i{ width:3px; height:14px; border-radius:2px; background:var(--green); box-shadow:0 0 6px var(--green); }
+  .brand-mark i:nth-child(2){ height:9px; background:var(--amber); box-shadow:0 0 6px var(--amber);}
+  .brand-mark i:nth-child(3){ height:18px; background:var(--cyan); box-shadow:0 0 6px var(--cyan);}
+  .brand-text .name{ font-family:var(--mono); font-weight:700; letter-spacing:.08em; font-size:15px; }
+  .brand-text .tag{ font-size:11px; color:var(--text-faint); letter-spacing:.05em; }
+  .top-right{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  nav.crumbs{ font-family:var(--mono); font-size:12px; color:var(--text-faint); }
+  nav.crumbs button{ background:none; border:none; color:var(--cyan); cursor:pointer; font-family:var(--mono); font-size:12px; padding:0; }
+  .pill-btn{ font-family:var(--mono); font-size:11px; letter-spacing:.04em; padding:7px 12px; border-radius:7px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); cursor:pointer; }
+  .pill-btn:hover{ border-color:#3a4a70; color:var(--text); }
+  .admin-badge{ font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; padding:6px 10px; border-radius:20px; border:1px solid var(--amber-dim); background:var(--amber-dim); color:var(--amber); }
+  .led-strip{ display:flex; gap:6px; align-items:center; }
+  .led{ width:9px; height:9px; border-radius:50%; background:#26314a; border:1px solid #2f3c5a; flex:none; }
+  .led.on-green{ background:var(--green); border-color:var(--green); box-shadow:0 0 8px var(--green); }
+  .led.on-amber{ background:var(--amber); border-color:var(--amber); box-shadow:0 0 8px var(--amber); }
+  .led.on-red{ background:var(--red); border-color:var(--red); box-shadow:0 0 8px var(--red); }
+  .led.blink{ animation:blinkled 1.1s steps(1) infinite; } @keyframes blinkled{50%{opacity:.15;}}
+  .hero{ background:var(--panel); border:1px solid var(--stroke); border-radius:14px; padding:26px 26px 22px; margin-bottom:26px; position:relative; overflow:hidden; }
+  .hero::after{ content:""; position:absolute; right:-40px; top:-40px; width:220px; height:220px; background:radial-gradient(circle,var(--cyan-dim),transparent 70%); pointer-events:none; }
+  .hero .eyebrow{ font-family:var(--mono); font-size:11px; color:var(--cyan); letter-spacing:.14em; text-transform:uppercase; margin-bottom:10px; }
+  .hero h1{ font-size:26px; margin:0 0 10px; line-height:1.25; font-weight:700; }
+  .hero p{ color:var(--text-dim); font-size:14.5px; line-height:1.6; max-width:560px; margin:0 0 18px; }
+  .panel-row{ display:flex; gap:22px; flex-wrap:wrap; }
+  .stat{ font-family:var(--mono); } .stat .num{ font-size:22px; font-weight:700; } .stat .lbl{ font-size:11px; color:var(--text-faint); letter-spacing:.06em; }
+  .grid{ display:grid; gap:14px; }
+  .mod-card{ background:var(--panel); border:1px solid var(--stroke); border-radius:12px; padding:20px; cursor:pointer; transition:.15s; display:flex; flex-direction:column; gap:12px; position:relative; }
+  .mod-card:hover{ border-color:#3a4a70; transform:translateY(-1px); }
+  .mod-card .row-top{ display:flex; justify-content:space-between; align-items:flex-start; gap:14px; }
+  .mod-card h3{ margin:0 0 6px; font-size:16.5px; } .mod-card .sub{ color:var(--text-dim); font-size:13px; line-height:1.5; margin:0; }
+  .mod-card .meta{ font-family:var(--mono); font-size:11px; color:var(--text-faint); display:flex; gap:14px; margin-top:2px; align-items:center; }
+  .status-pill{ font-family:var(--mono); font-size:10.5px; letter-spacing:.05em; padding:4px 9px; border-radius:20px; border:1px solid var(--stroke); color:var(--text-faint); white-space:nowrap; text-transform:uppercase; }
+  .status-pill.done{ color:var(--green); border-color:var(--green-dim); background:var(--green-dim); }
+  .status-pill.progress{ color:var(--amber); border-color:var(--amber-dim); background:var(--amber-dim); }
+  .progress-bar{ height:5px; border-radius:4px; background:#1c2740; overflow:hidden; } .progress-bar>div{ height:100%; background:linear-gradient(90deg,var(--cyan),var(--green)); }
+  .card-tools{ position:absolute; top:14px; right:14px; display:flex; gap:6px; }
+  .icon-btn{ width:28px; height:28px; border-radius:7px; border:1px solid var(--stroke); background:#0f1626; color:var(--text-dim); cursor:pointer; font-size:13px; display:flex; align-items:center; justify-content:center; }
+  .icon-btn:hover{ border-color:#3a4a70; color:var(--text); } .icon-btn.danger:hover{ border-color:var(--red); color:var(--red); }
+  .add-mod-card{ border:1px dashed var(--stroke); border-radius:12px; display:flex; align-items:center; justify-content:center; padding:26px; cursor:pointer; color:var(--text-faint); font-family:var(--mono); font-size:12.5px; }
+  .add-mod-card:hover{ border-color:var(--cyan); color:var(--cyan); }
+  .lesson-nav{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:22px; }
+  .lesson-tab{ font-family:var(--mono); font-size:11.5px; padding:7px 12px; border-radius:8px; border:1px solid var(--stroke); background:var(--panel); color:var(--text-dim); cursor:pointer; }
+  .lesson-tab.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); } .lesson-tab.quiz{ margin-left:auto; }
+  .card{ background:var(--panel); border:1px solid var(--stroke); border-radius:12px; padding:26px; position:relative; }
+  .card h2{ margin:0 0 4px; font-size:20px; } .card .k-label{ font-family:var(--mono); font-size:11px; color:var(--text-faint); letter-spacing:.1em; text-transform:uppercase; margin-bottom:14px; }
+  .card .body p{ color:#C7CFE0; font-size:14.5px; line-height:1.75; margin:0 0 14px; }
+  .card .body ul{ margin:0 0 14px; padding-left:20px; color:#C7CFE0; font-size:14.5px; line-height:1.8; } .card .body li{ margin-bottom:4px; } .card .body strong{ color:var(--text); }
+  .card .body img{ max-width:100%; border-radius:8px; margin:10px 0; display:block; border:1px solid var(--stroke); }
+  .light-table{ display:grid; grid-template-columns:auto 1fr; gap:10px 16px; margin:16px 0 18px; font-size:13.5px; }
+  .light-table .lt-led{ display:flex; align-items:center; gap:8px; font-family:var(--mono); color:var(--text-dim); } .light-table .lt-desc{ color:#C7CFE0; }
+  .callout{ border-left:3px solid var(--amber); background:var(--amber-dim); border-radius:0 8px 8px 0; padding:12px 16px; font-size:13.5px; color:#F3DCB0; margin:16px 0; }
+  .callout.tip{ border-left-color:var(--cyan); background:var(--cyan-dim); color:#C9EEF2; }
+  .nav-buttons{ display:flex; justify-content:space-between; margin-top:22px; gap:10px; flex-wrap:wrap; }
+  .btn{ font-family:var(--mono); font-size:12.5px; letter-spacing:.03em; padding:10px 18px; border-radius:8px; border:1px solid var(--stroke); background:#182236; color:var(--text); cursor:pointer; transition:.15s; }
+  .btn:hover{ border-color:#4a5b82; } .btn.primary{ background:linear-gradient(155deg,#1c3a35,#14261f); border-color:var(--green); color:var(--green); }
+  .btn.primary:hover{ box-shadow:0 0 0 1px var(--green); } .btn.danger{ background:linear-gradient(155deg,#3a1c1c,#261414); border-color:var(--red); color:var(--red); } .btn:disabled{ opacity:.35; cursor:not-allowed; }
+  .q-progress{ font-family:var(--mono); font-size:11.5px; color:var(--text-faint); margin-bottom:8px; }
+  .q-block{ margin-bottom:8px; } .q-block h3{ font-size:16.5px; line-height:1.5; margin:0 0 18px; }
+  .opt{ display:flex; align-items:flex-start; gap:12px; padding:13px 15px; border:1px solid var(--stroke); border-radius:9px; margin-bottom:10px; cursor:pointer; background:#0f1626; transition:.12s; }
+  .opt:hover{ border-color:#3a4a70; } .opt .dot{ width:15px; height:15px; border-radius:50%; border:1px solid #445071; flex:none; margin-top:2px; }
+  .opt span.txt{ font-size:14px; color:#D5DCEA; line-height:1.5; }
+  .opt.selected{ border-color:var(--cyan); background:var(--cyan-dim); } .opt.selected .dot{ border-color:var(--cyan); background:var(--cyan); }
+  .opt.correct{ border-color:var(--green); background:var(--green-dim); } .opt.correct .dot{ border-color:var(--green); background:var(--green); }
+  .opt.wrong{ border-color:var(--red); background:var(--red-dim); } .opt.wrong .dot{ border-color:var(--red); background:var(--red); } .opt.disabled{ cursor:default; }
+  .explain{ font-size:13px; color:var(--text-dim); background:#0f1626; border:1px solid var(--stroke); border-radius:8px; padding:12px 14px; margin-top:6px; line-height:1.6; } .explain strong{ color:var(--text); }
+  .result-hero{ text-align:center; padding:36px 20px; } .result-hero .big-score{ font-family:var(--mono); font-size:52px; font-weight:700; } .result-hero .verdict{ font-size:14px; color:var(--text-dim); margin-top:6px; }
+  .led-array{ display:flex; justify-content:center; gap:8px; margin:22px 0; } .led-array .led{ width:12px; height:12px; }
+  footer.foot{ margin-top:60px; text-align:center; font-family:var(--mono); font-size:11px; color:var(--text-faint); }
+  .field{ margin-bottom:16px; } .field label{ display:block; font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--text-faint); margin-bottom:6px; }
+  .field input[type=text],.field input[type=email],.field input[type=password],.field textarea{ width:100%; background:#0e1626; border:1px solid var(--stroke); border-radius:8px; color:var(--text); padding:10px 12px; font-size:13.5px; line-height:1.6; font-family:var(--sans); resize:vertical; }
+  .field textarea{ font-family:var(--mono); font-size:12.5px; min-height:110px; }
+  .field input:focus,.field textarea:focus{ border-color:var(--cyan); } .field .hint{ font-size:11px; color:var(--text-faint); margin-top:5px; }
+  .editor-section{ margin-top:30px; } .editor-section-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+  .editor-section-head h3{ font-size:14px; margin:0; font-family:var(--mono); letter-spacing:.05em; color:var(--text-dim); text-transform:uppercase; }
+  .sub-card{ background:#0e1626; border:1px solid var(--stroke); border-radius:10px; padding:18px; margin-bottom:14px; }
+  .sub-card-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; } .sub-card-head .tag{ font-family:var(--mono); font-size:10.5px; color:var(--text-faint); }
+  .mini-tools{ display:flex; gap:6px; }
+  .mini-btn{ font-family:var(--mono); font-size:10.5px; padding:5px 9px; border-radius:6px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); cursor:pointer; }
+  .mini-btn:hover{ border-color:#3a4a70; color:var(--text); } .mini-btn.danger:hover{ border-color:var(--red); color:var(--red); }
+  .opt-row{ display:flex; align-items:center; gap:10px; margin-bottom:8px; } .opt-row input[type=radio]{ accent-color:var(--green); width:16px; height:16px; flex:none; } .opt-row input[type=text]{ flex:1; }
+  .dashed-btn{ width:100%; border:1px dashed var(--stroke); border-radius:9px; background:none; color:var(--text-faint); font-family:var(--mono); font-size:12px; padding:12px; cursor:pointer; }
+  .dashed-btn:hover{ border-color:var(--cyan); color:var(--cyan); }
+  table.team{ width:100%; border-collapse:collapse; font-size:13px; }
+  table.team th{ text-align:left; font-family:var(--mono); font-size:10.5px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.05em; padding:8px 10px; border-bottom:1px solid var(--stroke); }
+  table.team td{ padding:10px; border-bottom:1px solid var(--stroke); color:#D5DCEA; }
+  .role-tag{ font-family:var(--mono); font-size:10px; padding:3px 8px; border-radius:12px; border:1px solid var(--stroke); }
+  .role-tag.admin{ color:var(--amber); border-color:var(--amber-dim); background:var(--amber-dim); }
+  .auth-wrap{ max-width:400px; margin:60px auto; }
+  .auth-toggle{ display:flex; gap:8px; margin-bottom:20px; }
+  .auth-toggle button{ flex:1; padding:10px; border-radius:8px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); cursor:pointer; font-family:var(--mono); font-size:12px; }
+  .auth-toggle button.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
+  .error-msg{ color:var(--red); font-size:12.5px; font-family:var(--mono); margin:-6px 0 12px; }
+  .info-msg{ color:var(--cyan); font-size:12.5px; font-family:var(--mono); margin:-6px 0 12px; }
+  @media (max-width:640px){ .hero h1{ font-size:21px; } .card{ padding:18px; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+(function(){
+
+/* ============================================================
+   FILL THESE IN — Supabase project settings → API
+   ============================================================ */
+const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
+
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ============================================================
+   APP STATE
+   ============================================================ */
+let session = null;
+let profile = null;         // { id, name, role }
+let MODULES = [];           // [{id,title,short,ledColor,lessons:[...],quiz:[...]}]
+let progressMap = {};       // { moduleId: {best,total,lastScore,attempts} }
+
+let view = "loading";       // loading | auth | dashboard | lesson | quiz | results | editor | team
+let authMode = "login";     // login | signup
+let authError = "";
+let authInfo = "";
+
+let currentModId = null;
+let currentLessonIdx = 0;
+let quizAnswers = []; let quizRevealed = []; let quizIdx = 0;
+
+let draftModule = null; let editingExistingId = null;
+let teamRows = [];
+
+const root = document.getElementById("app");
+function escapeHtml(s){ const d=document.createElement("div"); d.textContent=s==null?"":s; return d.innerHTML; }
+function modById(id){ return MODULES.find(m=>m.id===id); }
+function pct(s){ return s && s.total ? Math.round((s.best/s.total)*100) : 0; }
+function isAdmin(){ return profile && profile.role === "admin"; }
+
+/* ============================================================
+   DATA LOADING
+   ============================================================ */
+async function loadEverything(){
+  const { data: mods } = await supabase.from("modules").select("*").order("sort_order");
+  const { data: lessons } = await supabase.from("lessons").select("*").order("sort_order");
+  const { data: quiz } = await supabase.from("quiz_questions").select("*").order("sort_order");
+  MODULES = (mods||[]).map(m=>({
+    id:m.id, title:m.title, short:m.short, ledColor:m.led_color,
+    lessons:(lessons||[]).filter(l=>l.module_id===m.id).map(l=>({id:l.id,label:l.label,title:l.title,body:l.body})),
+    quiz:(quiz||[]).filter(q=>q.module_id===m.id).map(q=>({id:q.id,q:q.question,opts:q.options,correct:q.correct_index,explain:q.explanation}))
+  }));
+
+  const { data: prog } = await supabase.from("progress").select("*").eq("user_id", session.user.id);
+  progressMap = {};
+  (prog||[]).forEach(p=>{ progressMap[p.module_id] = { best:p.best_score, total:p.total, lastScore:p.last_score, attempts:p.attempts }; });
+}
+
+async function loadProfile(){
+  const { data } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
+  profile = data;
+}
+
+/* ============================================================
+   AUTH
+   ============================================================ */
+function renderAuth(){
+  root.innerHTML = `
+    <div class="auth-wrap">
+      <div style="text-align:center;margin-bottom:26px;">
+        <div class="brand-mark" style="margin:0 auto 12px;"><i></i><i></i><i></i></div>
+        <div class="brand-text"><div class="name">LINEUP</div><div class="tag">TIER 1 FIELD &amp; SIGNAL TRAINING</div></div>
+      </div>
+      <div class="card">
+        <div class="auth-toggle">
+          <button id="tab-login" class="${authMode==='login'?'active':''}">Log in</button>
+          <button id="tab-signup" class="${authMode==='signup'?'active':''}">Sign up</button>
+        </div>
+        ${authError ? `<div class="error-msg">${escapeHtml(authError)}</div>` : ""}
+        ${authInfo ? `<div class="info-msg">${escapeHtml(authInfo)}</div>` : ""}
+        ${authMode==='signup' ? `<div class="field"><label>Your name</label><input type="text" id="auth-name" placeholder="Jordan Smith"></div>` : ""}
+        <div class="field"><label>Email</label><input type="email" id="auth-email" placeholder="you@company.com"></div>
+        <div class="field"><label>Password</label><input type="password" id="auth-password" placeholder="••••••••"></div>
+        <button class="btn primary" id="auth-submit" style="width:100%;">${authMode==='login'?'Log in':'Create account'}</button>
+      </div>
+    </div>
+  `;
+  document.getElementById("tab-login").addEventListener("click", ()=>{ authMode="login"; authError=""; authInfo=""; renderAuth(); });
+  document.getElementById("tab-signup").addEventListener("click", ()=>{ authMode="signup"; authError=""; authInfo=""; renderAuth(); });
+  document.getElementById("auth-submit").addEventListener("click", submitAuth);
+}
+
+async function submitAuth(){
+  authError=""; authInfo="";
+  const email = document.getElementById("auth-email").value.trim();
+  const password = document.getElementById("auth-password").value;
+  if(!email || !password){ authError = "Enter an email and password."; renderAuth(); return; }
+
+  if(authMode==="signup"){
+    const name = document.getElementById("auth-name").value.trim();
+    if(!name){ authError = "Enter your name."; renderAuth(); return; }
+    const { data, error } = await supabase.auth.signUp({ email, password, options:{ data:{ name } } });
+    if(error){ authError = error.message; renderAuth(); return; }
+    if(data.session){
+      session = data.session; await afterLogin();
+    } else {
+      authInfo = "Account created — check your email to confirm, then log in.";
+      authMode = "login"; renderAuth();
+    }
+    return;
+  }
+
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if(error){ authError = error.message; renderAuth(); return; }
+  session = data.session;
+  await afterLogin();
+}
+
+async function afterLogin(){
+  view = "loading"; render();
+  await loadProfile();
+  await loadEverything();
+  view = "dashboard"; render();
+}
+
+async function logout(){
+  await supabase.auth.signOut();
+  session = null; profile = null; MODULES = []; progressMap = {};
+  view = "auth"; authMode = "login"; render();
+}
+
+/* ============================================================
+   SHELL
+   ============================================================ */
+function renderShell(inner){
+  root.innerHTML = `
+    <header class="top">
+      <div class="brand">
+        <div class="brand-mark"><i></i><i></i><i></i></div>
+        <div class="brand-text"><div class="name">LINEUP</div><div class="tag">TIER 1 FIELD &amp; SIGNAL TRAINING</div></div>
+      </div>
+      <div class="top-right">
+        <nav class="crumbs">${ view==="dashboard" ? "" : `<button id="crumb-home">DASHBOARD</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':''))}`}</nav>
+        <span class="pill-btn" style="cursor:default;">${escapeHtml(profile ? profile.name : "")}</span>
+        ${isAdmin() ? `<span class="admin-badge">ADMIN</span><button class="pill-btn" id="go-team">Team progress</button>` : ""}
+        <button class="pill-btn" id="logout-btn">Log out</button>
+      </div>
+    </header>
+    <main>${inner}</main>
+    <footer class="foot">SIGNAL HELD · PROGRESS SAVED AUTOMATICALLY</footer>
+  `;
+  const crumb = document.getElementById("crumb-home"); if(crumb) crumb.addEventListener("click", ()=>{ view="dashboard"; render(); });
+  document.getElementById("logout-btn").addEventListener("click", logout);
+  const goTeam = document.getElementById("go-team"); if(goTeam) goTeam.addEventListener("click", openTeamProgress);
+}
+
+/* ============================================================
+   DASHBOARD
+   ============================================================ */
+function moduleStatus(id){ const s=progressMap[id]; if(!s) return "new"; if(s.best===s.total) return "mastered"; return "attempted"; }
+
+function renderDashboard(){
+  const cards = MODULES.map(m=>{
+    const status = moduleStatus(m.id); const s = progressMap[m.id];
+    const pillHtml = status==="mastered" ? `<span class="status-pill done">Mastered</span>`
+      : status==="attempted" ? `<span class="status-pill progress">${s.best}/${s.total} correct</span>`
+      : `<span class="status-pill">Not started</span>`;
+    const on = status!=="new"; const mastered = status==="mastered";
+    const leds = `<span class="led ${on?'on-green':''}"></span><span class="led ${on?(mastered?'on-green':'on-amber blink'):''}"></span><span class="led ${mastered?'on-green':''}"></span>`;
+    const tools = isAdmin() ? `<div class="card-tools"><button class="icon-btn" data-edit="${m.id}" title="Edit module">✎</button><button class="icon-btn danger" data-del="${m.id}" title="Delete module">✕</button></div>` : "";
+    return `<div class="mod-card" data-mod="${m.id}">${tools}
+      <div class="row-top"><div><h3>${escapeHtml(m.title)}</h3><p class="sub">${escapeHtml(m.short)}</p></div><div class="led-strip">${leds}</div></div>
+      <div class="meta"><span>${m.lessons.length} LESSONS</span><span>${m.quiz.length} QUIZ Q's</span>${pillHtml}</div>
+      <div class="progress-bar"><div style="width:${s?pct(s):0}%"></div></div></div>`;
+  }).join("");
+
+  const addCard = isAdmin() ? `<div class="add-mod-card" id="add-module">+ ADD MODULE</div>` : "";
+  const totalQ = MODULES.reduce((a,m)=>a+m.quiz.length,0);
+  const doneQ = Object.values(progressMap).reduce((a,s)=>a+(s.best||0),0);
+  const modsMastered = MODULES.filter(m=>moduleStatus(m.id)==="mastered").length;
+
+  renderShell(`
+    <section class="hero">
+      <div class="eyebrow">New Agent Onboarding</div>
+      <h1>Before you take a call, learn to read the box.</h1>
+      <p>Modules built from the tickets you'll actually see this week. Each ends in a scored quiz — your progress is saved to your account.</p>
+      <div class="panel-row"><div class="stat"><div class="num">${modsMastered}/${MODULES.length}</div><div class="lbl">MODULES MASTERED</div></div>
+      <div class="stat"><div class="num">${doneQ}/${totalQ}</div><div class="lbl">BEST-SCORE QUESTIONS CORRECT</div></div></div>
+    </section>
+    <div class="grid">${cards}${addCard}</div>
+  `);
+
+  root.querySelectorAll(".mod-card").forEach(el=> el.addEventListener("click",(e)=>{
+    if(e.target.closest("[data-edit]")||e.target.closest("[data-del]")) return;
+    currentModId = el.getAttribute("data-mod"); currentLessonIdx=0; view="lesson"; render();
+  }));
+  root.querySelectorAll("[data-edit]").forEach(el=> el.addEventListener("click",(e)=>{ e.stopPropagation(); openEditor(el.getAttribute("data-edit")); }));
+  root.querySelectorAll("[data-del]").forEach(el=> el.addEventListener("click", async (e)=>{
+    e.stopPropagation(); const id = el.getAttribute("data-del"); const m = modById(id);
+    if(confirm(`Delete "${m.title}"? This can't be undone.`)){
+      await supabase.from("modules").delete().eq("id", id);
+      await loadEverything(); render();
+    }
+  }));
+  const addBtn = document.getElementById("add-module"); if(addBtn) addBtn.addEventListener("click", ()=>openEditor(null));
+}
+
+/* ============================================================
+   LESSON / QUIZ / RESULTS
+   ============================================================ */
+function renderLesson(){
+  const m = modById(currentModId); if(!m){ view="dashboard"; render(); return; }
+  const lesson = m.lessons[currentLessonIdx];
+  const tabs = m.lessons.map((l,i)=>`<button class="lesson-tab ${i===currentLessonIdx?'active':''}" data-idx="${i}">${i+1}. ${escapeHtml(l.title)}</button>`).join("");
+  const isLast = currentLessonIdx === m.lessons.length-1;
+  const editBtn = isAdmin() ? `<button class="lesson-tab" id="edit-mod" style="border-color:var(--amber);color:var(--amber);">✎ Edit module</button>` : "";
+  renderShell(`
+    <div class="lesson-nav">${tabs}${editBtn}<button class="lesson-tab quiz" id="go-quiz">TAKE QUIZ →</button></div>
+    <div class="card"><div class="k-label">${escapeHtml(lesson.label)}</div><h2>${escapeHtml(lesson.title)}</h2><div class="body">${lesson.body}</div>
+      <div class="nav-buttons"><button class="btn" id="prev-lesson" ${currentLessonIdx===0?'disabled':''}>← Previous</button>
+      ${isLast? `<button class="btn primary" id="to-quiz-btn">Start module quiz →</button>` : `<button class="btn primary" id="next-lesson">Next lesson →</button>`}</div>
+    </div>`);
+  root.querySelectorAll(".lesson-tab[data-idx]").forEach(el=> el.addEventListener("click", ()=>{ currentLessonIdx=parseInt(el.getAttribute("data-idx")); render(); }));
+  document.getElementById("go-quiz").addEventListener("click", startQuiz);
+  const prev=document.getElementById("prev-lesson"); if(prev) prev.addEventListener("click", ()=>{ if(currentLessonIdx>0){currentLessonIdx--; render();} });
+  const next=document.getElementById("next-lesson"); if(next) next.addEventListener("click", ()=>{ currentLessonIdx++; render(); });
+  const toQuiz=document.getElementById("to-quiz-btn"); if(toQuiz) toQuiz.addEventListener("click", startQuiz);
+  const editMod=document.getElementById("edit-mod"); if(editMod) editMod.addEventListener("click", ()=>openEditor(m.id));
+}
+
+function startQuiz(){ const m=modById(currentModId); quizAnswers=new Array(m.quiz.length).fill(null); quizRevealed=new Array(m.quiz.length).fill(false); quizIdx=0; view="quiz"; render(); }
+
+function renderQuiz(){
+  const m = modById(currentModId); if(!m||!m.quiz.length){ view="lesson"; render(); return; }
+  const q = m.quiz[quizIdx]; const revealed = quizRevealed[quizIdx]; const selected = quizAnswers[quizIdx];
+  const opts = q.opts.map((opt,i)=>{ let cls="opt"; if(revealed){ cls+=" disabled"; if(i===q.correct) cls+=" correct"; else if(i===selected) cls+=" wrong"; } else if(i===selected){ cls+=" selected"; }
+    return `<div class="${cls}" data-idx="${i}"><div class="dot"></div><span class="txt">${escapeHtml(opt)}</span></div>`; }).join("");
+  const explain = revealed ? `<div class="explain"><strong>${selected===q.correct?'Correct.':'Not quite.'}</strong> ${escapeHtml(q.explain)}</div>` : "";
+  const isLast = quizIdx === m.quiz.length-1;
+  const editBtn = isAdmin() ? `<button class="btn" id="edit-mod-q" style="border-color:var(--amber);color:var(--amber);">✎ Edit module</button>` : "";
+  renderShell(`
+    <div class="q-progress">MODULE QUIZ · ${escapeHtml(m.title.toUpperCase())} · QUESTION ${quizIdx+1} OF ${m.quiz.length}</div>
+    <div class="card"><div class="q-block"><h3>${escapeHtml(q.q)}</h3>${opts}</div>${explain}
+      <div class="nav-buttons"><div style="display:flex;gap:10px;"><button class="btn" id="quiz-prev" ${quizIdx===0?'disabled':''}>← Previous</button>${editBtn}</div>
+      <button class="btn primary" id="quiz-next" ${selected===null?'disabled':''}>${isLast?(revealed?'See results →':'Check answer'):(revealed?'Next question →':'Check answer')}</button></div>
+    </div>`);
+  if(!revealed) root.querySelectorAll(".opt").forEach(el=> el.addEventListener("click", ()=>{ quizAnswers[quizIdx]=parseInt(el.getAttribute("data-idx")); render(); }));
+  document.getElementById("quiz-prev").addEventListener("click", ()=>{ if(quizIdx>0){ quizIdx--; render(); } });
+  document.getElementById("quiz-next").addEventListener("click", ()=>{ if(!revealed){ quizRevealed[quizIdx]=true; render(); } else if(isLast){ finishQuiz(); } else { quizIdx++; render(); } });
+  const editModQ=document.getElementById("edit-mod-q"); if(editModQ) editModQ.addEventListener("click", ()=>openEditor(m.id));
+}
+
+async function finishQuiz(){
+  const m = modById(currentModId);
+  const correctCount = quizAnswers.reduce((acc,ans,i)=> acc+(ans===m.quiz[i].correct?1:0),0);
+  const prior = progressMap[m.id];
+  const record = { best: Math.max(correctCount, prior?prior.best:0), total: m.quiz.length, lastScore: correctCount, attempts: (prior?prior.attempts:0)+1 };
+  progressMap[m.id] = record;
+  await supabase.from("progress").upsert({
+    user_id: session.user.id, module_id: m.id, best_score: record.best, total: record.total, last_score: record.lastScore, attempts: record.attempts, updated_at: new Date().toISOString()
+  }, { onConflict: "user_id,module_id" });
+  view = "results"; render();
+}
+
+function renderResults(){
+  const m = modById(currentModId); const s = progressMap[m.id]; const p = pct(s);
+  const leds = Array.from({length:5}).map((_,i)=>{ const lit = i < Math.round((s.lastScore/s.total)*5); const color = p===100?"on-green":p>=60?"on-amber":"on-red"; return `<span class="led ${lit?color:''}"></span>`; }).join("");
+  const verdict = p===100?"Fully registered. This module is locked in.":p>=60?"Mostly holding — worth a second pass before it's live-call ready.":"Signal's not there yet. Revisit the lessons and retake when ready.";
+  renderShell(`
+    <div class="card result-hero"><div class="k-label">QUIZ RESULT · ${escapeHtml(m.title.toUpperCase())}</div>
+      <div class="big-score">${s.lastScore}/${s.total}</div><div class="led-array">${leds}</div><div class="verdict">${escapeHtml(verdict)}</div>
+      <div class="nav-buttons" style="justify-content:center;gap:14px;"><button class="btn" id="retake">Retake quiz</button><button class="btn" id="review">Review lessons</button><button class="btn primary" id="back-dash">Back to dashboard</button></div>
+    </div>`);
+  document.getElementById("retake").addEventListener("click", startQuiz);
+  document.getElementById("review").addEventListener("click", ()=>{ currentLessonIdx=0; view="lesson"; render(); });
+  document.getElementById("back-dash").addEventListener("click", ()=>{ view="dashboard"; render(); });
+}
+
+/* ============================================================
+   TEAM PROGRESS (admin only)
+   ============================================================ */
+async function openTeamProgress(){
+  const { data: people } = await supabase.from("profiles").select("*").order("name");
+  const { data: allProgress } = await supabase.from("progress").select("*");
+  teamRows = (people||[]).map(p=>{
+    const rows = (allProgress||[]).filter(pr=>pr.user_id===p.id);
+    const perModule = {};
+    MODULES.forEach(m=>{ const r = rows.find(rr=>rr.module_id===m.id); perModule[m.id] = r ? Math.round((r.best_score/r.total)*100) : 0; });
+    return { id:p.id, name:p.name, role:p.role, perModule };
+  });
+  view = "team"; render();
+}
+
+function renderTeam(){
+  const headerCols = MODULES.map(m=>`<th>${escapeHtml(m.title)}</th>`).join("");
+  const rows = teamRows.map(r=>{
+    const cells = MODULES.map(m=>`<td>${r.perModule[m.id]}%</td>`).join("");
+    const roleTag = r.role==='admin' ? `<span class="role-tag admin">ADMIN</span>` : `<span class="role-tag">AGENT</span>`;
+    const toggleBtn = r.id!==profile.id ? `<button class="mini-btn" data-toggle-role="${r.id}" data-current-role="${r.role}">${r.role==='admin'?'Remove admin':'Make admin'}</button>` : "";
+    return `<tr><td>${escapeHtml(r.name)}</td><td>${roleTag}</td>${cells}<td>${toggleBtn}</td></tr>`;
+  }).join("");
+  renderShell(`
+    <div class="card">
+      <div class="k-label">ADMIN VIEW</div><h2>Team progress</h2>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">Best-score completion per person, per module.</p>
+      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th>${headerCols}<th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>`);
+  root.querySelectorAll("[data-toggle-role]").forEach(el=> el.addEventListener("click", async ()=>{
+    const id = el.getAttribute("data-toggle-role"); const current = el.getAttribute("data-current-role");
+    const newRole = current==='admin' ? 'agent' : 'admin';
+    await supabase.from("profiles").update({ role:newRole }).eq("id", id);
+    await openTeamProgress();
+  }));
+}
+
+/* ============================================================
+   EDITOR (admin only) — module / lessons / quiz CRUD
+   ============================================================ */
+function blankModule(){ return { id:null, title:"", short:"", ledColor:"green", lessons:[], quiz:[] }; }
+function blankLesson(){ return { title:"New lesson", label:"Lesson · Untitled", body:"<p>Write the lesson content here.</p>" }; }
+function blankQuestion(){ return { q:"New question", opts:["Option A","Option B"], correct:0, explain:"" }; }
+function slugify(s){ const base=(s||"").toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,''); let id=base||("module-"+Date.now()); let i=2;
+  while(MODULES.some(m=>m.id===id && m.id!==editingExistingId)){ id=base+"-"+i; i++; } return id; }
+
+function openEditor(id){
+  if(id){ editingExistingId=id; draftModule=JSON.parse(JSON.stringify(modById(id))); }
+  else { editingExistingId=null; draftModule=blankModule(); }
+  view="editor"; render();
+}
+
+function renderEditor(){
+  const d = draftModule;
+  const lessonsHtml = d.lessons.map((l,i)=>`
+    <div class="sub-card"><div class="sub-card-head"><span class="tag">LESSON ${i+1}</span>
+      <div class="mini-tools"><button class="mini-btn" data-lesson-up="${i}" ${i===0?'disabled':''}>↑</button>
+      <button class="mini-btn" data-lesson-down="${i}" ${i===d.lessons.length-1?'disabled':''}>↓</button>
+      <button class="mini-btn danger" data-lesson-del="${i}">Delete</button></div></div>
+      <div class="field"><label>Label</label><input type="text" data-lesson-label="${i}" value="${escapeHtml(l.label)}"></div>
+      <div class="field"><label>Title</label><input type="text" data-lesson-title="${i}" value="${escapeHtml(l.title)}"></div>
+      <div class="field"><label>Body (HTML)</label><textarea data-lesson-body="${i}" style="min-height:150px;">${escapeHtml(l.body)}</textarea><div class="hint">Supports basic tags: &lt;p&gt; &lt;strong&gt; &lt;ul&gt;&lt;li&gt;.</div></div>
+    </div>`).join("");
+
+  const quizHtml = d.quiz.map((q,i)=>{
+    const optsHtml = q.opts.map((opt,oi)=>`<div class="opt-row"><input type="radio" name="correct-${i}" data-q-correct="${i}" value="${oi}" ${q.correct===oi?'checked':''}>
+      <input type="text" data-q-opt="${i}:${oi}" value="${escapeHtml(opt)}"><button class="mini-btn danger" data-q-opt-del="${i}:${oi}" ${q.opts.length<=2?'disabled':''}>✕</button></div>`).join("");
+    return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1}</span>
+      <div class="mini-tools"><button class="mini-btn" data-q-up="${i}" ${i===0?'disabled':''}>↑</button><button class="mini-btn" data-q-down="${i}" ${i===d.quiz.length-1?'disabled':''}>↓</button>
+      <button class="mini-btn danger" data-q-del="${i}">Delete</button></div></div>
+      <div class="field"><label>Question</label><textarea data-q-text="${i}" style="min-height:55px;">${escapeHtml(q.q)}</textarea></div>
+      <div class="field"><label>Options (select correct)</label>${optsHtml}<button class="mini-btn" data-q-opt-add="${i}" style="margin-top:4px;">+ Add option</button></div>
+      <div class="field"><label>Explanation</label><textarea data-q-explain="${i}" style="min-height:55px;">${escapeHtml(q.explain)}</textarea></div>
+    </div>`;
+  }).join("");
+
+  renderShell(`
+    <div class="card">
+      <div class="k-label">${editingExistingId?"EDITING MODULE":"NEW MODULE"}</div>
+      <div class="field"><label>Module title</label><input type="text" id="mod-title" value="${escapeHtml(d.title)}"></div>
+      <div class="field"><label>Short description</label><textarea id="mod-short" style="min-height:55px;">${escapeHtml(d.short)}</textarea></div>
+      <div class="editor-section"><div class="editor-section-head"><h3>Lessons</h3></div>${lessonsHtml||'<p style="color:var(--text-faint);font-size:13px;">No lessons yet.</p>'}<button class="dashed-btn" id="add-lesson">+ Add lesson</button></div>
+      <div class="editor-section"><div class="editor-section-head"><h3>Quiz questions</h3></div>${quizHtml||'<p style="color:var(--text-faint);font-size:13px;">No questions yet.</p>'}<button class="dashed-btn" id="add-question">+ Add question</button></div>
+      <div class="nav-buttons"><div style="display:flex;gap:10px;"><button class="btn" id="editor-cancel">Cancel</button>${editingExistingId?`<button class="btn danger" id="editor-delete">Delete module</button>`:""}</div>
+      <button class="btn primary" id="editor-save">Save module</button></div>
+    </div>`);
+  wireEditorEvents();
+}
+
+function wireEditorEvents(){
+  const d = draftModule;
+  document.getElementById("mod-title").addEventListener("input", e=>{ d.title=e.target.value; });
+  document.getElementById("mod-short").addEventListener("input", e=>{ d.short=e.target.value; });
+  root.querySelectorAll("[data-lesson-label]").forEach(el=> el.addEventListener("input", e=>{ d.lessons[+el.dataset.lessonLabel].label=e.target.value; }));
+  root.querySelectorAll("[data-lesson-title]").forEach(el=> el.addEventListener("input", e=>{ d.lessons[+el.dataset.lessonTitle].title=e.target.value; }));
+  root.querySelectorAll("[data-lesson-body]").forEach(el=> el.addEventListener("input", e=>{ d.lessons[+el.dataset.lessonBody].body=e.target.value; }));
+  root.querySelectorAll("[data-lesson-up]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.lessonUp; [d.lessons[i-1],d.lessons[i]]=[d.lessons[i],d.lessons[i-1]]; renderEditor(); }));
+  root.querySelectorAll("[data-lesson-down]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.lessonDown; [d.lessons[i+1],d.lessons[i]]=[d.lessons[i],d.lessons[i+1]]; renderEditor(); }));
+  root.querySelectorAll("[data-lesson-del]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.lessonDel; if(confirm("Delete this lesson?")){ d.lessons.splice(i,1); renderEditor(); } }));
+  document.getElementById("add-lesson").addEventListener("click", ()=>{ d.lessons.push(blankLesson()); renderEditor(); });
+
+  root.querySelectorAll("[data-q-text]").forEach(el=> el.addEventListener("input", e=>{ d.quiz[+el.dataset.qText].q=e.target.value; }));
+  root.querySelectorAll("[data-q-explain]").forEach(el=> el.addEventListener("input", e=>{ d.quiz[+el.dataset.qExplain].explain=e.target.value; }));
+  root.querySelectorAll("[data-q-opt]").forEach(el=> el.addEventListener("input", e=>{ const [qi,oi]=el.dataset.qOpt.split(":").map(Number); d.quiz[qi].opts[oi]=e.target.value; }));
+  root.querySelectorAll("[data-q-correct]").forEach(el=> el.addEventListener("change", e=>{ d.quiz[+el.dataset.qCorrect].correct=+e.target.value; }));
+  root.querySelectorAll("[data-q-opt-add]").forEach(el=> el.addEventListener("click", ()=>{ d.quiz[+el.dataset.qOptAdd].opts.push("New option"); renderEditor(); }));
+  root.querySelectorAll("[data-q-opt-del]").forEach(el=> el.addEventListener("click", ()=>{
+    const [qi,oi]=el.dataset.qOptDel.split(":").map(Number); if(d.quiz[qi].opts.length<=2) return;
+    d.quiz[qi].opts.splice(oi,1); if(d.quiz[qi].correct===oi) d.quiz[qi].correct=0; else if(d.quiz[qi].correct>oi) d.quiz[qi].correct-=1; renderEditor();
+  }));
+  root.querySelectorAll("[data-q-up]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.qUp; [d.quiz[i-1],d.quiz[i]]=[d.quiz[i],d.quiz[i-1]]; renderEditor(); }));
+  root.querySelectorAll("[data-q-down]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.qDown; [d.quiz[i+1],d.quiz[i]]=[d.quiz[i],d.quiz[i+1]]; renderEditor(); }));
+  root.querySelectorAll("[data-q-del]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.qDel; if(confirm("Delete this question?")){ d.quiz.splice(i,1); renderEditor(); } }));
+  document.getElementById("add-question").addEventListener("click", ()=>{ d.quiz.push(blankQuestion()); renderEditor(); });
+
+  document.getElementById("editor-cancel").addEventListener("click", ()=>{ view = editingExistingId?"lesson":"dashboard"; if(editingExistingId){ currentModId=editingExistingId; currentLessonIdx=0; } render(); });
+
+  const delBtn = document.getElementById("editor-delete");
+  if(delBtn) delBtn.addEventListener("click", async ()=>{
+    if(confirm(`Delete "${d.title||'this module'}"? This can't be undone.`)){
+      await supabase.from("modules").delete().eq("id", editingExistingId);
+      await loadEverything(); view="dashboard"; render();
+    }
+  });
+
+  document.getElementById("editor-save").addEventListener("click", async ()=>{
+    if(!d.title.trim()){ alert("Give the module a title before saving."); return; }
+    const id = editingExistingId || slugify(d.title);
+    await supabase.from("modules").upsert({ id, title:d.title, short:d.short, led_color:d.ledColor, sort_order: editingExistingId ? undefined : (MODULES.length+1) });
+    await supabase.from("lessons").delete().eq("module_id", id);
+    if(d.lessons.length){
+      await supabase.from("lessons").insert(d.lessons.map((l,i)=>({ module_id:id, sort_order:i, label:l.label, title:l.title, body:l.body })));
+    }
+    await supabase.from("quiz_questions").delete().eq("module_id", id);
+    if(d.quiz.length){
+      await supabase.from("quiz_questions").insert(d.quiz.map((q,i)=>({ module_id:id, sort_order:i, question:q.q, options:q.opts, correct_index:q.correct, explanation:q.explain })));
+    }
+    await loadEverything();
+    currentModId = id; currentLessonIdx = 0;
+    view = MODULES.find(m=>m.id===id).lessons.length ? "lesson" : "dashboard";
+    render();
+  });
+}
+
+/* ============================================================
+   ROUTER
+   ============================================================ */
+function render(){
+  if(view==="loading") root.innerHTML = `<div style="padding:60px;text-align:center;color:#8A96AD;font-family:'IBM Plex Mono',monospace;font-size:13px;">LOADING…</div>`;
+  else if(view==="auth") renderAuth();
+  else if(view==="dashboard") renderDashboard();
+  else if(view==="lesson") renderLesson();
+  else if(view==="quiz") renderQuiz();
+  else if(view==="results") renderResults();
+  else if(view==="editor") renderEditor();
+  else if(view==="team") renderTeam();
+}
+
+/* ============================================================
+   INIT
+   ============================================================ */
+(async function init(){
+  view="loading"; render();
+  const { data } = await supabase.auth.getSession();
+  if(data.session){ session = data.session; await afterLogin(); }
+  else { view="auth"; render(); }
+
+  supabase.auth.onAuthStateChange((event, newSession)=>{
+    if(event === "SIGNED_OUT"){ session=null; profile=null; view="auth"; render(); }
+  });
+})();
+
+})();
+</script>
+</body>
+</html>
