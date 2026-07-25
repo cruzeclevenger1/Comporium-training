@@ -121,6 +121,16 @@
   html.theme-light .opt{ background:#eef1f8; }
   html.theme-light .sub-card{ background:#eef1f8; }
   html.theme-light .export-textarea{ background:#eef1f8; color:#1b6b52; }
+  html.theme-light .field input[type=text], html.theme-light .field input[type=email], html.theme-light .field input[type=password], html.theme-light .field textarea{ background:#eef1f8; }
+  html.theme-light .btn{ background:#eef1f8; }
+  html.theme-light .btn.primary{ background:linear-gradient(155deg,#d8f3ea,#c3ecd9); }
+  html.theme-light .btn.danger{ background:linear-gradient(155deg,#fadada,#f6c6c6); }
+  html.theme-light .pill-btn{ background:#eef1f8; }
+  html.theme-light .mini-btn{ background:#eef1f8; }
+  html.theme-light .icon-btn{ background:#eef1f8; }
+  html.theme-light .lesson-tab{ background:#eef1f8; }
+  html.theme-light select{ background:#eef1f8; color:var(--text); }
+  html.theme-light table.team td{ color:#333d52; }
 
   .gear-btn{ width:34px; height:34px; border-radius:8px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); cursor:pointer; font-size:15px; display:flex; align-items:center; justify-content:center; }
   html.theme-light .gear-btn{ background:#eef1f8; }
@@ -128,6 +138,12 @@
   .theme-switch{ display:flex; gap:8px; }
   .theme-switch button{ flex:1; padding:12px; border-radius:9px; border:1px solid var(--stroke); background:#0e1626; color:var(--text-dim); cursor:pointer; font-family:var(--mono); font-size:12.5px; }
   html.theme-light .theme-switch button{ background:#eef1f8; }
+  .top-nav{ display:flex; gap:8px; margin-bottom:24px; }
+  .top-nav-btn{ font-family:var(--mono); font-size:12px; letter-spacing:.03em; padding:9px 16px; border-radius:8px; border:1px solid var(--stroke); background:var(--panel); color:var(--text-dim); cursor:pointer; }
+  .top-nav-btn:hover{ border-color:#3a4a70; color:var(--text); }
+  .top-nav-btn.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
+  .two-col-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:640px){ .two-col-grid{ grid-template-columns:1fr; } }
   .theme-switch button.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
 </style>
 </head>
@@ -164,6 +180,10 @@ let quizAnswers = []; let quizRevealed = []; let quizIdx = 0;
 
 let draftModule = null; let editingExistingId = null;
 let teamRows = [];
+let REFERENCE_PAGES = [];
+let currentRefIdx = 0;
+let refEditing = false;
+let refDraft = null;
 
 const root = document.getElementById("app");
 function escapeHtml(s){ const d=document.createElement("div"); d.textContent=s==null?"":s; return d.innerHTML; }
@@ -273,7 +293,7 @@ async function afterLogin(){
   view = "loading"; render();
   await loadProfile();
   await loadEverything();
-  view = "dashboard"; render();
+  view = "home"; render();
 }
 
 async function logout(){
@@ -286,6 +306,11 @@ async function logout(){
    SHELL
    ============================================================ */
 function renderShell(inner){
+  const inModulesFlow = ["lesson","quiz","results","editor"].includes(view);
+  const crumbLabel = inModulesFlow ? "TRAINING MODULES" : "HOME";
+  const crumbTarget = inModulesFlow ? "dashboard" : "home";
+  const section = view==="home" ? "home" : ["dashboard","lesson","quiz","results","editor"].includes(view) ? "modules" : view==="reference" ? "reference" : null;
+
   root.innerHTML = `
     <header class="top">
       <div class="brand">
@@ -294,16 +319,24 @@ function renderShell(inner){
         <div class="brand-text"><div class="name">COMPORIUM TRAINING MODULES</div><div class="tag">TIER 1 FIELD &amp; SIGNAL TRAINING</div></div>
       </div>
       <div class="top-right">
-        <nav class="crumbs">${ view==="dashboard" ? "" : `<button id="crumb-home">DASHBOARD</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':view==='settings'?'SETTINGS':''))}`}</nav>
+        <nav class="crumbs">${ (view==="home"||view==="dashboard"||view==="reference") ? "" : `<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':view==='settings'?'SETTINGS':''))}`}</nav>
         <span class="pill-btn" style="cursor:default;">${escapeHtml(profile ? profile.name : "")}</span>
         ${isAdmin() ? `<span class="admin-badge">ADMIN</span><button class="pill-btn" id="go-team">Team progress</button>` : ""}
         <button class="pill-btn" id="logout-btn">Log out</button>
       </div>
     </header>
+    <div class="top-nav">
+      <button class="top-nav-btn ${section==='home'?'active':''}" id="nav-home">Dashboard</button>
+      <button class="top-nav-btn ${section==='modules'?'active':''}" id="nav-modules">Training Modules</button>
+      <button class="top-nav-btn ${section==='reference'?'active':''}" id="nav-reference">Reference</button>
+    </div>
     <main>${inner}</main>
     <footer class="foot">SIGNAL HELD · PROGRESS SAVED AUTOMATICALLY</footer>
   `;
-  const crumb = document.getElementById("crumb-home"); if(crumb) crumb.addEventListener("click", ()=>{ view="dashboard"; render(); });
+  const crumb = document.getElementById("crumb-home"); if(crumb) crumb.addEventListener("click", ()=>{ view=crumbTarget; render(); });
+  document.getElementById("nav-home").addEventListener("click", ()=>{ view="home"; render(); });
+  document.getElementById("nav-modules").addEventListener("click", ()=>{ view="dashboard"; render(); });
+  document.getElementById("nav-reference").addEventListener("click", openReference);
   document.getElementById("open-settings").addEventListener("click", ()=>{ view="settings"; render(); });
   document.getElementById("logout-btn").addEventListener("click", logout);
   const goTeam = document.getElementById("go-team"); if(goTeam) goTeam.addEventListener("click", openTeamProgress);
@@ -685,7 +718,7 @@ function renderSettings(){
     </div>
   `);
 
-  document.getElementById("back-dash-settings").addEventListener("click", ()=>{ view="dashboard"; render(); });
+  document.getElementById("back-dash-settings").addEventListener("click", ()=>{ view="home"; render(); });
 
   document.getElementById("save-name").addEventListener("click", async ()=>{
     const newName = document.getElementById("set-name").value.trim();
@@ -715,11 +748,115 @@ function renderSettings(){
 }
 
 /* ============================================================
+   HOME (landing selector)
+   ============================================================ */
+function renderHome(){
+  const totalQ = MODULES.reduce((a,m)=>a+m.quiz.length,0);
+  const doneQ = Object.values(progressMap).reduce((a,s)=>a+(s.best||0),0);
+  const modsMastered = MODULES.filter(m=>moduleStatus(m.id)==="mastered").length;
+  renderShell(`
+    <section class="hero">
+      <div class="eyebrow">Welcome back</div>
+      <h1>Where do you want to go?</h1>
+      <p>Training Modules for structured onboarding lessons and quizzes. Reference Guide for quick lookups anytime, for everyone on the team.</p>
+      <div class="panel-row"><div class="stat"><div class="num">${modsMastered}/${MODULES.length}</div><div class="lbl">MODULES MASTERED</div></div>
+      <div class="stat"><div class="num">${doneQ}/${totalQ}</div><div class="lbl">BEST-SCORE QUESTIONS CORRECT</div></div></div>
+    </section>
+    <div class="two-col-grid">
+      <div class="mod-card" id="go-modules-card">
+        <div class="row-top"><div><h3>Training Modules</h3><p class="sub">Structured lessons and scored quizzes for onboarding and skill-building.</p></div><div class="led-strip"><span class="led on-green"></span><span class="led on-amber blink"></span><span class="led on-green"></span></div></div>
+        <div class="meta"><span>${MODULES.length} MODULES</span><span>${totalQ} TOTAL QUESTIONS</span></div>
+      </div>
+      <div class="mod-card" id="go-reference-card">
+        <div class="row-top"><div><h3>Reference Guide</h3><p class="sub">A living knowledge base the whole team can look things up in, not just new hires.</p></div><div class="led-strip"><span class="led on-cyan" style="background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 8px var(--cyan);"></span></div></div>
+        <div class="meta"><span>ALWAYS UP TO DATE</span></div>
+      </div>
+    </div>
+  `);
+  document.getElementById("go-modules-card").addEventListener("click", ()=>{ view="dashboard"; render(); });
+  document.getElementById("go-reference-card").addEventListener("click", openReference);
+}
+
+/* ============================================================
+   REFERENCE GUIDE (OneNote-style, admin editable)
+   ============================================================ */
+async function loadReference(){
+  const { data } = await supabase.from("reference_pages").select("*").order("sort_order");
+  REFERENCE_PAGES = data || [];
+  if(currentRefIdx >= REFERENCE_PAGES.length) currentRefIdx = 0;
+}
+async function openReference(){
+  await loadReference();
+  refEditing = false;
+  view = "reference"; render();
+}
+
+function renderReference(){
+  const tabs = REFERENCE_PAGES.map((p,i)=>`<button class="lesson-tab ${i===currentRefIdx?'active':''}" data-ref-idx="${i}">${escapeHtml(p.title)}</button>`).join("");
+  const addBtn = isAdmin() ? `<button class="lesson-tab" id="add-ref-page" style="border-color:var(--cyan);color:var(--cyan);">+ Add page</button>` : "";
+  const page = REFERENCE_PAGES[currentRefIdx];
+
+  let bodyHtml;
+  if(!REFERENCE_PAGES.length){
+    bodyHtml = `<div class="card"><p style="color:var(--text-dim);font-size:14px;">Nothing here yet.${isAdmin() ? ' Click "+ Add page" above to start building it out.' : ' Check back once an admin has added content.'}</p></div>`;
+  } else if(refEditing){
+    bodyHtml = `
+      <div class="card">
+        <div class="k-label">EDITING PAGE</div>
+        <div class="field"><label>Page title</label><input type="text" id="ref-title" value="${escapeHtml(refDraft.title)}"></div>
+        <div class="field"><label>Body (HTML)</label><textarea id="ref-body" style="min-height:260px;">${escapeHtml(refDraft.body)}</textarea><div class="hint">Supports basic tags: &lt;p&gt; &lt;strong&gt; &lt;ul&gt;&lt;li&gt;.</div></div>
+        <div class="nav-buttons">
+          <div style="display:flex;gap:10px;"><button class="btn" id="ref-cancel">Cancel</button><button class="btn danger" id="ref-delete">Delete page</button></div>
+          <button class="btn primary" id="ref-save">Save page</button>
+        </div>
+      </div>`;
+  } else {
+    const editBtn = isAdmin() ? `<button class="btn" id="ref-edit" style="border-color:var(--amber);color:var(--amber);">✎ Edit page</button>` : "";
+    bodyHtml = `
+      <div class="card">
+        <div class="k-label">REFERENCE GUIDE</div>
+        <h2>${escapeHtml(page.title)}</h2>
+        <div class="body">${page.body}</div>
+        <div class="nav-buttons"><div></div>${editBtn}</div>
+      </div>`;
+  }
+
+  renderShell(`<div class="lesson-nav">${tabs}${addBtn}</div>${bodyHtml}`);
+
+  root.querySelectorAll("[data-ref-idx]").forEach(el=> el.addEventListener("click", ()=>{ currentRefIdx=+el.getAttribute("data-ref-idx"); refEditing=false; render(); }));
+
+  const addPageBtn = document.getElementById("add-ref-page");
+  if(addPageBtn) addPageBtn.addEventListener("click", async ()=>{
+    const { data, error } = await supabase.from("reference_pages").insert({ title:"New page", body:"<p>Write here.</p>", sort_order: REFERENCE_PAGES.length }).select().single();
+    if(!error){ await loadReference(); currentRefIdx = REFERENCE_PAGES.findIndex(p=>p.id===data.id); refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
+  });
+  const editBtn = document.getElementById("ref-edit");
+  if(editBtn) editBtn.addEventListener("click", ()=>{ refDraft = { title:page.title, body:page.body }; refEditing = true; render(); });
+  const cancelBtn = document.getElementById("ref-cancel");
+  if(cancelBtn) cancelBtn.addEventListener("click", ()=>{ refEditing=false; render(); });
+  const saveBtn = document.getElementById("ref-save");
+  if(saveBtn) saveBtn.addEventListener("click", async ()=>{
+    const title = document.getElementById("ref-title").value.trim() || "Untitled page";
+    const body = document.getElementById("ref-body").value;
+    await supabase.from("reference_pages").update({ title, body }).eq("id", page.id);
+    refEditing = false; await loadReference(); render();
+  });
+  const deleteBtn = document.getElementById("ref-delete");
+  if(deleteBtn) deleteBtn.addEventListener("click", async ()=>{
+    if(confirm(`Delete "${page.title}"? This can't be undone.`)){
+      await supabase.from("reference_pages").delete().eq("id", page.id);
+      refEditing = false; currentRefIdx = 0; await loadReference(); render();
+    }
+  });
+}
+
+/* ============================================================
    ROUTER
    ============================================================ */
 function render(){
   if(view==="loading") root.innerHTML = `<div style="padding:60px;text-align:center;color:#8A96AD;font-family:'IBM Plex Mono',monospace;font-size:13px;">LOADING…</div>`;
   else if(view==="auth") renderAuth();
+  else if(view==="home") renderHome();
   else if(view==="dashboard") renderDashboard();
   else if(view==="lesson") renderLesson();
   else if(view==="quiz") renderQuiz();
@@ -727,6 +864,7 @@ function render(){
   else if(view==="editor") renderEditor();
   else if(view==="team") renderTeam();
   else if(view==="settings") renderSettings();
+  else if(view==="reference") renderReference();
 }
 
 /* ============================================================
