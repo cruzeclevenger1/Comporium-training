@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LINEUP — Tier 1 Field &amp; Signal Training</title>
+<title>Comporium Training Modules</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
@@ -22,7 +22,7 @@
   .brand-mark i{ width:3px; height:14px; border-radius:2px; background:var(--green); box-shadow:0 0 6px var(--green); }
   .brand-mark i:nth-child(2){ height:9px; background:var(--amber); box-shadow:0 0 6px var(--amber);}
   .brand-mark i:nth-child(3){ height:18px; background:var(--cyan); box-shadow:0 0 6px var(--cyan);}
-  .brand-text .name{ font-family:var(--mono); font-weight:700; letter-spacing:.08em; font-size:15px; }
+  .brand-text .name{ font-family:var(--mono); font-weight:700; letter-spacing:.04em; font-size:13px; }
   .brand-text .tag{ font-size:11px; color:var(--text-faint); letter-spacing:.05em; }
   .top-right{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   nav.crumbs{ font-family:var(--mono); font-size:12px; color:var(--text-faint); }
@@ -123,8 +123,8 @@
 /* ============================================================
    FILL THESE IN — Supabase project settings → API
    ============================================================ */
-const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
+const SUPABASE_URL = "YOUR_SUPABASE_URL";
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
 
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -152,6 +152,26 @@ const root = document.getElementById("app");
 function escapeHtml(s){ const d=document.createElement("div"); d.textContent=s==null?"":s; return d.innerHTML; }
 function modById(id){ return MODULES.find(m=>m.id===id); }
 function pct(s){ return s && s.total ? Math.round((s.best/s.total)*100) : 0; }
+function overallPct(m){
+  const s = progressMap[m.id];
+  const totalLessons = m.lessons.length || 1;
+  const viewedCount = s && s.lessonsViewed ? s.lessonsViewed.length : 0;
+  const lessonFraction = Math.min(viewedCount / totalLessons, 1);
+  const quizFraction = s && m.quiz.length ? (s.best||0) / m.quiz.length : 0;
+  return Math.round((lessonFraction*0.5 + quizFraction*0.5) * 100);
+}
+async function markLessonViewed(m, lessonId){
+  const existing = progressMap[m.id] || { best:0, total:m.quiz.length, lastScore:0, attempts:0, lessonsViewed:[] };
+  if(!existing.lessonsViewed) existing.lessonsViewed = [];
+  if(existing.lessonsViewed.includes(lessonId)) return; // already recorded, skip the write
+  existing.lessonsViewed = [...existing.lessonsViewed, lessonId];
+  progressMap[m.id] = existing;
+  await supabase.from("progress").upsert({
+    user_id: session.user.id, module_id: m.id,
+    best_score: existing.best, total: m.quiz.length, last_score: existing.lastScore, attempts: existing.attempts,
+    lessons_viewed: existing.lessonsViewed, updated_at: new Date().toISOString()
+  }, { onConflict: "user_id,module_id" });
+}
 function isAdmin(){ return profile && profile.role === "admin"; }
 
 /* ============================================================
@@ -169,7 +189,7 @@ async function loadEverything(){
 
   const { data: prog } = await supabase.from("progress").select("*").eq("user_id", session.user.id);
   progressMap = {};
-  (prog||[]).forEach(p=>{ progressMap[p.module_id] = { best:p.best_score, total:p.total, lastScore:p.last_score, attempts:p.attempts }; });
+  (prog||[]).forEach(p=>{ progressMap[p.module_id] = { best:p.best_score, total:p.total, lastScore:p.last_score, attempts:p.attempts, lessonsViewed:p.lessons_viewed||[] }; });
 }
 
 async function loadProfile(){
@@ -185,7 +205,7 @@ function renderAuth(){
     <div class="auth-wrap">
       <div style="text-align:center;margin-bottom:26px;">
         <div class="brand-mark" style="margin:0 auto 12px;"><i></i><i></i><i></i></div>
-        <div class="brand-text"><div class="name">LINEUP</div><div class="tag">TIER 1 FIELD &amp; SIGNAL TRAINING</div></div>
+        <div class="brand-text"><div class="name">COMPORIUM TRAINING MODULES</div><div class="tag">TIER 1 FIELD &amp; SIGNAL TRAINING</div></div>
       </div>
       <div class="card">
         <div class="auth-toggle">
@@ -253,7 +273,7 @@ function renderShell(inner){
     <header class="top">
       <div class="brand">
         <div class="brand-mark"><i></i><i></i><i></i></div>
-        <div class="brand-text"><div class="name">LINEUP</div><div class="tag">TIER 1 FIELD &amp; SIGNAL TRAINING</div></div>
+        <div class="brand-text"><div class="name">COMPORIUM TRAINING MODULES</div><div class="tag">TIER 1 FIELD &amp; SIGNAL TRAINING</div></div>
       </div>
       <div class="top-right">
         <nav class="crumbs">${ view==="dashboard" ? "" : `<button id="crumb-home">DASHBOARD</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':''))}`}</nav>
@@ -287,7 +307,7 @@ function renderDashboard(){
     return `<div class="mod-card" data-mod="${m.id}">${tools}
       <div class="row-top"><div><h3>${escapeHtml(m.title)}</h3><p class="sub">${escapeHtml(m.short)}</p></div><div class="led-strip">${leds}</div></div>
       <div class="meta"><span>${m.lessons.length} LESSONS</span><span>${m.quiz.length} QUIZ Q's</span>${pillHtml}</div>
-      <div class="progress-bar"><div style="width:${s?pct(s):0}%"></div></div></div>`;
+      <div class="progress-bar"><div style="width:${overallPct(m)}%"></div></div></div>`;
   }).join("");
 
   const addCard = isAdmin() ? `<div class="add-mod-card" id="add-module">+ ADD MODULE</div>` : "";
@@ -327,6 +347,7 @@ function renderDashboard(){
 function renderLesson(){
   const m = modById(currentModId); if(!m){ view="dashboard"; render(); return; }
   const lesson = m.lessons[currentLessonIdx];
+  if(lesson.id) markLessonViewed(m, lesson.id);
   const tabs = m.lessons.map((l,i)=>`<button class="lesson-tab ${i===currentLessonIdx?'active':''}" data-idx="${i}">${i+1}. ${escapeHtml(l.title)}</button>`).join("");
   const isLast = currentLessonIdx === m.lessons.length-1;
   const editBtn = isAdmin() ? `<button class="lesson-tab" id="edit-mod" style="border-color:var(--amber);color:var(--amber);">✎ Edit module</button>` : "";
@@ -370,10 +391,10 @@ async function finishQuiz(){
   const m = modById(currentModId);
   const correctCount = quizAnswers.reduce((acc,ans,i)=> acc+(ans===m.quiz[i].correct?1:0),0);
   const prior = progressMap[m.id];
-  const record = { best: Math.max(correctCount, prior?prior.best:0), total: m.quiz.length, lastScore: correctCount, attempts: (prior?prior.attempts:0)+1 };
+  const record = { best: Math.max(correctCount, prior?prior.best:0), total: m.quiz.length, lastScore: correctCount, attempts: (prior?prior.attempts:0)+1, lessonsViewed: prior&&prior.lessonsViewed ? prior.lessonsViewed : [] };
   progressMap[m.id] = record;
   await supabase.from("progress").upsert({
-    user_id: session.user.id, module_id: m.id, best_score: record.best, total: record.total, last_score: record.lastScore, attempts: record.attempts, updated_at: new Date().toISOString()
+    user_id: session.user.id, module_id: m.id, best_score: record.best, total: record.total, last_score: record.lastScore, attempts: record.attempts, lessons_viewed: record.lessonsViewed, updated_at: new Date().toISOString()
   }, { onConflict: "user_id,module_id" });
   view = "results"; render();
 }
