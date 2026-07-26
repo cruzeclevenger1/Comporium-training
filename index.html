@@ -904,6 +904,11 @@ function renderShell(inner){
   if(goTeamBtn) goTeamBtn.addEventListener("click", openTeamProgress);
   const guestViewToggle = document.getElementById("guest-view-toggle");
   if(guestViewToggle) guestViewToggle.addEventListener("click", ()=>{ guestViewingAsAdmin = !guestViewingAsAdmin; view="home"; render(); });
+  // Every single page render — however it was reached, including internal calls
+  // that bypass the top-level render() router entirely — passes through here.
+  // That makes this the one guaranteed place to catch and fix any raw/oversized
+  // images, rather than relying on callers to remember to trigger it themselves.
+  normalizePastedImages(root);
 }
 
 /* ============================================================
@@ -1636,7 +1641,19 @@ function renderNotifications(){
       <div style="font-size:14px;color:var(--text);">${a.body}</div>
     </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">No announcements yet.</p>`;
 
-  const unclaimedHtml = NOTIF_UNCLAIMED.map(m=>`
+  const unclaimedHtml = NOTIF_UNCLAIMED.map(m=>{
+    if(m.type === "admin_request"){
+      return `
+        <div class="sub-card">
+          <div class="sub-card-head"><span class="tag">🔑 ADMIN REQUEST · ${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</span></div>
+          <div style="font-size:14px;margin-bottom:12px;color:var(--text);">${m.body}</div>
+          <div style="display:flex;gap:10px;">
+            <button class="btn primary" data-admreq-accept="${m.id}" data-admreq-user="${m.sender_id}" data-admreq-name="${escapeHtml(m.sender_name)}">Accept</button>
+            <button class="btn danger" data-admreq-deny="${m.id}" data-admreq-user="${m.sender_id}" data-admreq-name="${escapeHtml(m.sender_name)}">Deny</button>
+          </div>
+        </div>`;
+    }
+    return `
     <div class="sub-card">
       <div class="sub-card-head"><span class="tag">${typeLabel[m.type]||m.type} · ${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</span>
         <button class="mini-btn danger" data-discard-thread="${m.id}">Discard</button></div>
@@ -1644,7 +1661,8 @@ function renderNotifications(){
       <div style="font-size:14px;margin-bottom:12px;color:var(--text);">${m.body}</div>
       <div class="field"><label>Reply</label>${richEditorHtml(`thread-rte-${m.id}`, "")}</div>
       <button class="mini-btn" data-send-thread="${m.id}" style="margin-top:8px;">Send</button>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 
   renderShell(`
     <div class="card">
@@ -1686,6 +1704,26 @@ function renderNotifications(){
   }));
   root.querySelectorAll("[data-send-thread]").forEach(el=> el.addEventListener("click", async ()=>{
     await sendThreadMessage(el.getAttribute("data-send-thread"));
+  }));
+  root.querySelectorAll("[data-admreq-accept]").forEach(el=> el.addEventListener("click", async ()=>{
+    const msgId = el.getAttribute("data-admreq-accept");
+    const userId = el.getAttribute("data-admreq-user");
+    const name = el.getAttribute("data-admreq-name");
+    if(!confirm(`Make ${name} an admin?`)) return;
+    const { error: roleErr } = await supabase.from("profiles").update({ role:"admin" }).eq("id", userId);
+    if(roleErr){ alert("Couldn't update their role: " + roleErr.message); return; }
+    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: userId, audience:"user", type:"reply", claimed_by: session.user.id, body:`<p>Your admin request was approved by ${escapeHtml(profile.name)}. Log out and back in (or refresh) to see your new access.</p>` });
+    await supabase.from("messages").delete().eq("id", msgId);
+    await refreshMessagingView();
+  }));
+  root.querySelectorAll("[data-admreq-deny]").forEach(el=> el.addEventListener("click", async ()=>{
+    const msgId = el.getAttribute("data-admreq-deny");
+    const userId = el.getAttribute("data-admreq-user");
+    const name = el.getAttribute("data-admreq-name");
+    if(!confirm(`Deny ${name}'s admin request?`)) return;
+    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: userId, audience:"user", type:"reply", claimed_by: session.user.id, body:`<p>Your admin request was reviewed by ${escapeHtml(profile.name)} and wasn't approved at this time.</p>` });
+    await supabase.from("messages").delete().eq("id", msgId);
+    await refreshMessagingView();
   }));
 }
 
@@ -2771,11 +2809,36 @@ function renderSettings(){
         </div>
       </div>
 
+      ${(!isAdmin() && !guestMode) ? `
+      <div class="editor-section">
+        <div class="editor-section-head"><h3>Admin access</h3></div>
+        <p style="color:var(--text-dim);font-size:13px;margin:0 0 12px;">If you need admin access — for content editing, team management, etc. — you can request it. Any admin can approve or deny it from their Notifications.</p>
+        <button class="btn" id="request-admin-btn">Request admin access</button>
+        <div id="admin-req-status" class="info-msg" style="margin:8px 0 0;min-height:16px;"></div>
+      </div>` : ""}
+
       <div class="nav-buttons"><button class="btn" id="back-dash-settings">← Back to dashboard</button><div></div></div>
     </div>
   `);
 
   document.getElementById("back-dash-settings").addEventListener("click", ()=>{ view="home"; render(); });
+
+  const reqAdminBtn = document.getElementById("request-admin-btn");
+  if(reqAdminBtn) reqAdminBtn.addEventListener("click", async ()=>{
+    const status = document.getElementById("admin-req-status");
+    reqAdminBtn.disabled = true;
+    const { data: existing } = await supabase.from("messages").select("id").eq("sender_id", session.user.id).eq("type","admin_request").is("thread_id", null);
+    if(existing && existing.length){
+      status.textContent = "You already have a pending request — an admin will review it soon.";
+      status.style.color = "var(--amber)";
+      reqAdminBtn.disabled = false;
+      return;
+    }
+    const { error } = await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"admins", type:"admin_request", body:`<p>${escapeHtml(profile.name)} is requesting admin access.</p>` });
+    if(error){ status.textContent = "Couldn't send request: " + error.message; status.style.color = "var(--red)"; reqAdminBtn.disabled = false; return; }
+    status.textContent = "Request sent — an admin will review it soon.";
+    status.style.color = "var(--green)";
+  });
 
   document.getElementById("save-name").addEventListener("click", async ()=>{
     const newName = document.getElementById("set-name").value.trim();
@@ -3245,10 +3308,6 @@ function render(){
   else if(view==="chat") renderChat();
   else if(view==="notes") renderNotes();
   else if(view==="guest-editor") renderGuestEditor();
-  // Catch any raw <img> tags left over from before this fix existed (or from
-  // any other source) so every picture gets resize/click-to-enlarge, not just
-  // newly pasted ones — this only touches the live DOM, no save needed.
-  normalizePastedImages(root);
 }
 
 /* ============================================================
