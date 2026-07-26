@@ -462,9 +462,12 @@ function renderShell(inner){
         <div class="brand-text"><div class="name">COMPORIUM TRAINING MODULES</div></div>
       </div>
       <div class="top-right">
-        <nav class="crumbs">${ (view==="home"||view==="dashboard"||view==="reference") ? "" : `<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':''))}`}</nav>
+        <nav class="crumbs">${ (view==="home"||view==="dashboard"||view==="reference") ? "" : `<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':''))}`}</nav>
         <div class="bell-wrap">
-          <button class="gear-btn" id="notif-bell" title="Notifications">🔔${bellBadgeCount()>0?`<span class="notif-dot"></span>`:''}</button>
+          <button class="gear-btn" id="notif-bell" title="Notifications">🔔${notifBadgeCount()>0?`<span class="notif-dot"></span>`:''}</button>
+        </div>
+        <div class="bell-wrap">
+          <button class="gear-btn" id="chat-bubble" title="Conversations">💬${chatBadgeCount()>0?`<span class="notif-dot"></span>`:''}</button>
         </div>
         <span class="pill-btn" style="cursor:default;">${escapeHtml(profile ? profile.name : "")}</span>
         ${isAdmin() ? `
@@ -494,6 +497,7 @@ function renderShell(inner){
   document.getElementById("open-settings").addEventListener("click", ()=>{ view="settings"; render(); });
   document.getElementById("logout-btn").addEventListener("click", logout);
   document.getElementById("notif-bell").addEventListener("click", openNotifications);
+  document.getElementById("chat-bubble").addEventListener("click", ()=> openChat());
   const toggleEdit = document.getElementById("toggle-edit-mode");
   if(toggleEdit) toggleEdit.addEventListener("click", ()=>{ editMode = !editMode; render(); });
   const openAnnounce = document.getElementById("open-announce");
@@ -826,17 +830,23 @@ async function loadAllNotifications(){
   }).sort((a,b)=> new Date(b.lastActivity) - new Date(a.lastActivity));
 }
 
-function bellBadgeCount(){
+function notifBadgeCount(){
+  return isAdmin() ? NOTIF_UNCLAIMED.length : 0;
+}
+function chatBadgeCount(){
   let unread = 0;
   NOTIF_THREADS.forEach(t=> t.messages.forEach(m=>{ if(m.recipient_id===session.user.id && !m.is_read) unread++; }));
-  return unread + (isAdmin() ? NOTIF_UNCLAIMED.length : 0);
+  return unread;
 }
 
-async function refreshNotificationsData(){
+async function loadMessagingData(){
   await loadAllNotifications();
+}
+
+async function markMyThreadMessagesRead(){
   const unreadIds = [];
   NOTIF_THREADS.forEach(t=> t.messages.forEach(m=>{ if(m.recipient_id===session.user.id && !m.is_read) unreadIds.push(m.id); }));
-  if(unreadIds.length){ await supabase.from("messages").update({ is_read:true }).in("id", unreadIds); await loadAllNotifications(); }
+  if(unreadIds.length){ await supabase.from("messages").update({ is_read:true }).in("id", unreadIds); await loadMessagingData(); }
 }
 
 function applyDefaultThreadVisibility(){
@@ -848,19 +858,66 @@ function applyDefaultThreadVisibility(){
 }
 
 async function openNotifications(){
-  await refreshNotificationsData();
-  applyDefaultThreadVisibility();
+  await loadMessagingData();
   view = "notifications"; render();
 }
 
-async function refreshNotificationsView(){
-  await refreshNotificationsData();
-  if(view==="notifications") render();
+async function openChat(focusThreadId){
+  await loadMessagingData();
+  await markMyThreadMessagesRead();
+  applyDefaultThreadVisibility();
+  if(focusThreadId) collapsedThreadIds.delete(focusThreadId);
+  view = "chat"; render();
+}
+
+async function refreshMessagingView(){
+  await loadMessagingData();
+  if(view==="chat") await markMyThreadMessagesRead();
+  if(view==="notifications" || view==="chat") render();
+}
+
+const typeLabel = { flag:"🚩 Flag", highlight:"✨ Highlight", comment:"💬 Comment" };
+
+function otherPartyName(t){
+  if(t.root.sender_id !== session.user.id) return t.root.sender_name;
+  const theirMsg = t.messages.find(m=> m.sender_id !== session.user.id);
+  return theirMsg ? theirMsg.sender_name : "no one yet";
+}
+
+function threadCardHtml(t){
+  const statusPill = !t.root.claimed_by ? `<span class="status-pill progress">Awaiting reply</span>` : `<span class="status-pill done">In conversation</span>`;
+  const collapsed = collapsedThreadIds.has(t.root.id);
+
+  if(collapsed){
+    return `
+      <div class="sub-card thread-card thread-collapsed" data-thread-toggle="${t.root.id}">
+        <div class="sub-card-head" style="cursor:pointer;">
+          <span class="tag">${typeLabel[t.root.type]||t.root.type}${t.root.context?(' · '+escapeHtml(t.root.context)):''} · with ${escapeHtml(otherPartyName(t))}</span>
+          <span style="display:flex;gap:8px;align-items:center;">${statusPill}<button class="mini-btn" data-thread-toggle="${t.root.id}">Show</button></span>
+        </div>
+      </div>`;
+  }
+
+  const bubbles = [t.root, ...t.messages].map(m=>{
+    const mine = m.sender_id === session.user.id;
+    return `<div class="chat-bubble ${mine?'mine':'theirs'}">
+      <div class="chat-bubble-meta">${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</div>
+      <div class="chat-bubble-body">${m.body}</div>
+    </div>`;
+  }).join("");
+  return `
+    <div class="sub-card thread-card">
+      <div class="sub-card-head">
+        <span class="tag">${typeLabel[t.root.type]||t.root.type}${t.root.context?(' · '+escapeHtml(t.root.context)):''} · with ${escapeHtml(otherPartyName(t))}</span>
+        <span style="display:flex;gap:8px;align-items:center;">${statusPill}<button class="mini-btn" data-thread-toggle="${t.root.id}">Hide</button><button class="mini-btn danger" data-discard-thread="${t.root.id}">Discard</button></span>
+      </div>
+      <div class="chat-scroll">${bubbles}</div>
+      <div class="field" style="margin-top:10px;">${richEditorHtml(`thread-rte-${t.root.id}`, "")}</div>
+      <button class="mini-btn" data-send-thread="${t.root.id}" style="margin-top:8px;">Send</button>
+    </div>`;
 }
 
 function renderNotifications(){
-  const typeLabel = { flag:"🚩 Flag", highlight:"✨ Highlight", comment:"💬 Comment" };
-
   const announceHtml = NOTIF_ANNOUNCEMENTS.length ? NOTIF_ANNOUNCEMENTS.map(a=>`
     <div class="sub-card">
       <div class="sub-card-head"><span class="tag">📣 ${escapeHtml(a.sender_name)} · ${new Date(a.created_at).toLocaleString()}</span>
@@ -878,46 +935,6 @@ function renderNotifications(){
       <button class="mini-btn" data-send-thread="${m.id}" style="margin-top:8px;">Send</button>
     </div>`).join("");
 
-  function otherPartyName(t){
-    if(t.root.sender_id !== session.user.id) return t.root.sender_name;
-    const theirMsg = t.messages.find(m=> m.sender_id !== session.user.id);
-    return theirMsg ? theirMsg.sender_name : "no one yet";
-  }
-
-  function threadCardHtml(t){
-    const statusPill = !t.root.claimed_by ? `<span class="status-pill progress">Awaiting reply</span>` : `<span class="status-pill done">In conversation</span>`;
-    const collapsed = collapsedThreadIds.has(t.root.id);
-
-    if(collapsed){
-      return `
-        <div class="sub-card thread-card thread-collapsed" data-thread-toggle="${t.root.id}">
-          <div class="sub-card-head" style="cursor:pointer;">
-            <span class="tag">${typeLabel[t.root.type]||t.root.type}${t.root.context?(' · '+escapeHtml(t.root.context)):''} · with ${escapeHtml(otherPartyName(t))}</span>
-            <span style="display:flex;gap:8px;align-items:center;">${statusPill}<button class="mini-btn" data-thread-toggle="${t.root.id}">Show</button></span>
-          </div>
-        </div>`;
-    }
-
-    const bubbles = [t.root, ...t.messages].map(m=>{
-      const mine = m.sender_id === session.user.id;
-      return `<div class="chat-bubble ${mine?'mine':'theirs'}">
-        <div class="chat-bubble-meta">${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</div>
-        <div class="chat-bubble-body">${m.body}</div>
-      </div>`;
-    }).join("");
-    return `
-      <div class="sub-card thread-card">
-        <div class="sub-card-head">
-          <span class="tag">${typeLabel[t.root.type]||t.root.type}${t.root.context?(' · '+escapeHtml(t.root.context)):''} · with ${escapeHtml(otherPartyName(t))}</span>
-          <span style="display:flex;gap:8px;align-items:center;">${statusPill}<button class="mini-btn" data-thread-toggle="${t.root.id}">Hide</button><button class="mini-btn danger" data-discard-thread="${t.root.id}">Discard</button></span>
-        </div>
-        <div class="chat-scroll">${bubbles}</div>
-        <div class="field" style="margin-top:10px;">${richEditorHtml(`thread-rte-${t.root.id}`, "")}</div>
-        <button class="mini-btn" data-send-thread="${t.root.id}" style="margin-top:8px;">Send</button>
-      </div>`;
-  }
-  const threadsHtml = NOTIF_THREADS.map(threadCardHtml).join("") || `<p style="color:var(--text-faint);font-size:13px;">No conversations yet.</p>`;
-
   renderShell(`
     <div class="card">
       <div class="k-label">NOTIFICATIONS</div>
@@ -928,11 +945,37 @@ function renderNotifications(){
     <div class="card" style="margin-top:16px;">
       <div class="k-label">ADMIN</div>
       <h2 style="margin-bottom:4px;">Needs a reply</h2>
-      <p style="color:var(--text-dim);font-size:13px;margin:0 0 16px;">First admin to reply owns it — it moves into your conversations below and disappears from other admins' view.</p>
+      <p style="color:var(--text-dim);font-size:13px;margin:0 0 16px;">First admin to reply owns it. Sending a reply moves it into your Conversations and disappears from other admins' view.</p>
       ${unclaimedHtml || `<p style="color:var(--text-faint);font-size:13px;">Nothing waiting on a reply.</p>`}
     </div>` : ""}
-    <div class="card" style="margin-top:16px;">
-      <div class="k-label">YOUR ACTIVITY</div>
+  `);
+
+  NOTIF_UNCLAIMED.forEach(m=> wireRichEditor(`thread-rte-${m.id}`));
+
+  root.querySelectorAll("[data-dismiss-announce]").forEach(el=> el.addEventListener("click", async ()=>{
+    await supabase.from("announcement_dismissals").upsert({ user_id: session.user.id, message_id: el.getAttribute("data-dismiss-announce") });
+    await refreshMessagingView();
+  }));
+  root.querySelectorAll("[data-discard-thread]").forEach(el=> el.addEventListener("click", async ()=>{
+    const id = el.getAttribute("data-discard-thread");
+    if(confirm("Discard this? This can't be undone.")){
+      await supabase.from("messages").delete().eq("thread_id", id);
+      await supabase.from("messages").delete().eq("id", id);
+      collapsedThreadIds.delete(id);
+      await refreshMessagingView();
+    }
+  }));
+  root.querySelectorAll("[data-send-thread]").forEach(el=> el.addEventListener("click", async ()=>{
+    await sendThreadMessage(el.getAttribute("data-send-thread"));
+  }));
+}
+
+function renderChat(){
+  const threadsHtml = NOTIF_THREADS.map(threadCardHtml).join("") || `<p style="color:var(--text-faint);font-size:13px;">No conversations yet.</p>`;
+
+  renderShell(`
+    <div class="card">
+      <div class="k-label">CHAT</div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
         <h2 style="margin:0;">Conversations</h2>
         <button class="btn primary" id="new-convo-btn">+ New Conversation</button>
@@ -944,7 +987,6 @@ function renderNotifications(){
   const newConvoBtn = document.getElementById("new-convo-btn");
   if(newConvoBtn) newConvoBtn.addEventListener("click", openNewConversationModal);
 
-  NOTIF_UNCLAIMED.forEach(m=> wireRichEditor(`thread-rte-${m.id}`));
   NOTIF_THREADS.forEach(t=> wireRichEditor(`thread-rte-${t.root.id}`));
   root.querySelectorAll("[data-thread-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
     e.stopPropagation();
@@ -952,18 +994,13 @@ function renderNotifications(){
     if(collapsedThreadIds.has(id)) collapsedThreadIds.delete(id); else collapsedThreadIds.add(id);
     render();
   }));
-
-  root.querySelectorAll("[data-dismiss-announce]").forEach(el=> el.addEventListener("click", async ()=>{
-    await supabase.from("announcement_dismissals").upsert({ user_id: session.user.id, message_id: el.getAttribute("data-dismiss-announce") });
-    await refreshNotificationsView();
-  }));
   root.querySelectorAll("[data-discard-thread]").forEach(el=> el.addEventListener("click", async ()=>{
     const id = el.getAttribute("data-discard-thread");
     if(confirm("Discard this conversation? This can't be undone.")){
       await supabase.from("messages").delete().eq("thread_id", id);
       await supabase.from("messages").delete().eq("id", id);
       collapsedThreadIds.delete(id);
-      await refreshNotificationsView();
+      await refreshMessagingView();
     }
   }));
   root.querySelectorAll("[data-send-thread]").forEach(el=> el.addEventListener("click", async ()=>{
@@ -977,6 +1014,8 @@ async function sendThreadMessage(rootId){
   if(!body || body === "<br>") return;
   const root = NOTIF_UNCLAIMED.find(m=>m.id===rootId) || (NOTIF_THREADS.find(t=>t.root.id===rootId)||{}).root;
   if(!root) return;
+
+  const wasUnclaimedPoolItem = root.audience === "admins" && !root.claimed_by;
 
   let recipientId;
   if(root.audience === "user"){
@@ -996,7 +1035,12 @@ async function sendThreadMessage(rootId){
     }
   }
   await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: recipientId, audience:"user", type:"reply", body, context: root.context, thread_id: root.id });
-  await refreshNotificationsView();
+
+  if(wasUnclaimedPoolItem){
+    await openChat(root.id); // follow through on the conversation you just started
+  } else {
+    await refreshMessagingView();
+  }
 }
 
 /* ============================================================
@@ -1004,11 +1048,11 @@ async function sendThreadMessage(rootId){
    ============================================================ */
 function stripHtml(html){ const d = document.createElement("div"); d.innerHTML = html; return (d.textContent||"").trim(); }
 
-function showToast(text){
+function showToast(text, onClickFn){
   const el = document.createElement("div");
   el.className = "app-toast";
   el.textContent = text;
-  el.addEventListener("click", ()=>{ el.remove(); openNotifications(); });
+  el.addEventListener("click", ()=>{ el.remove(); (onClickFn || openNotifications)(); });
   document.body.appendChild(el);
   setTimeout(()=>{ el.classList.add("out"); setTimeout(()=>el.remove(), 300); }, 6000);
 }
@@ -1018,15 +1062,15 @@ function setupRealtime(){
   const chAnnounce = supabase.channel("rt-announcements-"+session.user.id)
     .on("postgres_changes", { event:"INSERT", schema:"public", table:"messages", filter:"audience=eq.all" }, (payload)=>{
       if(payload.new.sender_id === session.user.id) return;
-      showToast("📣 " + stripHtml(payload.new.body).slice(0,90));
-      if(view==="notifications") refreshNotificationsView(); else loadAllNotifications();
+      showToast("📣 " + stripHtml(payload.new.body).slice(0,90), openNotifications);
+      if(view==="notifications" || view==="chat") refreshMessagingView(); else loadAllNotifications();
     }).subscribe();
   realtimeChannels.push(chAnnounce);
 
   const chToMe = supabase.channel("rt-to-me-"+session.user.id)
     .on("postgres_changes", { event:"INSERT", schema:"public", table:"messages", filter:`recipient_id=eq.${session.user.id}` }, (payload)=>{
-      showToast("💬 " + escapeHtml(payload.new.sender_name) + ": " + stripHtml(payload.new.body).slice(0,70));
-      if(view==="notifications") refreshNotificationsView(); else loadAllNotifications();
+      showToast("💬 " + escapeHtml(payload.new.sender_name) + ": " + stripHtml(payload.new.body).slice(0,70), ()=>openChat());
+      if(view==="notifications" || view==="chat") refreshMessagingView(); else loadAllNotifications();
     }).subscribe();
   realtimeChannels.push(chToMe);
 
@@ -1034,8 +1078,8 @@ function setupRealtime(){
     const chAdmin = supabase.channel("rt-admin-inbox-"+session.user.id)
       .on("postgres_changes", { event:"INSERT", schema:"public", table:"messages", filter:"audience=eq.admins" }, (payload)=>{
         if(payload.new.thread_id || payload.new.sender_id === session.user.id) return;
-        showToast("🚩 New item waiting in the admin inbox");
-        if(view==="notifications") refreshNotificationsView(); else loadAllNotifications();
+        showToast("🚩 New item waiting in the admin inbox", openNotifications);
+        if(view==="notifications" || view==="chat") refreshMessagingView(); else loadAllNotifications();
       }).subscribe();
     realtimeChannels.push(chAdmin);
   }
@@ -1044,7 +1088,7 @@ function setupRealtime(){
   // the other participant would never see it disappear until they refresh.
   const chDeletes = supabase.channel("rt-deletes-"+session.user.id)
     .on("postgres_changes", { event:"DELETE", schema:"public", table:"messages" }, ()=>{
-      if(view==="notifications") refreshNotificationsView(); else loadAllNotifications();
+      if(view==="notifications" || view==="chat") refreshMessagingView(); else loadAllNotifications();
     }).subscribe();
   realtimeChannels.push(chDeletes);
 }
@@ -1170,10 +1214,10 @@ async function openNewConversationModal(){
     const body = document.getElementById(editorId).innerHTML.trim();
     if(!body || body === "<br>") { closeModal(); return; }
     const targetId = document.getElementById("newconvo-person").value;
-    const { error } = await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: targetId, audience:"user", type:"comment", body, claimed_by: session.user.id });
+    const { error, data } = await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: targetId, audience:"user", type:"comment", body, claimed_by: session.user.id }).select().single();
     if(error){ alert("Couldn't send: " + error.message); console.error(error); return; }
     closeModal();
-    await refreshNotificationsView();
+    await openChat(data.id);
   });
 }
 
@@ -1193,7 +1237,7 @@ function openCoachingModal(targetUserId, targetName, context){
     if(!body || body === "<br>") { closeModal(); return; }
     await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: targetUserId, audience:"user", type:"comment", body, context, claimed_by: session.user.id });
     closeModal();
-    alert(`Sent — you'll find this conversation in your Notifications.`);
+    alert(`Sent — you'll find this conversation in Chat.`);
   });
 }
 
@@ -1835,6 +1879,7 @@ function render(){
   else if(view==="settings") renderSettings();
   else if(view==="reference") renderReference();
   else if(view==="notifications") renderNotifications();
+  else if(view==="chat") renderChat();
 }
 
 /* ============================================================
