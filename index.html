@@ -218,8 +218,9 @@
   html.theme-light .rte-body{ background:#fff; }
   .rte-body:focus{ outline:none; border-color:var(--cyan); }
   .rte-body p{ margin:0 0 10px; } .rte-body ul,.rte-body ol{ margin:0 0 10px; padding-left:22px; }
-  .rte-img-wrap{ display:inline-block; overflow:hidden; max-width:100%; vertical-align:bottom; width:280px; height:190px; margin:6px 4px; border-radius:8px; }
-  .rte-body .rte-img-wrap{ resize:both; cursor:grab; max-height:60vh; }
+  .rte-img-wrap{ display:inline-block; position:relative; overflow:hidden; max-width:100%; vertical-align:bottom; width:280px; height:190px; margin:6px 4px; border-radius:8px; box-sizing:border-box; }
+  .rte-body .rte-img-wrap{ cursor:grab; max-height:60vh; }
+  .rte-resize-handle{ position:absolute; right:2px; bottom:2px; width:14px; height:14px; cursor:nwse-resize; background:linear-gradient(135deg, transparent 50%, var(--cyan) 50%); border-radius:0 0 4px 0; opacity:0.9; z-index:1; }
   .rte-img-wrap img{ width:100%; height:100%; display:block; object-fit:cover; pointer-events:none; }
   .card .body .rte-img-wrap img, .chat-bubble-body .rte-img-wrap img, .sub-card .rte-img-wrap img{ pointer-events:auto; cursor:zoom-in; }
 
@@ -1859,6 +1860,7 @@ function wireRichEditor(id){
     const file = fileInput.files[0]; if(!file) return;
     const dataUrl = await compressImageFile(file);
     insertResizableImage(editorEl, dataUrl);
+    attachImageResizeHandles(editorEl);
     fileInput.value = "";
   });
   editorEl.addEventListener("paste", async (e)=>{
@@ -1877,6 +1879,7 @@ function wireRichEditor(id){
           const file = item.getAsFile();
           const dataUrl = await compressImageFile(file);
           insertResizableImage(editorEl, dataUrl);
+          attachImageResizeHandles(editorEl);
           return;
         }
       }
@@ -1885,10 +1888,43 @@ function wireRichEditor(id){
     // then wrap any plain <img> tags it inserted so every picture — no matter how
     // it got in — ends up resizable and click-to-enlarge, same as ones we insert.
     // Two passes: large pastes can take a moment longer to finish landing in the DOM.
-    setTimeout(()=> normalizePastedImages(editorEl), 0);
-    setTimeout(()=> normalizePastedImages(editorEl), 200);
+    setTimeout(()=>{ normalizePastedImages(editorEl); attachImageResizeHandles(editorEl); }, 0);
+    setTimeout(()=>{ normalizePastedImages(editorEl); attachImageResizeHandles(editorEl); }, 200);
+  });
+  attachImageResizeHandles(editorEl);
+}
+
+/* ============================================================
+   CUSTOM IMAGE RESIZE — replaces native CSS `resize`, which
+   behaves inconsistently inside contenteditable regions across
+   browsers (images would render at inflated size only while
+   actively editing). This gives identical behavior everywhere.
+   ============================================================ */
+function attachImageResizeHandles(editorEl){
+  editorEl.querySelectorAll(".rte-img-wrap").forEach(wrap=>{
+    if(!wrap.querySelector(".rte-resize-handle")){
+      const handle = document.createElement("span");
+      handle.className = "rte-resize-handle";
+      handle.setAttribute("contenteditable", "false");
+      wrap.appendChild(handle);
+    }
   });
 }
+let _imgResizeDrag = null;
+document.addEventListener("mousedown", (e)=>{
+  const handle = e.target.closest(".rte-resize-handle");
+  if(!handle) return;
+  e.preventDefault(); e.stopPropagation();
+  const wrap = handle.parentElement;
+  _imgResizeDrag = { wrap, startX:e.clientX, startY:e.clientY, startW:wrap.offsetWidth, startH:wrap.offsetHeight };
+});
+document.addEventListener("mousemove", (e)=>{
+  if(!_imgResizeDrag) return;
+  const { wrap, startX, startY, startW, startH } = _imgResizeDrag;
+  wrap.style.width = Math.max(80, startW + (e.clientX - startX)) + "px";
+  wrap.style.height = Math.max(60, startH + (e.clientY - startY)) + "px";
+});
+document.addEventListener("mouseup", ()=>{ _imgResizeDrag = null; });
 function normalizePastedImages(editorEl){
   const rawImgs = Array.from(editorEl.querySelectorAll("img")).filter(img =>
     !img.closest(".rte-img-wrap") && !img.classList.contains("brand-mark") && !img.closest("header.top")
