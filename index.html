@@ -147,6 +147,9 @@
   .top-nav-btn.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
   .two-col-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
   @media (max-width:640px){ .two-col-grid{ grid-template-columns:1fr; } }
+  .three-col-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+  @media (max-width:860px){ .three-col-grid{ grid-template-columns:1fr 1fr; } }
+  @media (max-width:560px){ .three-col-grid{ grid-template-columns:1fr; } }
   .ref-layout{ display:flex; gap:14px; align-items:flex-start; }
   .ref-sidebar{ width:168px; flex:none; }
   .ref-content{ flex:1; min-width:0; }
@@ -248,6 +251,7 @@
    ============================================================ */
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
+
 
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -404,19 +408,39 @@ async function showUnseenAnnouncements(){
   const { data: dismissals } = await supabase.from("announcement_dismissals").select("message_id").eq("user_id", session.user.id);
   const dismissedIds = new Set((dismissals||[]).map(d=>d.message_id));
   const unseen = (data || []).filter(a=> !dismissedIds.has(a.id));
-  if(!unseen.length) return;
+
+  // Unread chat messages — NOTIF_THREADS is already populated from loadAllNotifications() in afterLogin.
+  const unreadMessages = [];
+  NOTIF_THREADS.forEach(t=> t.messages.forEach(m=>{ if(m.recipient_id===session.user.id && !m.is_read) unreadMessages.push(m); }));
+
+  if(!unseen.length && !unreadMessages.length) return;
 
   function renderDigest(){
-    const itemsHtml = unseen.map(a=>`
-      <div class="sub-card" data-digest-item="${a.id}">
-        <div class="sub-card-head"><span class="tag">📣 ${escapeHtml(a.sender_name)} · ${new Date(a.created_at).toLocaleString()}</span>
-          <button class="mini-btn" data-digest-dismiss="${a.id}">Dismiss</button></div>
-        <div style="font-size:14px;color:var(--text);">${a.body}</div>
-      </div>`).join("");
+    const annHtml = unseen.length ? `
+      <h3 style="font-size:13px;color:var(--text-dim);margin:0 0 10px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Announcements</h3>
+      ${unseen.map(a=>`
+        <div class="sub-card" data-digest-item="${a.id}">
+          <div class="sub-card-head"><span class="tag">📣 ${escapeHtml(a.sender_name)} · ${new Date(a.created_at).toLocaleString()}</span>
+            <button class="mini-btn" data-digest-dismiss="${a.id}">Dismiss</button></div>
+          <div style="font-size:14px;color:var(--text);">${a.body}</div>
+        </div>`).join("")}
+    ` : "";
+
+    const msgHtml = unreadMessages.length ? `
+      <h3 style="font-size:13px;color:var(--text-dim);margin:${unseen.length?'20px':'0'} 0 10px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">New messages</h3>
+      ${unreadMessages.map(m=>`
+        <div class="sub-card">
+          <div class="sub-card-head"><span class="tag">💬 ${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</span></div>
+          <div style="font-size:14px;color:var(--text);">${m.body}</div>
+        </div>`).join("")}
+      <button class="btn" id="digest-go-chat" style="margin-top:4px;">Open Chat →</button>
+    ` : "";
+
+    const totalCount = unseen.length + unreadMessages.length;
     openModal(`
-      <h3>${unseen.length===1 ? "New announcement" : `${unseen.length} new announcements`}</h3>
-      <p class="sub">Posted while you were away.</p>
-      ${itemsHtml}
+      <h3>${totalCount===1 ? "1 thing" : `${totalCount} things`} while you were away</h3>
+      <p class="sub">Posted or sent while you were logged out.</p>
+      ${annHtml}${msgHtml}
       <div class="modal-actions"><button class="btn primary" id="ann-digest-ok">Got it</button></div>
     `, true);
     document.querySelectorAll("[data-digest-dismiss]").forEach(el=> el.addEventListener("click", async ()=>{
@@ -424,13 +448,16 @@ async function showUnseenAnnouncements(){
       await supabase.from("announcement_dismissals").upsert({ user_id: session.user.id, message_id: id });
       const idx = unseen.findIndex(u=>u.id===id);
       if(idx>-1) unseen.splice(idx,1);
-      if(!unseen.length){ closeModal(); markAnnouncementsSeen(); }
+      if(!unseen.length && !unreadMessages.length){ closeModal(); markAnnouncementsSeen(); }
       else renderDigest();
     }));
+    const goChat = document.getElementById("digest-go-chat");
+    if(goChat) goChat.addEventListener("click", ()=>{ closeModal(); markAnnouncementsSeen(); openChat(); });
     document.getElementById("ann-digest-ok").addEventListener("click", ()=>{ closeModal(); markAnnouncementsSeen(); });
   }
 
   async function markAnnouncementsSeen(){
+    if(!data.length) return;
     const latest = data[data.length-1].created_at;
     await supabase.from("profiles").update({ last_seen_announcement_at: latest }).eq("id", session.user.id);
     profile.last_seen_announcement_at = latest;
@@ -464,6 +491,7 @@ function renderShell(inner){
       </div>
       <div class="top-right">
         <nav class="crumbs">${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes") ? "" : `<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':''))}`}</nav>
+        ${isAdmin() ? `<button class="pill-btn" id="go-team-btn">Team Progress</button>` : ""}
         <div class="bell-wrap">
           <button class="gear-btn" id="notif-bell" title="Notifications">🔔${notifBadgeCount()>0?`<span class="notif-dot"></span>`:''}</button>
         </div>
@@ -477,7 +505,6 @@ function renderShell(inner){
             <div class="admin-menu-panel">
               <button id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>
               <button id="open-announce">📣 Make Announcement</button>
-              <button id="go-team-menu">Team progress</button>
             </div>
           </div>` : ""}
         <button class="pill-btn" id="logout-btn">Log out</button>
@@ -505,8 +532,8 @@ function renderShell(inner){
   if(toggleEdit) toggleEdit.addEventListener("click", ()=>{ editMode = !editMode; render(); });
   const openAnnounce = document.getElementById("open-announce");
   if(openAnnounce) openAnnounce.addEventListener("click", openAnnouncementModal);
-  const goTeamMenu = document.getElementById("go-team-menu");
-  if(goTeamMenu) goTeamMenu.addEventListener("click", openTeamProgress);
+  const goTeamBtn = document.getElementById("go-team-btn");
+  if(goTeamBtn) goTeamBtn.addEventListener("click", openTeamProgress);
 }
 
 /* ============================================================
@@ -518,7 +545,13 @@ function resumeLessonIdx(m){
   const idx = m.lessons.findIndex(l=> !viewed.includes(l.id));
   return idx === -1 ? Math.max(m.lessons.length-1, 0) : idx;
 }
-function moduleStatus(id){ const s=progressMap[id]; if(!s) return "new"; if(s.best===s.total) return "mastered"; return "attempted"; }
+function moduleStatus(id){
+  const s = progressMap[id];
+  if(!s) return "new";
+  if(s.total > 0 && s.best === s.total) return "mastered";
+  if(!s.attempts) return "reading";
+  return "attempted";
+}
 
 async function reorderModuleDrop(draggedId, targetId, pos){
   const fromIdx = MODULES.findIndex(m=>m.id===draggedId);
@@ -543,6 +576,7 @@ function renderDashboard(){
     const status = moduleStatus(m.id); const s = progressMap[m.id];
     const pillHtml = status==="mastered" ? `<span class="status-pill done">Mastered</span>`
       : status==="attempted" ? `<span class="status-pill progress">${s.best}/${s.total} correct</span>`
+      : status==="reading" ? `<span class="status-pill progress">Quiz not started</span>`
       : `<span class="status-pill">Not started</span>`;
     const on = status!=="new"; const mastered = status==="mastered";
     const leds = `<span class="led ${on?'on-green':''}"></span><span class="led ${on?(mastered?'on-green':'on-amber blink'):''}"></span><span class="led ${mastered?'on-green':''}"></span>`;
@@ -1725,7 +1759,7 @@ function renderHome(){
       <p style="margin-top:10px;"><strong style="color:var(--text);">Training Modules</strong> — structured lessons and scored quizzes for onboarding and skill-building.</p>
       <p style="margin-top:-6px;"><strong style="color:var(--text);">Reference Guide</strong> — a living knowledge base the whole team can look things up in, anytime.</p>
     </section>
-    <div class="two-col-grid">
+    <div class="three-col-grid">
       <div class="mod-card" id="go-modules-card">
         <div class="row-top"><div><h3>Training Modules</h3><p class="sub">Structured lessons and scored quizzes for onboarding and skill-building.</p></div><div class="led-strip"><span class="led on-green"></span><span class="led on-amber blink"></span><span class="led on-green"></span></div></div>
         <div class="meta"><span>${MODULES.length} MODULES</span></div>
@@ -1734,10 +1768,15 @@ function renderHome(){
         <div class="row-top"><div><h3>Reference Guide</h3><p class="sub">A living knowledge base the whole team can look things up in, not just new hires.</p></div><div class="led-strip"><span class="led" style="background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 8px var(--cyan);"></span></div></div>
         <div class="meta"><span>ALWAYS UP TO DATE</span></div>
       </div>
+      <div class="mod-card" id="go-notes-card">
+        <div class="row-top"><div><h3>My Notes</h3><p class="sub">Your own private notepad — nobody else can see it, not even admins.</p></div><div class="led-strip"><span class="led" style="background:var(--amber);border-color:var(--amber);box-shadow:0 0 8px var(--amber);"></span></div></div>
+        <div class="meta"><span>PRIVATE TO YOU</span></div>
+      </div>
     </div>
   `);
   document.getElementById("go-modules-card").addEventListener("click", ()=>{ view="dashboard"; render(); });
   document.getElementById("go-reference-card").addEventListener("click", openReference);
+  document.getElementById("go-notes-card").addEventListener("click", openNotes);
 }
 
 /* ============================================================
