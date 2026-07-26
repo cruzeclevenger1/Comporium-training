@@ -522,7 +522,10 @@ async function showUnseenAnnouncements(){
       <h3>${totalCount===1 ? "1 thing" : `${totalCount} things`} while you were away</h3>
       <p class="sub">Posted or sent while you were logged out.</p>
       ${annHtml}${msgHtml}
-      <div class="modal-actions"><button class="btn primary" id="ann-digest-ok">Got it</button></div>
+      <div class="modal-actions">
+        ${unseen.length ? `<button class="btn" id="ann-digest-dismiss-all">Dismiss all</button>` : ""}
+        <button class="btn primary" id="ann-digest-ok">Got it</button>
+      </div>
     `, true);
     document.querySelectorAll("[data-digest-dismiss]").forEach(el=> el.addEventListener("click", async ()=>{
       const id = el.getAttribute("data-digest-dismiss");
@@ -532,6 +535,13 @@ async function showUnseenAnnouncements(){
       if(!unseen.length && !unreadMessages.length){ closeModal(); markAnnouncementsSeen(); }
       else renderDigest();
     }));
+    const dismissAllBtn = document.getElementById("ann-digest-dismiss-all");
+    if(dismissAllBtn) dismissAllBtn.addEventListener("click", async ()=>{
+      await supabase.from("announcement_dismissals").upsert(unseen.map(a=>({ user_id: session.user.id, message_id: a.id })));
+      unseen.length = 0;
+      if(!unreadMessages.length){ closeModal(); markAnnouncementsSeen(); }
+      else renderDigest();
+    });
     const goChat = document.getElementById("digest-go-chat");
     if(goChat) goChat.addEventListener("click", ()=>{ closeModal(); markAnnouncementsSeen(); openChat(); });
     document.getElementById("ann-digest-ok").addEventListener("click", ()=>{ closeModal(); markAnnouncementsSeen(); });
@@ -615,7 +625,7 @@ function renderShell(inner){
   const toggleEdit = document.getElementById("toggle-edit-mode");
   if(toggleEdit) toggleEdit.addEventListener("click", ()=>{ editMode = !editMode; render(); });
   const openAnnounce = document.getElementById("open-announce");
-  if(openAnnounce) openAnnounce.addEventListener("click", openAnnouncementModal);
+  if(openAnnounce) openAnnounce.addEventListener("click", ()=> openAnnouncementModal());
   const goTeamBtn = document.getElementById("go-team-btn");
   if(goTeamBtn) goTeamBtn.addEventListener("click", openTeamProgress);
 }
@@ -1217,7 +1227,10 @@ function renderNotifications(){
   renderShell(`
     <div class="card">
       <div class="k-label">NOTIFICATIONS</div>
-      <h2 style="margin-bottom:18px;">Announcements</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+        <h2 style="margin:0;">Announcements</h2>
+        ${NOTIF_ANNOUNCEMENTS.length ? `<button class="mini-btn" id="dismiss-all-announce">Dismiss all</button>` : ""}
+      </div>
       ${announceHtml}
     </div>
     ${isAdmin() ? `
@@ -1231,6 +1244,11 @@ function renderNotifications(){
 
   NOTIF_UNCLAIMED.forEach(m=> wireRichEditor(`thread-rte-${m.id}`));
 
+  const dismissAllBtn = document.getElementById("dismiss-all-announce");
+  if(dismissAllBtn) dismissAllBtn.addEventListener("click", async ()=>{
+    await supabase.from("announcement_dismissals").upsert(NOTIF_ANNOUNCEMENTS.map(a=>({ user_id: session.user.id, message_id: a.id })));
+    await refreshMessagingView();
+  });
   root.querySelectorAll("[data-dismiss-announce]").forEach(el=> el.addEventListener("click", async ()=>{
     await supabase.from("announcement_dismissals").upsert({ user_id: session.user.id, message_id: el.getAttribute("data-dismiss-announce") });
     await refreshMessagingView();
@@ -1394,7 +1412,7 @@ function openFeedbackModal(type, context){
   });
 }
 
-async function openAnnouncementModal(){
+async function openAnnouncementModal(prefillBody){
   const editorId = "announce-rte";
   const { data: teamsForModal } = await supabase.from("teams").select("*").order("name");
   const teamOptions = (teamsForModal||[]).map(t=>`<option value="${t.id}">${escapeHtml(t.name)}</option>`).join("");
@@ -1419,7 +1437,7 @@ async function openAnnouncementModal(){
       <label>Choose people</label>
       <div id="ann-people-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;"></div>
     </div>
-    ${richEditorHtml(editorId, "")}
+    ${richEditorHtml(editorId, prefillBody || "")}
     <div class="modal-actions"><button class="btn" id="an-cancel">Cancel</button><button class="btn primary" id="an-send">Send</button></div>
   `, true);
   wireRichEditor(editorId);
@@ -1920,6 +1938,7 @@ function wireEditorEvents(){
 
   document.getElementById("editor-save").addEventListener("click", async ()=>{
     if(!d.title.trim()){ alert("Give the module a title before saving."); return; }
+    const wasNewModule = !editingExistingId;
     const id = editingExistingId || slugify(d.title);
     await supabase.from("modules").upsert({ id, title:d.title, short:d.short, led_color:d.ledColor, sort_order: editingExistingId ? undefined : (MODULES.length+1) });
     await supabase.from("lessons").delete().eq("module_id", id);
@@ -1934,6 +1953,23 @@ function wireEditorEvents(){
     currentModId = id; currentLessonIdx = 0;
     view = MODULES.find(m=>m.id===id).lessons.length ? "lesson" : "dashboard";
     render();
+    if(wasNewModule) openNewModuleNotifyModal(d.title);
+  });
+}
+
+function openNewModuleNotifyModal(title){
+  openModal(`
+    <h3>Module created</h3>
+    <p class="sub">Want to let everyone know "${escapeHtml(title)}" is now available?</p>
+    <div class="modal-actions">
+      <button class="btn" id="notify-skip">Not now</button>
+      <button class="btn primary" id="notify-users-btn">Notify Users</button>
+    </div>
+  `);
+  document.getElementById("notify-skip").addEventListener("click", closeModal);
+  document.getElementById("notify-users-btn").addEventListener("click", ()=>{
+    closeModal();
+    openAnnouncementModal(`<p>📘 New training module available: <strong>${escapeHtml(title)}</strong></p>`);
   });
 }
 
