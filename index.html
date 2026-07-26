@@ -280,6 +280,8 @@ let currentLessonIdx = 0;
 let quizAnswers = []; let quizRevealed = []; let quizIdx = 0;
 
 let draftModule = null; let editingExistingId = null;
+let expandedLessonIdx = null; let expandedQuestionIdx = null;
+let lessonSnapshot = null; let questionSnapshot = null;
 let teamRows = [];
 let REFERENCE_PAGES = [];
 let currentRefId = null;
@@ -950,6 +952,7 @@ function renderTeam(){
       ? `<span class="role-tag ${r.role==='admin'?'admin':''}">${r.role.toUpperCase()} (YOU)</span>`
       : `<select class="mini-btn" data-role-select="${r.id}"><option value="agent" ${r.role==='agent'?'selected':''}>User</option><option value="admin" ${r.role==='admin'?'selected':''}>Admin</option></select>`;
     const resetBtn = !isSelf ? `<button class="mini-btn" data-reset-pw="${r.id}" data-reset-name="${escapeHtml(r.name)}">Reset password</button>` : "";
+    const deleteUserBtn = !isSelf ? `<button class="mini-btn danger" data-delete-user="${r.id}" data-delete-name="${escapeHtml(r.name)}">Delete user</button>` : "";
 
     const moduleGrid = MODULES.map(m=>{
       const pct = r.perModule[m.id];
@@ -985,11 +988,12 @@ function renderTeam(){
         ${progressCell}
         ${thirdCell}
         <td>${resetBtn}</td>
+        <td>${deleteUserBtn}</td>
         <td style="text-align:center;color:var(--text-faint);">${expanded?'▾':'▸'}</td>
       </tr>`;
 
     const detailRow = expanded ? `
-      <tr class="team-row-detail"><td colspan="6">
+      <tr class="team-row-detail"><td colspan="7">
         <div style="display:flex;flex-wrap:wrap;gap:8px;padding:6px 4px 14px;">
           ${moduleGrid || `<span style="color:var(--text-faint);font-size:12.5px;">No modules yet.</span>`}
         </div>
@@ -1025,7 +1029,7 @@ function renderTeam(){
         </div>
       </div>
       <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">${focusModule ? `Showing progress on <strong style="color:var(--text);">${escapeHtml(focusModule.title)}</strong> only.` : "Click a person to see their module-by-module breakdown."} Click a module pill to see missed questions on their latest attempt.</p>
-      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th><th>${focusModule ? escapeHtml(focusModule.title) : "Overall"}</th><th>${focusModule ? "Score" : "Mastered"}</th><th></th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="6" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
+      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th><th>${focusModule ? escapeHtml(focusModule.title) : "Overall"}</th><th>${focusModule ? "Score" : "Mastered"}</th><th></th><th></th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="7" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
     </div>
     <div id="attempt-detail" style="margin-top:16px;"></div>
   `);
@@ -1055,8 +1059,12 @@ function renderTeam(){
     e.stopPropagation();
     openPasswordResetModal(el.getAttribute("data-reset-pw"), el.getAttribute("data-reset-name"));
   }));
+  root.querySelectorAll("[data-delete-user]").forEach(el=> el.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    openDeleteUserModal(el.getAttribute("data-delete-user"), el.getAttribute("data-delete-name"));
+  }));
   root.querySelectorAll("[data-team-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
-    if(e.target.closest("[data-role-select]")||e.target.closest("[data-reset-pw]")) return;
+    if(e.target.closest("[data-role-select]")||e.target.closest("[data-reset-pw]")||e.target.closest("[data-delete-user]")) return;
     const id = el.getAttribute("data-team-toggle");
     if(teamExpandedRows.has(id)) teamExpandedRows.delete(id); else teamExpandedRows.add(id);
     render();
@@ -1671,6 +1679,43 @@ function openCoachingModal(targetUserId, targetName, context){
   });
 }
 
+function openDeleteUserModal(userId, name){
+  openModal(`
+    <h3>Delete ${escapeHtml(name)}'s account</h3>
+    <p class="sub">This permanently deletes their account, progress, notes, and messages. This cannot be undone.</p>
+    <div class="modal-error" id="del-user-error" style="display:none;"></div>
+    <div class="field"><label>Type your password to confirm</label><input type="password" id="del-user-password" placeholder="Your current password"></div>
+    <div class="modal-actions"><button class="btn" id="del-user-cancel">Cancel</button><button class="btn danger" id="del-user-confirm">Delete permanently</button></div>
+  `);
+  document.getElementById("del-user-cancel").addEventListener("click", closeModal);
+  document.getElementById("del-user-confirm").addEventListener("click", async ()=>{
+    const pw = document.getElementById("del-user-password").value;
+    const err = document.getElementById("del-user-error");
+    const confirmBtn = document.getElementById("del-user-confirm");
+    if(!pw){ err.textContent = "Enter your password to confirm."; err.style.display="block"; return; }
+    confirmBtn.disabled = true; confirmBtn.textContent = "Checking…";
+    const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({ email: session.user.email, password: pw });
+    if(authErr){
+      err.textContent = "Incorrect password.";
+      err.style.display = "block";
+      confirmBtn.disabled = false; confirmBtn.textContent = "Delete permanently";
+      return;
+    }
+    session = authData.session;
+    confirmBtn.textContent = "Deleting…";
+    const { data, error } = await supabase.functions.invoke("admin-delete-user", { body: { userId } });
+    if(error || (data && data.error)){
+      err.textContent = "Couldn't delete: " + (data && data.error ? data.error : error.message);
+      err.style.display = "block";
+      confirmBtn.disabled = false; confirmBtn.textContent = "Delete permanently";
+      return;
+    }
+    closeModal();
+    alert(`${name}'s account has been deleted.`);
+    await openTeamProgress();
+  });
+}
+
 function openPasswordResetModal(userId, name){
   openModal(`
     <h3>Reset password</h3>
@@ -1975,30 +2020,54 @@ function compressImageFile(file, maxDim, quality){
 function openEditor(id){
   if(id){ editingExistingId=id; draftModule=JSON.parse(JSON.stringify(modById(id))); }
   else { editingExistingId=null; draftModule=blankModule(); }
+  expandedLessonIdx = null; expandedQuestionIdx = null;
+  lessonSnapshot = null; questionSnapshot = null;
   view="editor"; render();
 }
 
 function renderEditor(){
   const d = draftModule;
-  const lessonsHtml = d.lessons.map((l,i)=>`
-    <div class="sub-card"><div class="sub-card-head"><span class="tag">LESSON ${i+1}</span>
-      <div class="mini-tools"><button class="mini-btn" data-lesson-up="${i}" ${i===0?'disabled':''}>↑</button>
-      <button class="mini-btn" data-lesson-down="${i}" ${i===d.lessons.length-1?'disabled':''}>↓</button>
-      <button class="mini-btn danger" data-lesson-del="${i}">Delete</button></div></div>
-      <div class="field"><label>Label</label><input type="text" data-lesson-label="${i}" value="${escapeHtml(l.label)}"></div>
-      <div class="field"><label>Title</label><input type="text" data-lesson-title="${i}" value="${escapeHtml(l.title)}"></div>
-      <div class="field"><label>Body</label>${richEditorHtml(`lesson-rte-${i}`, l.body)}<div class="hint">Paste an image directly, or use the 🖼 button. Drag an image's corner to resize it.</div></div>
-    </div>`).join("");
+  const lessonLocked = expandedLessonIdx !== null;
+  const lessonsHtml = d.lessons.map((l,i)=>{
+    if(i === expandedLessonIdx){
+      return `<div class="sub-card"><div class="sub-card-head"><span class="tag">LESSON ${i+1} · EDITING</span>
+        <button class="mini-btn danger" data-lesson-del="${i}">Delete</button></div>
+        <div class="field"><label>Label</label><input type="text" data-lesson-label="${i}" value="${escapeHtml(l.label)}"></div>
+        <div class="field"><label>Title</label><input type="text" data-lesson-title="${i}" value="${escapeHtml(l.title)}"></div>
+        <div class="field"><label>Body</label>${richEditorHtml(`lesson-rte-${i}`, l.body)}<div class="hint">Paste an image directly, or use the 🖼 button. Drag an image's corner to resize it.</div></div>
+        <div class="nav-buttons"><button class="btn" data-lesson-cancel="${i}">Cancel</button><button class="btn primary" data-lesson-save="${i}">Save lesson</button></div>
+      </div>`;
+    }
+    return `<div class="sub-card"><div class="sub-card-head"><span class="tag">LESSON ${i+1}${l.title?' · '+escapeHtml(l.title):''}</span>
+      <div class="mini-tools">
+        <button class="mini-btn" data-lesson-up="${i}" ${lessonLocked||i===0?'disabled':''}>↑</button>
+        <button class="mini-btn" data-lesson-down="${i}" ${lessonLocked||i===d.lessons.length-1?'disabled':''}>↓</button>
+        <button class="mini-btn" data-lesson-edit="${i}" ${lessonLocked?'disabled':''}>Edit</button>
+        <button class="mini-btn danger" data-lesson-del="${i}" ${lessonLocked?'disabled':''}>Delete</button>
+      </div></div>
+    </div>`;
+  }).join("");
 
+  const questionLocked = expandedQuestionIdx !== null;
   const quizHtml = d.quiz.map((q,i)=>{
-    const optsHtml = q.opts.map((opt,oi)=>`<div class="opt-row"><input type="radio" name="correct-${i}" data-q-correct="${i}" value="${oi}" ${q.correct===oi?'checked':''}>
-      <input type="text" data-q-opt="${i}:${oi}" value="${escapeHtml(opt)}"><button class="mini-btn danger" data-q-opt-del="${i}:${oi}" ${q.opts.length<=2?'disabled':''}>✕</button></div>`).join("");
-    return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1}</span>
-      <div class="mini-tools"><button class="mini-btn" data-q-up="${i}" ${i===0?'disabled':''}>↑</button><button class="mini-btn" data-q-down="${i}" ${i===d.quiz.length-1?'disabled':''}>↓</button>
-      <button class="mini-btn danger" data-q-del="${i}">Delete</button></div></div>
-      <div class="field"><label>Question</label><textarea data-q-text="${i}" style="min-height:55px;">${escapeHtml(q.q)}</textarea></div>
-      <div class="field"><label>Options (select correct)</label>${optsHtml}<button class="mini-btn" data-q-opt-add="${i}" style="margin-top:4px;">+ Add option</button></div>
-      <div class="field"><label>Explanation</label><textarea data-q-explain="${i}" style="min-height:55px;">${escapeHtml(q.explain)}</textarea></div>
+    if(i === expandedQuestionIdx){
+      const optsHtml = q.opts.map((opt,oi)=>`<div class="opt-row"><input type="radio" name="correct-${i}" data-q-correct="${i}" value="${oi}" ${q.correct===oi?'checked':''}>
+        <input type="text" data-q-opt="${i}:${oi}" value="${escapeHtml(opt)}"><button class="mini-btn danger" data-q-opt-del="${i}:${oi}" ${q.opts.length<=2?'disabled':''}>✕</button></div>`).join("");
+      return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1} · EDITING</span>
+        <button class="mini-btn danger" data-q-del="${i}">Delete</button></div>
+        <div class="field"><label>Question</label><textarea data-q-text="${i}" style="min-height:55px;">${escapeHtml(q.q)}</textarea></div>
+        <div class="field"><label>Options (select correct)</label>${optsHtml}<button class="mini-btn" data-q-opt-add="${i}" style="margin-top:4px;">+ Add option</button></div>
+        <div class="field"><label>Explanation</label><textarea data-q-explain="${i}" style="min-height:55px;">${escapeHtml(q.explain)}</textarea></div>
+        <div class="nav-buttons"><button class="btn" data-q-cancel="${i}">Cancel</button><button class="btn primary" data-q-save="${i}">Save question</button></div>
+      </div>`;
+    }
+    return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1}${q.q?' · '+escapeHtml(q.q.slice(0,50))+(q.q.length>50?'…':''):''}</span>
+      <div class="mini-tools">
+        <button class="mini-btn" data-q-up="${i}" ${questionLocked||i===0?'disabled':''}>↑</button>
+        <button class="mini-btn" data-q-down="${i}" ${questionLocked||i===d.quiz.length-1?'disabled':''}>↓</button>
+        <button class="mini-btn" data-q-edit="${i}" ${questionLocked?'disabled':''}>Edit</button>
+        <button class="mini-btn danger" data-q-del="${i}" ${questionLocked?'disabled':''}>Delete</button>
+      </div></div>
     </div>`;
   }).join("");
 
@@ -2007,10 +2076,11 @@ function renderEditor(){
       <div class="k-label">${editingExistingId?"EDITING MODULE":"NEW MODULE"}</div>
       <div class="field"><label>Module title</label><input type="text" id="mod-title" value="${escapeHtml(d.title)}"></div>
       <div class="field"><label>Short description</label><textarea id="mod-short" style="min-height:55px;">${escapeHtml(d.short)}</textarea></div>
-      <div class="editor-section"><div class="editor-section-head"><h3>Lessons</h3></div>${lessonsHtml||'<p style="color:var(--text-faint);font-size:13px;">No lessons yet.</p>'}<button class="dashed-btn" id="add-lesson">+ Add lesson</button></div>
-      <div class="editor-section"><div class="editor-section-head"><h3>Quiz questions</h3></div>${quizHtml||'<p style="color:var(--text-faint);font-size:13px;">No questions yet.</p>'}<button class="dashed-btn" id="add-question">+ Add question</button></div>
+      <div class="editor-section"><div class="editor-section-head"><h3>Lessons</h3></div>${lessonsHtml||'<p style="color:var(--text-faint);font-size:13px;">No lessons yet.</p>'}<button class="dashed-btn" id="add-lesson" ${lessonLocked?'disabled':''}>+ Add lesson</button></div>
+      <div class="editor-section"><div class="editor-section-head"><h3>Quiz questions</h3></div>${quizHtml||'<p style="color:var(--text-faint);font-size:13px;">No questions yet.</p>'}<button class="dashed-btn" id="add-question" ${questionLocked?'disabled':''}>+ Add question</button></div>
       <div class="nav-buttons"><div style="display:flex;gap:10px;"><button class="btn" id="editor-cancel">Cancel</button>${editingExistingId?`<button class="btn danger" id="editor-delete">Delete module</button>`:""}</div>
-      <button class="btn primary" id="editor-save">Save module</button></div>
+      <button class="btn primary" id="editor-save" ${lessonLocked||questionLocked?'disabled':''}>Save module</button></div>
+      ${(lessonLocked||questionLocked) ? `<p style="color:var(--amber);font-size:12px;font-family:var(--mono);margin-top:10px;">Save or cancel the ${lessonLocked?'lesson':'question'} you're editing before saving the module.</p>` : ""}
     </div>`);
   wireEditorEvents();
 }
@@ -2019,17 +2089,41 @@ function wireEditorEvents(){
   const d = draftModule;
   document.getElementById("mod-title").addEventListener("input", e=>{ d.title=e.target.value; });
   document.getElementById("mod-short").addEventListener("input", e=>{ d.short=e.target.value; });
+
   root.querySelectorAll("[data-lesson-label]").forEach(el=> el.addEventListener("input", e=>{ d.lessons[+el.dataset.lessonLabel].label=e.target.value; }));
   root.querySelectorAll("[data-lesson-title]").forEach(el=> el.addEventListener("input", e=>{ d.lessons[+el.dataset.lessonTitle].title=e.target.value; }));
-  d.lessons.forEach((l,i)=>{
-    wireRichEditor(`lesson-rte-${i}`);
-    const rteEl = document.getElementById(`lesson-rte-${i}`);
-    if(rteEl) rteEl.addEventListener("input", ()=>{ d.lessons[i].body = rteEl.innerHTML; });
-  });
+  if(expandedLessonIdx !== null){
+    wireRichEditor(`lesson-rte-${expandedLessonIdx}`);
+    const rteEl = document.getElementById(`lesson-rte-${expandedLessonIdx}`);
+    if(rteEl) rteEl.addEventListener("input", ()=>{ d.lessons[expandedLessonIdx].body = rteEl.innerHTML; });
+  }
   root.querySelectorAll("[data-lesson-up]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.lessonUp; [d.lessons[i-1],d.lessons[i]]=[d.lessons[i],d.lessons[i-1]]; renderEditor(); }));
   root.querySelectorAll("[data-lesson-down]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.lessonDown; [d.lessons[i+1],d.lessons[i]]=[d.lessons[i],d.lessons[i+1]]; renderEditor(); }));
-  root.querySelectorAll("[data-lesson-del]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.lessonDel; if(confirm("Delete this lesson?")){ d.lessons.splice(i,1); renderEditor(); } }));
-  document.getElementById("add-lesson").addEventListener("click", ()=>{ d.lessons.push(blankLesson()); renderEditor(); });
+  root.querySelectorAll("[data-lesson-del]").forEach(el=> el.addEventListener("click", ()=>{
+    const i=+el.dataset.lessonDel;
+    if(confirm("Delete this lesson?")){ d.lessons.splice(i,1); expandedLessonIdx=null; lessonSnapshot=null; renderEditor(); }
+  }));
+  root.querySelectorAll("[data-lesson-edit]").forEach(el=> el.addEventListener("click", ()=>{
+    const i = +el.dataset.lessonEdit;
+    lessonSnapshot = JSON.parse(JSON.stringify(d.lessons[i]));
+    expandedLessonIdx = i; renderEditor();
+  }));
+  root.querySelectorAll("[data-lesson-save]").forEach(el=> el.addEventListener("click", ()=>{
+    const i = +el.dataset.lessonSave;
+    if(!d.lessons[i].title.trim()){ alert("Give the lesson a title before saving it."); return; }
+    expandedLessonIdx = null; lessonSnapshot = null; renderEditor();
+  }));
+  root.querySelectorAll("[data-lesson-cancel]").forEach(el=> el.addEventListener("click", ()=>{
+    const i = +el.dataset.lessonCancel;
+    if(lessonSnapshot) d.lessons[i] = lessonSnapshot;
+    expandedLessonIdx = null; lessonSnapshot = null; renderEditor();
+  }));
+  document.getElementById("add-lesson").addEventListener("click", ()=>{
+    d.lessons.push(blankLesson());
+    const i = d.lessons.length-1;
+    lessonSnapshot = JSON.parse(JSON.stringify(d.lessons[i]));
+    expandedLessonIdx = i; renderEditor();
+  });
 
   root.querySelectorAll("[data-q-text]").forEach(el=> el.addEventListener("input", e=>{ d.quiz[+el.dataset.qText].q=e.target.value; }));
   root.querySelectorAll("[data-q-explain]").forEach(el=> el.addEventListener("input", e=>{ d.quiz[+el.dataset.qExplain].explain=e.target.value; }));
@@ -2042,8 +2136,31 @@ function wireEditorEvents(){
   }));
   root.querySelectorAll("[data-q-up]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.qUp; [d.quiz[i-1],d.quiz[i]]=[d.quiz[i],d.quiz[i-1]]; renderEditor(); }));
   root.querySelectorAll("[data-q-down]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.qDown; [d.quiz[i+1],d.quiz[i]]=[d.quiz[i],d.quiz[i+1]]; renderEditor(); }));
-  root.querySelectorAll("[data-q-del]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.qDel; if(confirm("Delete this question?")){ d.quiz.splice(i,1); renderEditor(); } }));
-  document.getElementById("add-question").addEventListener("click", ()=>{ d.quiz.push(blankQuestion()); renderEditor(); });
+  root.querySelectorAll("[data-q-del]").forEach(el=> el.addEventListener("click", ()=>{
+    const i=+el.dataset.qDel;
+    if(confirm("Delete this question?")){ d.quiz.splice(i,1); expandedQuestionIdx=null; questionSnapshot=null; renderEditor(); }
+  }));
+  root.querySelectorAll("[data-q-edit]").forEach(el=> el.addEventListener("click", ()=>{
+    const i = +el.dataset.qEdit;
+    questionSnapshot = JSON.parse(JSON.stringify(d.quiz[i]));
+    expandedQuestionIdx = i; renderEditor();
+  }));
+  root.querySelectorAll("[data-q-save]").forEach(el=> el.addEventListener("click", ()=>{
+    const i = +el.dataset.qSave;
+    if(!d.quiz[i].q.trim()){ alert("Give the question some text before saving it."); return; }
+    expandedQuestionIdx = null; questionSnapshot = null; renderEditor();
+  }));
+  root.querySelectorAll("[data-q-cancel]").forEach(el=> el.addEventListener("click", ()=>{
+    const i = +el.dataset.qCancel;
+    if(questionSnapshot) d.quiz[i] = questionSnapshot;
+    expandedQuestionIdx = null; questionSnapshot = null; renderEditor();
+  }));
+  document.getElementById("add-question").addEventListener("click", ()=>{
+    d.quiz.push(blankQuestion());
+    const i = d.quiz.length-1;
+    questionSnapshot = JSON.parse(JSON.stringify(d.quiz[i]));
+    expandedQuestionIdx = i; renderEditor();
+  });
 
   document.getElementById("editor-cancel").addEventListener("click", ()=>{ view = editingExistingId?"lesson":"dashboard"; if(editingExistingId){ currentModId=editingExistingId; currentLessonIdx=0; } render(); });
 
@@ -2056,6 +2173,7 @@ function wireEditorEvents(){
   });
 
   document.getElementById("editor-save").addEventListener("click", async ()=>{
+    if(expandedLessonIdx !== null || expandedQuestionIdx !== null){ alert("Save or cancel what you're currently editing first."); return; }
     if(!d.title.trim()){ alert("Give the module a title before saving."); return; }
     const wasNewModule = !editingExistingId;
     const id = editingExistingId || slugify(d.title);
