@@ -239,10 +239,10 @@ let refEditing = false;
 let refDraft = null;
 
 let NOTIF_ANNOUNCEMENTS = [];
-let NOTIF_REPLIES = [];
-let NOTIF_ADMIN_UNREAD = 0;
-let notifOpen = false;
-let INBOX_ITEMS = [];
+let NOTIF_REPLIES = [];       // audience=user, recipient=me — replies to my own feedback
+let NOTIF_SENT = [];          // audience=admins, sender=me — my own submitted flags/comments, with _answered flag
+let NOTIF_UNCLAIMED = [];     // admin only: flags/comments nobody has replied to yet
+let NOTIF_CLAIMED_BY_ME = []; // admin only: flags/comments I personally replied to, each with ._reply
 
 const root = document.getElementById("app");
 function escapeHtml(s){ const d=document.createElement("div"); d.textContent=s==null?"":s; return d.innerHTML; }
@@ -303,7 +303,7 @@ function renderAuth(){
     <div class="auth-wrap">
       <div style="text-align:center;margin-bottom:26px;">
         <div class="brand-mark" style="margin:0 auto 12px;"><i></i><i></i><i></i></div>
-        <div class="brand-text"><div class="name">COMPORIUM TRAINING MODULES</div><div class="tag">TIER 1 FIELD &amp; SIGNAL TRAINING</div></div>
+        <div class="brand-text"><div class="name">COMPORIUM TRAINING MODULES</div></div>
       </div>
       <div class="card">
         <div class="auth-toggle">
@@ -354,7 +354,7 @@ async function afterLogin(){
   view = "loading"; render();
   await loadProfile();
   await loadEverything();
-  await loadNotifications();
+  await loadAllNotifications();
   view = "home"; render();
 }
 
@@ -378,13 +378,12 @@ function renderShell(inner){
       <div class="brand">
         <button class="gear-btn" id="open-settings" title="Settings">⚙</button>
         <div class="brand-mark"><i></i><i></i><i></i></div>
-        <div class="brand-text"><div class="name">COMPORIUM TRAINING MODULES</div><div class="tag">TIER 1 FIELD &amp; SIGNAL TRAINING</div></div>
+        <div class="brand-text"><div class="name">COMPORIUM TRAINING MODULES</div></div>
       </div>
       <div class="top-right">
-        <nav class="crumbs">${ (view==="home"||view==="dashboard"||view==="reference") ? "" : `<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':view==='settings'?'SETTINGS':view==='inbox'?'ADMIN INBOX':''))}`}</nav>
+        <nav class="crumbs">${ (view==="home"||view==="dashboard"||view==="reference") ? "" : `<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':''))}`}</nav>
         <div class="bell-wrap">
           <button class="gear-btn" id="notif-bell" title="Notifications">🔔${bellBadgeCount()>0?`<span class="notif-dot"></span>`:''}</button>
-          ${notifOpen ? renderNotifPanel() : ""}
         </div>
         <span class="pill-btn" style="cursor:default;">${escapeHtml(profile ? profile.name : "")}</span>
         ${isAdmin() ? `
@@ -394,7 +393,6 @@ function renderShell(inner){
               <button id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>
               <button id="open-announce">📣 Make announcement to everyone</button>
               <button id="go-team-menu">Team progress</button>
-              <button id="go-inbox-menu">Admin inbox${NOTIF_ADMIN_UNREAD>0?` (${NOTIF_ADMIN_UNREAD})`:""}</button>
             </div>
           </div>` : ""}
         <button class="pill-btn" id="logout-btn">Log out</button>
@@ -414,20 +412,13 @@ function renderShell(inner){
   document.getElementById("nav-reference").addEventListener("click", openReference);
   document.getElementById("open-settings").addEventListener("click", ()=>{ view="settings"; render(); });
   document.getElementById("logout-btn").addEventListener("click", logout);
-  document.getElementById("notif-bell").addEventListener("click", (e)=>{ e.stopPropagation(); toggleNotifPanel(); });
-  root.querySelectorAll("[data-dismiss-notif]").forEach(el=> el.addEventListener("click", async (e)=>{
-    e.stopPropagation();
-    await supabase.from("messages").delete().eq("id", el.getAttribute("data-dismiss-notif"));
-    await loadNotifications(); render();
-  }));
+  document.getElementById("notif-bell").addEventListener("click", openNotifications);
   const toggleEdit = document.getElementById("toggle-edit-mode");
   if(toggleEdit) toggleEdit.addEventListener("click", ()=>{ editMode = !editMode; render(); });
   const openAnnounce = document.getElementById("open-announce");
   if(openAnnounce) openAnnounce.addEventListener("click", openAnnouncementModal);
   const goTeamMenu = document.getElementById("go-team-menu");
   if(goTeamMenu) goTeamMenu.addEventListener("click", openTeamProgress);
-  const goInboxMenu = document.getElementById("go-inbox-menu");
-  if(goInboxMenu) goInboxMenu.addEventListener("click", openInbox);
 }
 
 /* ============================================================
@@ -657,52 +648,132 @@ async function showAttemptDetail(userId, moduleId){
 /* ============================================================
    NOTIFICATIONS / MESSAGING
    ============================================================ */
-async function loadNotifications(){
-  const { data: announcements } = await supabase.from("messages").select("*").eq("audience","all").order("created_at",{ascending:false}).limit(8);
+async function loadAllNotifications(){
+  const { data: announcements } = await supabase.from("messages").select("*").eq("audience","all").order("created_at",{ascending:false}).limit(15);
   NOTIF_ANNOUNCEMENTS = announcements || [];
-  const { data: replies } = await supabase.from("messages").select("*").eq("audience","user").eq("recipient_id", session.user.id).order("created_at",{ascending:false}).limit(8);
-  NOTIF_REPLIES = replies || [];
+
+  const { data: repliesToMe } = await supabase.from("messages").select("*").eq("audience","user").eq("recipient_id", session.user.id).order("created_at",{ascending:false});
+  NOTIF_REPLIES = repliesToMe || [];
+
+  const { data: mySent } = await supabase.from("messages").select("*").eq("audience","admins").eq("sender_id", session.user.id).order("created_at",{ascending:false});
+  let sent = mySent || [];
+  if(sent.length){
+    const sentIds = sent.map(m=>m.id);
+    const { data: repliesToSent } = await supabase.from("messages").select("*").eq("audience","user").eq("type","reply").in("thread_id", sentIds);
+    const map = {}; (repliesToSent||[]).forEach(r=>{ map[r.thread_id] = r; });
+    sent = sent.map(m=>({ ...m, _answered: !!map[m.id] }));
+  }
+  NOTIF_SENT = sent;
+
   if(isAdmin()){
-    const { count } = await supabase.from("messages").select("*", { count:"exact", head:true }).eq("audience","admins").eq("is_read", false);
-    NOTIF_ADMIN_UNREAD = count || 0;
+    const { data: adminItems } = await supabase.from("messages").select("*").eq("audience","admins").order("created_at",{ascending:false});
+    const items = adminItems || [];
+    const ids = items.map(m=>m.id);
+    let replyRows = [];
+    if(ids.length){
+      const { data: r } = await supabase.from("messages").select("*").eq("audience","user").eq("type","reply").in("thread_id", ids);
+      replyRows = r || [];
+    }
+    const replyMap = {}; replyRows.forEach(r=>{ replyMap[r.thread_id] = r; });
+    NOTIF_UNCLAIMED = items.filter(m=> !replyMap[m.id]);
+    NOTIF_CLAIMED_BY_ME = items.filter(m=> replyMap[m.id] && replyMap[m.id].sender_id === session.user.id).map(m=>({ ...m, _reply: replyMap[m.id] }));
   } else {
-    NOTIF_ADMIN_UNREAD = 0;
+    NOTIF_UNCLAIMED = []; NOTIF_CLAIMED_BY_ME = [];
   }
 }
-function bellBadgeCount(){ return NOTIF_REPLIES.filter(r=>!r.is_read).length + NOTIF_ADMIN_UNREAD; }
+function bellBadgeCount(){
+  const unreadReplies = NOTIF_REPLIES.filter(r=>!r.is_read).length;
+  const unclaimed = isAdmin() ? NOTIF_UNCLAIMED.length : 0;
+  return unreadReplies + unclaimed;
+}
 
-function renderNotifPanel(){
+async function openNotifications(){
+  await loadAllNotifications();
+  const unreadIds = NOTIF_REPLIES.filter(r=>!r.is_read).map(r=>r.id);
+  if(unreadIds.length){ await supabase.from("messages").update({ is_read:true }).in("id", unreadIds); await loadAllNotifications(); }
+  view = "notifications"; render();
+}
+
+function renderNotifications(){
+  const typeLabel = { flag:"🚩 Flag", highlight:"✨ Highlight", comment:"💬 Comment" };
+
   const announceHtml = NOTIF_ANNOUNCEMENTS.length ? NOTIF_ANNOUNCEMENTS.map(a=>`
-    <div class="notif-item">
-      <div class="notif-item-body">${a.body}</div>
-      <div class="notif-item-meta">${escapeHtml(a.sender_name)} · ${new Date(a.created_at).toLocaleDateString()}</div>
-    </div>`).join("") : `<p class="notif-empty">No announcements yet.</p>`;
+    <div class="sub-card"><div class="sub-card-head"><span class="tag">📣 ${escapeHtml(a.sender_name)} · ${new Date(a.created_at).toLocaleString()}</span></div>
+      <div style="font-size:14px;color:var(--text);">${a.body}</div>
+    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">No announcements yet.</p>`;
+
+  const unclaimedHtml = NOTIF_UNCLAIMED.map(m=>`
+    <div class="sub-card">
+      <div class="sub-card-head"><span class="tag">${typeLabel[m.type]||m.type} · ${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</span>
+        <button class="mini-btn danger" data-discard-item="${m.id}">Discard</button></div>
+      ${m.context ? `<div style="font-size:12px;color:var(--text-faint);margin-bottom:6px;">${escapeHtml(m.context)}</div>` : ""}
+      <div style="font-size:14px;margin-bottom:12px;color:var(--text);">${m.body}</div>
+      <div class="field"><label>Reply</label>${richEditorHtml(`reply-rte-${m.id}`, "")}</div>
+      <button class="mini-btn" data-send-reply="${m.id}" style="margin-top:8px;">Send reply</button>
+    </div>`).join("");
+
+  const claimedHtml = NOTIF_CLAIMED_BY_ME.map(m=>`
+    <div class="sub-card">
+      <div class="sub-card-head"><span class="tag">${typeLabel[m.type]||m.type} · ${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</span>
+        <button class="mini-btn danger" data-discard-item="${m.id}">Discard</button></div>
+      ${m.context ? `<div style="font-size:12px;color:var(--text-faint);margin-bottom:6px;">${escapeHtml(m.context)}</div>` : ""}
+      <div style="font-size:14px;margin-bottom:10px;color:var(--text);">${m.body}</div>
+      <div style="font-size:12px;color:var(--text-faint);margin-bottom:4px;">Your reply:</div>
+      <div style="font-size:13.5px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;padding:10px 12px;">${m._reply.body}</div>
+    </div>`).join("");
 
   const repliesHtml = NOTIF_REPLIES.length ? NOTIF_REPLIES.map(r=>`
     <div class="notif-item ${!r.is_read?'unread':''}">
+      <div class="notif-item-meta">${escapeHtml(r.sender_name)} replied · re: ${escapeHtml(r.context||'your feedback')} · ${new Date(r.created_at).toLocaleDateString()}</div>
       <div class="notif-item-body">${r.body}</div>
-      <div class="notif-item-meta">Re: ${escapeHtml(r.context||'your feedback')} · ${new Date(r.created_at).toLocaleDateString()}</div>
-      <button class="mini-btn" data-dismiss-notif="${r.id}">Dismiss</button>
-    </div>`).join("") : `<p class="notif-empty">Nothing yet.</p>`;
+      <button class="mini-btn" data-dismiss-notif="${r.id}" style="margin-top:6px;">Dismiss</button>
+    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">No replies yet.</p>`;
 
-  return `
-    <div class="notif-panel" id="notif-panel">
-      <div class="notif-panel-head">Notifications</div>
-      <div class="notif-section-title">Announcements</div>
+  const sentHtml = NOTIF_SENT.length ? NOTIF_SENT.map(m=>`
+    <div class="notif-item">
+      <div class="notif-item-meta">${typeLabel[m.type]||m.type} · ${new Date(m.created_at).toLocaleDateString()} · <span style="color:${m._answered?'var(--green)':'var(--amber)'};">${m._answered?'Answered':'Pending'}</span></div>
+      <div class="notif-item-body">${m.body}</div>
+    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">You haven't sent any comments or flags.</p>`;
+
+  renderShell(`
+    <div class="card">
+      <div class="k-label">NOTIFICATIONS</div>
+      <h2 style="margin-bottom:18px;">Announcements</h2>
       ${announceHtml}
-      <div class="notif-section-title">Replies to you</div>
+    </div>
+    ${isAdmin() ? `
+    <div class="card" style="margin-top:16px;">
+      <div class="k-label">ADMIN</div>
+      <h2 style="margin-bottom:4px;">Needs a reply</h2>
+      <p style="color:var(--text-dim);font-size:13px;margin:0 0 16px;">First admin to reply owns it — it'll disappear from other admins' view.</p>
+      ${unclaimedHtml || `<p style="color:var(--text-faint);font-size:13px;">Nothing waiting on a reply.</p>`}
+      ${claimedHtml ? `<h3 style="font-size:14px;color:var(--text-dim);margin:22px 0 12px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">You've replied to</h3>${claimedHtml}` : ""}
+    </div>` : ""}
+    <div class="card" style="margin-top:16px;">
+      <div class="k-label">YOUR ACTIVITY</div>
+      <h2 style="margin-bottom:14px;">Replies to you</h2>
       ${repliesHtml}
-    </div>`;
-}
+      <h3 style="font-size:14px;color:var(--text-dim);margin:22px 0 12px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Your submitted comments &amp; flags</h3>
+      ${sentHtml}
+    </div>
+  `);
 
-async function toggleNotifPanel(){
-  notifOpen = !notifOpen;
-  if(notifOpen){
-    await loadNotifications();
-    const unreadIds = NOTIF_REPLIES.filter(r=>!r.is_read).map(r=>r.id);
-    if(unreadIds.length){ await supabase.from("messages").update({ is_read:true }).in("id", unreadIds); await loadNotifications(); }
-  }
-  render();
+  NOTIF_UNCLAIMED.forEach(m=> wireRichEditor(`reply-rte-${m.id}`));
+  root.querySelectorAll("[data-discard-item]").forEach(el=> el.addEventListener("click", async ()=>{
+    if(confirm("Discard this item?")){ await supabase.from("messages").delete().eq("id", el.getAttribute("data-discard-item")); await openNotifications(); }
+  }));
+  root.querySelectorAll("[data-send-reply]").forEach(el=> el.addEventListener("click", async ()=>{
+    const id = el.getAttribute("data-send-reply");
+    const original = NOTIF_UNCLAIMED.find(m=>m.id===id);
+    const body = document.getElementById(`reply-rte-${id}`).innerHTML.trim();
+    if(!body || body === "<br>") return;
+    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: original.sender_id, audience:"user", type:"reply", body, context: original.context, thread_id: id });
+    await openNotifications();
+  }));
+  root.querySelectorAll("[data-dismiss-notif]").forEach(el=> el.addEventListener("click", async ()=>{
+    await supabase.from("messages").delete().eq("id", el.getAttribute("data-dismiss-notif"));
+    await openNotifications();
+  }));
 }
 
 function openFeedbackModal(type, context){
@@ -742,7 +813,7 @@ function openAnnouncementModal(){
     if(!body || body === "<br>") { closeModal(); return; }
     await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement", body });
     closeModal();
-    await loadNotifications(); render();
+    await loadAllNotifications(); render();
   });
 }
 
@@ -768,52 +839,6 @@ function openPasswordResetModal(userId, name){
     alert(`Password updated for ${name}.`);
   });
 }
-
-async function openInbox(){
-  const { data } = await supabase.from("messages").select("*").eq("audience","admins").order("created_at",{ascending:false});
-  INBOX_ITEMS = data || [];
-  const unreadIds = INBOX_ITEMS.filter(m=>!m.is_read).map(m=>m.id);
-  if(unreadIds.length) await supabase.from("messages").update({ is_read:true }).in("id", unreadIds);
-  await loadNotifications();
-  view = "inbox"; render();
-}
-
-function renderInbox(){
-  const typeLabel = { flag:"🚩 FLAG", highlight:"✨ HIGHLIGHT", comment:"💬 COMMENT" };
-  const rows = INBOX_ITEMS.map(m=>`
-    <div class="sub-card">
-      <div class="sub-card-head">
-        <span class="tag">${typeLabel[m.type]||m.type.toUpperCase()} · ${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</span>
-        <button class="mini-btn danger" data-discard-inbox="${m.id}">Discard</button>
-      </div>
-      ${m.context ? `<div style="font-size:12px;color:var(--text-faint);margin-bottom:6px;">${escapeHtml(m.context)}</div>` : ""}
-      <div style="font-size:14px;margin-bottom:12px;color:var(--text);">${m.body}</div>
-      <div class="field"><label>Reply</label>${richEditorHtml(`reply-rte-${m.id}`, "")}</div>
-      <button class="mini-btn" data-send-reply="${m.id}" style="margin-top:8px;">Send reply</button>
-    </div>
-  `).join("") || `<p style="color:var(--text-dim);font-size:14px;">Inbox is empty — nothing flagged or commented right now.</p>`;
-
-  renderShell(`<div class="card"><div class="k-label">ADMIN INBOX</div><h2 style="margin-bottom:16px;">Flagged questions &amp; comments</h2>${rows}</div>`);
-
-  INBOX_ITEMS.forEach(m=> wireRichEditor(`reply-rte-${m.id}`));
-  root.querySelectorAll("[data-discard-inbox]").forEach(el=> el.addEventListener("click", async ()=>{
-    if(confirm("Discard this item?")){ await supabase.from("messages").delete().eq("id", el.getAttribute("data-discard-inbox")); await openInbox(); }
-  }));
-  root.querySelectorAll("[data-send-reply]").forEach(el=> el.addEventListener("click", async ()=>{
-    const id = el.getAttribute("data-send-reply");
-    const original = INBOX_ITEMS.find(m=>m.id===id);
-    const body = document.getElementById(`reply-rte-${id}`).innerHTML.trim();
-    if(!body || body === "<br>") return;
-    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: original.sender_id, audience:"user", type:"reply", body, context: original.context, thread_id: id });
-    alert("Reply sent.");
-    document.getElementById(`reply-rte-${id}`).innerHTML = "";
-  }));
-}
-document.addEventListener("click", (e)=>{
-  if(!notifOpen) return;
-  if(e.target.closest(".bell-wrap")) return;
-  notifOpen = false; render();
-});
 
 /* ============================================================
    EDITOR (admin only) — module / lessons / quiz CRUD
@@ -1312,7 +1337,7 @@ function render(){
   else if(view==="team") renderTeam();
   else if(view==="settings") renderSettings();
   else if(view==="reference") renderReference();
-  else if(view==="inbox") renderInbox();
+  else if(view==="notifications") renderNotifications();
 }
 
 /* ============================================================
