@@ -151,13 +151,16 @@
   .ref-row{ display:flex; align-items:center; justify-content:space-between; gap:6px; padding:9px 10px; border-radius:8px; cursor:pointer; font-size:13px; color:var(--text-dim); position:relative; transition:background .12s; }
   .ref-row:hover{ background:#141d30; } html.theme-light .ref-row:hover{ background:#eef1f8; }
   .ref-row.active{ background:var(--cyan-dim); color:var(--cyan); }
-  .ref-row.child{ margin-left:16px; font-size:12.5px; }
+  .ref-row.child{ margin-left:28px; font-size:12.5px; color:var(--text-faint); position:relative; }
+  .ref-row.child::before{ content:""; position:absolute; left:-16px; top:0; bottom:0; width:1px; background:var(--stroke); }
+  .ref-row.child .ref-row-title::before{ content:"—"; margin-right:5px; color:var(--text-faint); }
   .ref-row-title{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
   .ref-row-tools{ display:flex; gap:3px; flex:none; opacity:0; pointer-events:none; transition:opacity .12s; }
   .ref-row:hover .ref-row-tools{ opacity:1; pointer-events:auto; }
   .ref-row-tools .mini-btn{ padding:2px 6px; font-size:9px; }
-  .ref-row.drag-over-top::before{ content:""; position:absolute; left:4px; right:4px; top:-2px; height:3px; border-radius:2px; background:var(--cyan); box-shadow:0 0 6px var(--cyan); }
-  .ref-row.drag-over-bottom::after{ content:""; position:absolute; left:4px; right:4px; bottom:-2px; height:3px; border-radius:2px; background:var(--cyan); box-shadow:0 0 6px var(--cyan); }
+  .ref-row.drag-over-top::before, .mod-card.drag-over-top::before{ content:""; position:absolute; left:4px; right:4px; top:-2px; height:3px; border-radius:2px; background:var(--cyan); box-shadow:0 0 6px var(--cyan); z-index:2; }
+  .ref-row.drag-over-bottom::after, .mod-card.drag-over-bottom::after{ content:""; position:absolute; left:4px; right:4px; bottom:-2px; height:3px; border-radius:2px; background:var(--cyan); box-shadow:0 0 6px var(--cyan); z-index:2; }
+  .drag-handle{ cursor:grab; color:var(--text-faint); font-size:15px; width:28px; height:28px; display:flex; align-items:center; justify-content:center; }
   .ref-row[draggable="true"]{ cursor:grab; }
   .onenote-title-input{ width:100%; background:none; border:none; border-bottom:1px solid var(--stroke); font-size:26px; font-weight:700; color:var(--text); font-family:var(--sans); padding:4px 2px 14px; outline:none; margin-bottom:14px; }
   .onenote-title-input::placeholder{ color:var(--text-faint); font-weight:400; }
@@ -197,7 +200,7 @@
   .rte-toolbar select{ height:30px; border-radius:6px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); font-family:var(--mono); font-size:11px; }
   html.theme-light .rte-toolbar select{ background:#fff; }
   .rte-toolbar .rte-sep{ width:1px; height:20px; background:var(--stroke); margin:0 4px; }
-  .rte-body{ border:1px solid var(--stroke); border-radius:0 0 8px 8px; padding:14px; min-height:140px; background:#0e1626; color:var(--text); font-size:14px; line-height:1.7; overflow-y:auto; }
+  .rte-body{ border:1px solid var(--stroke); border-radius:0 0 8px 8px; padding:14px; min-height:140px; background:#0e1626; color:var(--text); font-size:14px; line-height:1.7; overflow-y:auto; resize:vertical; }
   html.theme-light .rte-body{ background:#fff; }
   .rte-body:focus{ outline:none; border-color:var(--cyan); }
   .rte-body p{ margin:0 0 10px; } .rte-body ul,.rte-body ol{ margin:0 0 10px; padding-left:22px; }
@@ -454,7 +457,25 @@ function resumeLessonIdx(m){
 }
 function moduleStatus(id){ const s=progressMap[id]; if(!s) return "new"; if(s.best===s.total) return "mastered"; return "attempted"; }
 
+async function reorderModuleDrop(draggedId, targetId, pos){
+  const fromIdx = MODULES.findIndex(m=>m.id===draggedId);
+  let toIdx = MODULES.findIndex(m=>m.id===targetId);
+  if(fromIdx===-1 || toIdx===-1) return;
+  if(pos==="after") toIdx++;
+  const dragged = MODULES[fromIdx];
+  const reordered = MODULES.slice();
+  reordered.splice(fromIdx,1);
+  if(fromIdx < toIdx) toIdx--;
+  reordered.splice(toIdx,0,dragged);
+  MODULES = reordered;
+  for(let i=0;i<MODULES.length;i++){
+    await supabase.from("modules").update({ sort_order:i }).eq("id", MODULES[i].id);
+  }
+  render();
+}
+
 function renderDashboard(){
+  const editOn = canEdit();
   const cards = MODULES.map(m=>{
     const status = moduleStatus(m.id); const s = progressMap[m.id];
     const pillHtml = status==="mastered" ? `<span class="status-pill done">Mastered</span>`
@@ -462,8 +483,8 @@ function renderDashboard(){
       : `<span class="status-pill">Not started</span>`;
     const on = status!=="new"; const mastered = status==="mastered";
     const leds = `<span class="led ${on?'on-green':''}"></span><span class="led ${on?(mastered?'on-green':'on-amber blink'):''}"></span><span class="led ${mastered?'on-green':''}"></span>`;
-    const tools = canEdit() ? `<div class="card-tools"><button class="icon-btn" data-edit="${m.id}" title="Edit module">✎</button><button class="icon-btn danger" data-del="${m.id}" title="Delete module">✕</button></div>` : "";
-    return `<div class="mod-card" data-mod="${m.id}">${tools}
+    const tools = editOn ? `<div class="card-tools"><span class="drag-handle" title="Drag to reorder">⠿</span><button class="icon-btn" data-edit="${m.id}" title="Edit module">✎</button><button class="icon-btn danger" data-del="${m.id}" title="Delete module">✕</button></div>` : "";
+    return `<div class="mod-card" data-mod="${m.id}" data-mod-drag="${m.id}" draggable="${editOn}">${tools}
       <div class="row-top"><div><h3>${escapeHtml(m.title)}</h3><p class="sub">${escapeHtml(m.short)}</p></div><div class="led-strip">${leds}</div></div>
       <div class="meta"><span>${m.lessons.length} LESSONS</span><span>${m.quiz.length} QUIZ Q's</span>${pillHtml}</div>
       <div class="progress-bar"><div style="width:${overallPct(m)}%"></div></div></div>`;
@@ -486,7 +507,7 @@ function renderDashboard(){
   `);
 
   root.querySelectorAll(".mod-card").forEach(el=> el.addEventListener("click",(e)=>{
-    if(e.target.closest("[data-edit]")||e.target.closest("[data-del]")) return;
+    if(e.target.closest("[data-edit]")||e.target.closest("[data-del]")||e.target.closest(".drag-handle")) return;
     const id = el.getAttribute("data-mod"); const m = modById(id);
     currentModId = id; currentLessonIdx = resumeLessonIdx(m); view="lesson"; render();
   }));
@@ -498,6 +519,37 @@ function renderDashboard(){
       await loadEverything(); render();
     }
   }));
+
+  if(editOn){
+    let dragModId = null;
+    let dragOverEl = null;
+    root.querySelectorAll("[data-mod-drag]").forEach(el=>{
+      el.addEventListener("dragstart", (e)=>{ dragModId = el.getAttribute("data-mod-drag"); e.dataTransfer.effectAllowed = "move"; el.style.opacity = "0.4"; });
+      el.addEventListener("dragend", ()=>{
+        el.style.opacity = "";
+        if(dragOverEl){ dragOverEl.classList.remove("drag-over-top","drag-over-bottom"); dragOverEl = null; }
+      });
+      el.addEventListener("dragover", (e)=>{
+        e.preventDefault();
+        const rect = el.getBoundingClientRect();
+        const pos = (e.clientY - rect.top) < rect.height/2 ? "before" : "after";
+        if(dragOverEl && dragOverEl!==el) dragOverEl.classList.remove("drag-over-top","drag-over-bottom");
+        dragOverEl = el;
+        el.classList.toggle("drag-over-top", pos==="before");
+        el.classList.toggle("drag-over-bottom", pos==="after");
+      });
+      el.addEventListener("dragleave", ()=>{ el.classList.remove("drag-over-top","drag-over-bottom"); });
+      el.addEventListener("drop", async (e)=>{
+        e.preventDefault();
+        const pos = el.classList.contains("drag-over-top") ? "before" : "after";
+        el.classList.remove("drag-over-top","drag-over-bottom");
+        const targetId = el.getAttribute("data-mod-drag");
+        if(!dragModId || dragModId===targetId){ dragModId=null; return; }
+        await reorderModuleDrop(dragModId, targetId, pos);
+        dragModId = null;
+      });
+    });
+  }
   const addBtn = document.getElementById("add-module"); if(addBtn) addBtn.addEventListener("click", ()=>openEditor(null));
 }
 
@@ -651,11 +703,12 @@ async function showAttemptDetail(userId, moduleId){
   }
   const a = attempts[0];
   const missed = (a.answers||[]).filter(x=>!x.is_correct);
-  const missedHtml = missed.length ? missed.map(x=>`
+  const missedHtml = missed.length ? missed.map((x,i)=>`
     <div class="sub-card">
       <div style="font-size:14px;margin-bottom:8px;">${escapeHtml(x.question)}</div>
       <div style="font-size:13px;color:var(--red);margin-bottom:4px;">Their answer: ${escapeHtml(x.options[x.selected] ?? '(no answer)')}</div>
-      <div style="font-size:13px;color:var(--green);">Correct answer: ${escapeHtml(x.options[x.correct])}</div>
+      <div style="font-size:13px;color:var(--green);margin-bottom:10px;">Correct answer: ${escapeHtml(x.options[x.correct])}</div>
+      <button class="mini-btn" data-coach="${i}">💬 Discuss with ${escapeHtml(person?person.name:'them')}</button>
     </div>
   `).join("") : `<p style="color:var(--green);font-size:13.5px;">No missed questions on their latest attempt — clean sweep.</p>`;
   holder.innerHTML = `
@@ -665,6 +718,10 @@ async function showAttemptDetail(userId, moduleId){
       ${missedHtml}
     </div>
   `;
+  holder.querySelectorAll("[data-coach]").forEach(el=> el.addEventListener("click", ()=>{
+    const q = missed[+el.getAttribute("data-coach")];
+    openCoachingModal(userId, person ? person.name : "this person", `${m ? m.title : ''} — ${q.question}`);
+  }));
 }
 
 /* ============================================================
@@ -675,6 +732,9 @@ async function loadAllNotifications(){
   NOTIF_ANNOUNCEMENTS = announcements || [];
 
   const { data: myRoots } = await supabase.from("messages").select("*").eq("audience","admins").is("thread_id", null).eq("sender_id", session.user.id).order("created_at",{ascending:false});
+
+  const { data: directSent } = await supabase.from("messages").select("*").eq("audience","user").is("thread_id", null).eq("sender_id", session.user.id).order("created_at",{ascending:false});
+  const { data: directReceived } = await supabase.from("messages").select("*").eq("audience","user").is("thread_id", null).eq("recipient_id", session.user.id).order("created_at",{ascending:false});
 
   let claimedRoots = [];
   if(isAdmin()){
@@ -689,6 +749,8 @@ async function loadAllNotifications(){
   const rootMap = {};
   (myRoots||[]).forEach(r=> rootMap[r.id]=r);
   claimedRoots.forEach(r=> rootMap[r.id]=r);
+  (directSent||[]).forEach(r=> rootMap[r.id]=r);
+  (directReceived||[]).forEach(r=> rootMap[r.id]=r);
   const allRoots = Object.values(rootMap);
   const rootIds = allRoots.map(r=>r.id);
 
@@ -801,15 +863,21 @@ async function sendThreadMessage(rootId){
   const root = NOTIF_UNCLAIMED.find(m=>m.id===rootId) || (NOTIF_THREADS.find(t=>t.root.id===rootId)||{}).root;
   if(!root) return;
 
-  const iAmOriginalSender = root.sender_id === session.user.id;
   let recipientId;
-  if(iAmOriginalSender){
-    recipientId = root.claimed_by;
-    if(!recipientId){ alert("No admin has picked this up yet — nothing to send to."); return; }
+  if(root.audience === "user"){
+    // Direct thread (e.g. admin-initiated coaching conversation) — just message the other participant.
+    recipientId = (root.sender_id === session.user.id) ? root.recipient_id : root.sender_id;
   } else {
-    recipientId = root.sender_id;
-    if(!root.claimed_by){
-      await supabase.from("messages").update({ claimed_by: session.user.id }).eq("id", root.id).is("claimed_by", null);
+    // Pool-originated flag/comment thread.
+    const iAmOriginalSender = root.sender_id === session.user.id;
+    if(iAmOriginalSender){
+      recipientId = root.claimed_by;
+      if(!recipientId){ alert("No admin has picked this up yet — nothing to send to."); return; }
+    } else {
+      recipientId = root.sender_id;
+      if(!root.claimed_by){
+        await supabase.from("messages").update({ claimed_by: session.user.id }).eq("id", root.id).is("claimed_by", null);
+      }
     }
   }
   await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: recipientId, audience:"user", type:"reply", body, context: root.context, thread_id: root.id });
@@ -897,6 +965,26 @@ function openAnnouncementModal(){
     await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement", body });
     closeModal();
     await loadAllNotifications(); render();
+  });
+}
+
+function openCoachingModal(targetUserId, targetName, context){
+  const editorId = "coach-rte";
+  openModal(`
+    <h3>Message ${escapeHtml(targetName)}</h3>
+    <p class="sub">${escapeHtml(context)} — this starts a private conversation only you and ${escapeHtml(targetName)} can see.</p>
+    ${richEditorHtml(editorId, "")}
+    <div class="modal-actions"><button class="btn" id="coach-cancel">Cancel</button><button class="btn primary" id="coach-send">Send</button></div>
+  `, true);
+  wireRichEditor(editorId);
+  document.getElementById(editorId).focus();
+  document.getElementById("coach-cancel").addEventListener("click", closeModal);
+  document.getElementById("coach-send").addEventListener("click", async ()=>{
+    const body = document.getElementById(editorId).innerHTML.trim();
+    if(!body || body === "<br>") { closeModal(); return; }
+    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: targetUserId, audience:"user", type:"comment", body, context, claimed_by: session.user.id });
+    closeModal();
+    alert(`Sent — you'll find this conversation in your Notifications.`);
   });
 }
 
