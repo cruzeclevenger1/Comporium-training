@@ -1387,21 +1387,31 @@ function wireRichEditor(id){
     fileInput.value = "";
   });
   editorEl.addEventListener("paste", async (e)=>{
-    const items = (e.clipboardData || window.clipboardData).items;
-    for(const item of items){
-      if(item.type && item.type.startsWith("image/")){
-        e.preventDefault();
-        const file = item.getAsFile();
-        const dataUrl = await compressImageFile(file);
-        insertResizableImage(editorEl, dataUrl);
-        return;
+    const cd = e.clipboardData || window.clipboardData;
+    const items = cd.items;
+    // Some browsers attach a flattened image snapshot alongside real HTML when you
+    // copy a mixed selection (text + images) from a page or document. If we only
+    // checked for an image item, we'd wrongly treat the WHOLE paste as "just an
+    // image" and silently discard all the actual text and other pictures. Only take
+    // the single-image fast path when there's genuinely no HTML riding along with it.
+    const hasHtml = Array.from(items).some(it => it.type === "text/html");
+    if(!hasHtml){
+      for(const item of items){
+        if(item.type && item.type.startsWith("image/")){
+          e.preventDefault();
+          const file = item.getAsFile();
+          const dataUrl = await compressImageFile(file);
+          insertResizableImage(editorEl, dataUrl);
+          return;
+        }
       }
     }
-    // Pasting mixed content (text + images together, e.g. from a webpage or document)
-    // doesn't come through as a clipboard image item above — it arrives as HTML with
-    // plain <img> tags. Let the default paste happen, then wrap any of those images
-    // so they get the same resize/drag/click-to-enlarge behavior as ones we insert.
+    // Mixed/rich paste (or plain text) — let the browser's default paste happen,
+    // then wrap any plain <img> tags it inserted so every picture — no matter how
+    // it got in — ends up resizable and click-to-enlarge, same as ones we insert.
+    // Two passes: large pastes can take a moment longer to finish landing in the DOM.
     setTimeout(()=> normalizePastedImages(editorEl), 0);
+    setTimeout(()=> normalizePastedImages(editorEl), 200);
   });
 }
 function normalizePastedImages(editorEl){
@@ -1411,12 +1421,20 @@ function normalizePastedImages(editorEl){
     wrap.className = "rte-img-wrap";
     wrap.setAttribute("contenteditable", "false");
     wrap.setAttribute("draggable", "true");
-    const w = img.naturalWidth || img.width || 280;
-    const h = img.naturalHeight || img.height || 190;
-    const maxW = 340, maxH = 260;
-    const scale = Math.min(maxW/w, maxH/h, 1);
-    wrap.style.width = Math.max(Math.round(w*scale), 80) + "px";
-    wrap.style.height = Math.max(Math.round(h*scale), 60) + "px";
+    const sizeToImage = ()=>{
+      const w = img.naturalWidth || img.width || 280;
+      const h = img.naturalHeight || img.height || 190;
+      const maxW = 340, maxH = 260;
+      const scale = Math.min(maxW/w, maxH/h, 1);
+      wrap.style.width = Math.max(Math.round(w*scale), 80) + "px";
+      wrap.style.height = Math.max(Math.round(h*scale), 60) + "px";
+    };
+    sizeToImage();
+    if(!img.naturalWidth){
+      // Image (often an external URL from the source page) hasn't finished loading yet —
+      // resize the box once it does, instead of leaving it stuck at a fallback guess.
+      img.addEventListener("load", sizeToImage, { once:true });
+    }
     img.parentNode.insertBefore(wrap, img);
     img.removeAttribute("width"); img.removeAttribute("height"); img.removeAttribute("style");
     wrap.appendChild(img);
@@ -1880,6 +1898,10 @@ function render(){
   else if(view==="reference") renderReference();
   else if(view==="notifications") renderNotifications();
   else if(view==="chat") renderChat();
+  // Catch any raw <img> tags left over from before this fix existed (or from
+  // any other source) so every picture gets resize/click-to-enlarge, not just
+  // newly pasted ones — this only touches the live DOM, no save needed.
+  normalizePastedImages(root);
 }
 
 /* ============================================================
