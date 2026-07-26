@@ -1354,14 +1354,32 @@ function renderTeam(){
 async function showAttemptDetail(userId, moduleId){
   const holder = document.getElementById("attempt-detail");
   holder.innerHTML = `<div class="card"><p style="color:var(--text-faint);font-family:var(--mono);font-size:12px;">Loading latest attempt…</p></div>`;
-  const { data: attempts } = await supabase.from("quiz_attempts").select("*").eq("user_id", userId).eq("module_id", moduleId).order("created_at", { ascending:false }).limit(1);
   const person = teamRows.find(r=>r.id===userId);
   const m = modById(moduleId);
-  if(!attempts || !attempts.length){
-    holder.innerHTML = `<div class="card"><p style="color:var(--text-dim);font-size:13.5px;">${escapeHtml(person?person.name:'This person')} hasn't taken the ${escapeHtml(m?m.title:'')} quiz yet.</p></div>`;
-    return;
+
+  let a;
+  if(guestMode){
+    const raw = person ? person.perModuleRaw[moduleId] : null;
+    if(!raw || !raw.attempts || !m || !m.quiz.length){
+      holder.innerHTML = `<div class="card"><p style="color:var(--text-dim);font-size:13.5px;">${escapeHtml(person?person.name:'This person')} hasn't taken the ${escapeHtml(m?m.title:'')} quiz yet.</p></div>`;
+      return;
+    }
+    // Simulate which questions were "missed" so the count matches their displayed score.
+    const answers = m.quiz.map((q,i)=>{
+      const isCorrect = i < raw.best;
+      const selected = isCorrect ? q.correct : (q.correct === 0 ? 1 : 0);
+      return { question: q.q, options: q.opts, selected, correct: q.correct, is_correct: isCorrect };
+    });
+    a = { score: raw.best, total: raw.total, answers };
+  } else {
+    const { data: attempts } = await supabase.from("quiz_attempts").select("*").eq("user_id", userId).eq("module_id", moduleId).order("created_at", { ascending:false }).limit(1);
+    if(!attempts || !attempts.length){
+      holder.innerHTML = `<div class="card"><p style="color:var(--text-dim);font-size:13.5px;">${escapeHtml(person?person.name:'This person')} hasn't taken the ${escapeHtml(m?m.title:'')} quiz yet.</p></div>`;
+      return;
+    }
+    a = attempts[0];
   }
-  const a = attempts[0];
+
   const missed = (a.answers||[]).filter(x=>!x.is_correct);
   const missedHtml = missed.length ? missed.map((x,i)=>`
     <div class="sub-card">
@@ -2176,8 +2194,24 @@ function wireRichEditor(id){
    browsers (images would render at inflated size only while
    actively editing). This gives identical behavior everywhere.
    ============================================================ */
+function fixImageSizing(wrap){
+  const img = wrap.querySelector("img");
+  if(!img) return;
+  let w = parseInt(img.getAttribute("width")) || (img.style.width ? parseInt(img.style.width) : 0);
+  let h = parseInt(img.getAttribute("height")) || (img.style.height ? parseInt(img.style.height) : 0);
+  if((!w || !h) && (wrap.style.width || wrap.style.height)){
+    // Legacy content: size was stored on the wrapper span (an older version of this
+    // feature), not on the image itself, which is what the current system expects.
+    // Migrate it onto the image so it renders identically everywhere.
+    w = w || parseInt(wrap.style.width) || 280;
+    h = h || parseInt(wrap.style.height) || 190;
+    wrap.style.width = ""; wrap.style.height = "";
+  }
+  if(w && h) setImageSize(img, w, h);
+}
 function attachImageResizeHandles(editorEl){
   editorEl.querySelectorAll(".rte-img-wrap").forEach(wrap=>{
+    fixImageSizing(wrap);
     if(!wrap.querySelector(".rte-resize-handle")){
       const handle = document.createElement("span");
       handle.className = "rte-resize-handle";
@@ -2230,6 +2264,10 @@ function normalizePastedImages(editorEl){
     img.removeAttribute("style");
     wrap.appendChild(img);
   });
+  // Also re-check every already-wrapped image (covers legacy content that was sized
+  // the old way, on the wrapper instead of the image) — this runs on every render,
+  // so it self-heals in read-only views too, not just while actively editing.
+  editorEl.querySelectorAll(".rte-img-wrap").forEach(fixImageSizing);
 }
 function setImageSize(img, w, h){
   img.setAttribute("width", w);
