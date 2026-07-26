@@ -15,7 +15,7 @@
   *{box-sizing:border-box;} html,body{margin:0;padding:0;}
   body{ background:radial-gradient(circle at 15% -10%,#17233d 0%,transparent 45%),radial-gradient(circle at 100% 0%,#142234 0%,transparent 40%),var(--bg); color:var(--text); font-family:var(--sans); min-height:100vh; -webkit-font-smoothing:antialiased; }
   a,button,input,textarea{font-family:inherit;}
-  #app{ max-width:980px; margin:0 auto; padding:28px 20px 90px; }
+  #app{ max-width:1180px; margin:0 auto; padding:28px 20px 90px; }
   header.top{ display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; padding-bottom:22px; margin-bottom:26px; border-bottom:1px solid var(--stroke); }
   .brand{ display:flex; align-items:center; gap:12px; }
   .brand-mark{ width:34px; height:34px; border-radius:7px; background:linear-gradient(155deg,#17213a,#0d1424); border:1px solid var(--stroke); display:flex; align-items:center; justify-content:center; gap:3px; }
@@ -214,9 +214,10 @@
   .rte-img-wrap img{ width:100%; height:100%; display:block; object-fit:cover; pointer-events:none; }
   .card .body .rte-img-wrap img, .chat-bubble-body .rte-img-wrap img, .sub-card .rte-img-wrap img{ pointer-events:auto; cursor:zoom-in; }
 
-  .lightbox-overlay{ position:fixed; inset:0; background:#050810e6; display:flex; align-items:center; justify-content:center; z-index:400; cursor:zoom-out; padding:40px; }
-  .lightbox-img{ max-width:90vw; max-height:90vh; object-fit:contain; border-radius:8px; cursor:default; box-shadow:0 20px 60px #000000aa; }
-  .lightbox-close{ position:absolute; top:22px; right:26px; background:none; border:1px solid #ffffff55; color:#fff; font-size:20px; width:40px; height:40px; border-radius:50%; cursor:pointer; }
+  .lightbox-overlay{ position:fixed; inset:0; background:#050810e6; display:flex; align-items:center; justify-content:center; z-index:400; padding:40px; overflow:hidden; }
+  .lightbox-img{ max-width:90vw; max-height:90vh; object-fit:contain; border-radius:8px; box-shadow:0 20px 60px #000000aa; cursor:zoom-in; touch-action:none; user-select:none; transition:transform .04s linear; }
+  .lightbox-close{ position:absolute; top:22px; right:26px; background:none; border:1px solid #ffffff55; color:#fff; font-size:20px; width:40px; height:40px; border-radius:50%; cursor:pointer; z-index:2; }
+  .lightbox-hint{ position:absolute; bottom:22px; left:50%; transform:translateX(-50%); color:#ffffff99; font-family:var(--mono); font-size:11px; letter-spacing:.03em; }
   .lightbox-close:hover{ background:#ffffff22; }
 
   .thread-card{}
@@ -452,7 +453,7 @@ function renderShell(inner){
   const inModulesFlow = ["lesson","quiz","results","editor"].includes(view);
   const crumbLabel = inModulesFlow ? "TRAINING MODULES" : "HOME";
   const crumbTarget = inModulesFlow ? "dashboard" : "home";
-  const section = view==="home" ? "home" : ["dashboard","lesson","quiz","results","editor"].includes(view) ? "modules" : view==="reference" ? "reference" : null;
+  const section = view==="home" ? "home" : ["dashboard","lesson","quiz","results","editor"].includes(view) ? "modules" : view==="reference" ? "reference" : view==="notes" ? "notes" : null;
 
   root.innerHTML = `
     <header class="top">
@@ -462,7 +463,7 @@ function renderShell(inner){
         <div class="brand-text"><div class="name">COMPORIUM TRAINING MODULES</div></div>
       </div>
       <div class="top-right">
-        <nav class="crumbs">${ (view==="home"||view==="dashboard"||view==="reference") ? "" : `<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':''))}`}</nav>
+        <nav class="crumbs">${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes") ? "" : `<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':''))}`}</nav>
         <div class="bell-wrap">
           <button class="gear-btn" id="notif-bell" title="Notifications">🔔${notifBadgeCount()>0?`<span class="notif-dot"></span>`:''}</button>
         </div>
@@ -486,6 +487,7 @@ function renderShell(inner){
       <button class="top-nav-btn ${section==='home'?'active':''}" id="nav-home">Dashboard</button>
       <button class="top-nav-btn ${section==='modules'?'active':''}" id="nav-modules">Training Modules</button>
       <button class="top-nav-btn ${section==='reference'?'active':''}" id="nav-reference">Reference</button>
+      <button class="top-nav-btn ${section==='notes'?'active':''}" id="nav-notes">My Notes</button>
     </div>
     <main>${inner}</main>
     <footer class="foot">SIGNAL HELD · PROGRESS SAVED AUTOMATICALLY</footer>
@@ -494,6 +496,7 @@ function renderShell(inner){
   document.getElementById("nav-home").addEventListener("click", ()=>{ view="home"; render(); });
   document.getElementById("nav-modules").addEventListener("click", ()=>{ view="dashboard"; render(); });
   document.getElementById("nav-reference").addEventListener("click", openReference);
+  document.getElementById("nav-notes").addEventListener("click", openNotes);
   document.getElementById("open-settings").addEventListener("click", ()=>{ view="settings"; render(); });
   document.getElementById("logout-btn").addEventListener("click", logout);
   document.getElementById("notif-bell").addEventListener("click", openNotifications);
@@ -1443,11 +1446,58 @@ function normalizePastedImages(editorEl){
 function openImageLightbox(src){
   const wrap = document.createElement("div");
   wrap.className = "lightbox-overlay";
-  wrap.innerHTML = `<button class="lightbox-close" title="Close">✕</button><img src="${src}" class="lightbox-img">`;
+  wrap.innerHTML = `<button class="lightbox-close" title="Close">✕</button><img src="${src}" class="lightbox-img" draggable="false"><div class="lightbox-hint">Scroll or double-click to zoom · drag to pan</div>`;
   document.body.appendChild(wrap);
-  const close = ()=> wrap.remove();
+  const img = wrap.querySelector(".lightbox-img");
+
+  let scale = 1, panX = 0, panY = 0, dragging = false, startX = 0, startY = 0;
+  function applyTransform(){
+    img.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    img.style.cursor = scale > 1 ? "grab" : "zoom-in";
+  }
+
+  function onWheel(e){
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.2 : -0.2;
+    scale = Math.min(4, Math.max(1, scale + delta));
+    if(scale === 1){ panX = 0; panY = 0; }
+    applyTransform();
+  }
+  function onDblClick(){
+    scale = scale > 1 ? 1 : 2.5;
+    if(scale === 1){ panX = 0; panY = 0; }
+    applyTransform();
+  }
+  function onMouseDown(e){
+    if(scale <= 1) return;
+    e.preventDefault();
+    dragging = true; startX = e.clientX - panX; startY = e.clientY - panY;
+    img.style.cursor = "grabbing";
+  }
+  function onMouseMove(e){
+    if(!dragging) return;
+    panX = e.clientX - startX; panY = e.clientY - startY;
+    applyTransform();
+  }
+  function onMouseUp(){
+    dragging = false;
+    if(scale > 1) img.style.cursor = "grab";
+  }
+
+  img.addEventListener("wheel", onWheel, { passive:false });
+  img.addEventListener("dblclick", onDblClick);
+  img.addEventListener("mousedown", onMouseDown);
+  window.addEventListener("mousemove", onMouseMove);
+  window.addEventListener("mouseup", onMouseUp);
+
+  const close = ()=>{
+    window.removeEventListener("mousemove", onMouseMove);
+    window.removeEventListener("mouseup", onMouseUp);
+    document.removeEventListener("keydown", onKey);
+    wrap.remove();
+  };
   wrap.addEventListener("click", (e)=>{ if(e.target===wrap || e.target.classList.contains("lightbox-close")) close(); });
-  const onKey = (e)=>{ if(e.key==="Escape"){ close(); document.removeEventListener("keydown", onKey); } };
+  const onKey = (e)=>{ if(e.key==="Escape") close(); };
   document.addEventListener("keydown", onKey);
 }
 document.addEventListener("click", (e)=>{
@@ -1882,6 +1932,200 @@ async function reorderRefDrop(draggedId, targetId, pos){
 }
 
 /* ============================================================
+   PERSONAL NOTES — private per-user notepad, autosaving.
+   Same page/subsection structure as the Reference Guide, but only
+   ever visible to the person who wrote it (enforced by RLS).
+   ============================================================ */
+let PERSONAL_NOTES = [];
+let currentNoteId = null;
+let notesCollapsed = new Set();
+let dragNoteId = null;
+let noteSaveTimer = null;
+
+async function loadPersonalNotes(){
+  const { data } = await supabase.from("personal_notes").select("*").eq("user_id", session.user.id).order("sort_order");
+  PERSONAL_NOTES = data || [];
+  if(!PERSONAL_NOTES.find(n=>n.id===currentNoteId)) currentNoteId = null;
+}
+async function openNotes(){
+  await loadPersonalNotes();
+  if(!currentNoteId){ const top = PERSONAL_NOTES.find(n=>!n.parent_id); if(top) currentNoteId = top.id; }
+  view = "notes"; render();
+}
+function topLevelNotes(){ return PERSONAL_NOTES.filter(n=>!n.parent_id).sort((a,b)=>a.sort_order-b.sort_order); }
+function childNotes(parentId){ return PERSONAL_NOTES.filter(n=>n.parent_id===parentId).sort((a,b)=>a.sort_order-b.sort_order); }
+
+function renderNotes(){
+  const tops = topLevelNotes();
+
+  function sidebarRow(n, isChild){
+    const active = n.id===currentNoteId;
+    const kids = isChild ? [] : childNotes(n.id);
+    const collapsed = notesCollapsed.has(n.id);
+    const chevron = (!isChild && kids.length) ? `<button class="mini-btn" data-note-toggle="${n.id}" style="padding:2px 5px;">${collapsed?'▸':'▾'}</button>` : `<span style="width:20px;display:inline-block;"></span>`;
+    const tools = `
+      <span class="ref-row-tools">
+        ${!isChild ? `<button class="mini-btn" data-note-addsub="${n.id}">+ Sub</button>` : ""}
+        <button class="mini-btn danger" data-note-del="${n.id}">✕</button>
+      </span>`;
+    return `<div class="ref-row ${active?'active':''} ${isChild?'child':''}" draggable="true" data-note-select="${n.id}" data-note-drag="${n.id}">
+      ${!isChild ? chevron : ""}<span class="ref-row-title">${escapeHtml(n.title)}</span>${tools}
+    </div>`;
+  }
+
+  const sidebarHtml = tops.map(n=>{
+    const kids = childNotes(n.id);
+    const collapsed = notesCollapsed.has(n.id);
+    return sidebarRow(n,false) + (!collapsed ? kids.map(k=>sidebarRow(k,true)).join("") : "");
+  }).join("") || `<p style="color:var(--text-faint);font-size:12.5px;padding:10px;">No notes yet.</p>`;
+
+  const note = PERSONAL_NOTES.find(n=>n.id===currentNoteId);
+  let contentHtml;
+  if(!note){
+    contentHtml = `<div class="card"><p style="color:var(--text-dim);font-size:14px;">${PERSONAL_NOTES.length ? 'Select a note from the left.' : 'Nothing here yet — click "+ Add note" to start your first page.'}</p></div>`;
+  } else {
+    contentHtml = `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div class="k-label" style="margin-bottom:0;">MY NOTES · PRIVATE TO YOU</div>
+          <span id="note-save-status" style="font-family:var(--mono);font-size:11px;color:var(--text-faint);"></span>
+        </div>
+        <input type="text" id="note-title" class="onenote-title-input" placeholder="Note title" value="${escapeHtml(note.title)}" style="margin-top:10px;">
+        ${richEditorHtml("note-body-rte", note.body)}
+        <div class="hint" style="margin-top:8px;">Saved automatically as you type. Paste an image directly, or use the 🖼 button.</div>
+        <div class="nav-buttons"><button class="btn danger" id="note-delete">Delete note</button><div></div></div>
+      </div>`;
+  }
+
+  renderShell(`
+    <div class="ref-layout">
+      <div class="ref-sidebar"><div class="ref-sidebar-list">${sidebarHtml}</div><button class="dashed-btn" id="add-note" style="margin-top:10px;">+ Add note</button></div>
+      <div class="ref-content">${contentHtml}</div>
+    </div>
+  `);
+
+  if(note) wireRichEditor("note-body-rte");
+
+  root.querySelectorAll("[data-note-select]").forEach(el=> el.addEventListener("click", (e)=>{
+    if(e.target.closest("[data-note-toggle]")||e.target.closest("[data-note-addsub]")||e.target.closest("[data-note-del]")) return;
+    currentNoteId = el.getAttribute("data-note-select"); render();
+  }));
+  root.querySelectorAll("[data-note-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    const id = el.getAttribute("data-note-toggle");
+    if(notesCollapsed.has(id)) notesCollapsed.delete(id); else notesCollapsed.add(id);
+    render();
+  }));
+
+  const addBtn = document.getElementById("add-note");
+  if(addBtn) addBtn.addEventListener("click", async ()=>{
+    const { data, error } = await supabase.from("personal_notes").insert({ user_id: session.user.id, title:"New note", body:"<p>Write here.</p>", parent_id:null, sort_order: tops.length }).select().single();
+    if(!error){ await loadPersonalNotes(); currentNoteId = data.id; render(); }
+  });
+  root.querySelectorAll("[data-note-addsub]").forEach(el=> el.addEventListener("click", async (e)=>{
+    e.stopPropagation();
+    const parentId = el.getAttribute("data-note-addsub");
+    const kids = childNotes(parentId);
+    notesCollapsed.delete(parentId);
+    const { data, error } = await supabase.from("personal_notes").insert({ user_id: session.user.id, title:"New subsection", body:"<p>Write here.</p>", parent_id:parentId, sort_order: kids.length }).select().single();
+    if(!error){ await loadPersonalNotes(); currentNoteId = data.id; render(); }
+  }));
+  root.querySelectorAll("[data-note-del]").forEach(el=> el.addEventListener("click", async (e)=>{
+    e.stopPropagation();
+    const id = el.getAttribute("data-note-del");
+    const target = PERSONAL_NOTES.find(n=>n.id===id);
+    const hasKids = childNotes(id).length>0;
+    if(confirm(`Delete "${target.title}"?${hasKids?' This will also delete its subsections.':''}`)){
+      await supabase.from("personal_notes").delete().eq("id", id);
+      if(currentNoteId===id) currentNoteId = null;
+      await loadPersonalNotes(); render();
+    }
+  }));
+
+  let dragOverEl = null;
+  root.querySelectorAll("[data-note-drag]").forEach(el=>{
+    el.addEventListener("dragstart", (e)=>{ dragNoteId = el.getAttribute("data-note-drag"); e.dataTransfer.effectAllowed = "move"; el.style.opacity = "0.4"; startDragAutoScroll(); });
+    el.addEventListener("dragend", ()=>{
+      el.style.opacity = "";
+      stopDragAutoScroll();
+      if(dragOverEl){ dragOverEl.classList.remove("drag-over-top","drag-over-bottom"); dragOverEl = null; }
+    });
+    el.addEventListener("dragover", (e)=>{
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const pos = (e.clientY - rect.top) < rect.height/2 ? "before" : "after";
+      if(dragOverEl && dragOverEl!==el) dragOverEl.classList.remove("drag-over-top","drag-over-bottom");
+      dragOverEl = el;
+      el.classList.toggle("drag-over-top", pos==="before");
+      el.classList.toggle("drag-over-bottom", pos==="after");
+    });
+    el.addEventListener("dragleave", ()=>{ el.classList.remove("drag-over-top","drag-over-bottom"); });
+    el.addEventListener("drop", async (e)=>{
+      e.preventDefault();
+      const pos = el.classList.contains("drag-over-top") ? "before" : "after";
+      el.classList.remove("drag-over-top","drag-over-bottom");
+      const targetId = el.getAttribute("data-note-drag");
+      if(!dragNoteId || dragNoteId===targetId){ dragNoteId=null; return; }
+      await reorderNoteDrop(dragNoteId, targetId, pos);
+      dragNoteId = null;
+    });
+  });
+
+  const deleteBtn = document.getElementById("note-delete");
+  if(deleteBtn) deleteBtn.addEventListener("click", async ()=>{
+    if(confirm(`Delete "${note.title}"? This can't be undone.`)){
+      await supabase.from("personal_notes").delete().eq("id", note.id);
+      currentNoteId = null; await loadPersonalNotes(); render();
+    }
+  });
+
+  const titleInput = document.getElementById("note-title");
+  const bodyRte = document.getElementById("note-body-rte");
+  if(titleInput && bodyRte){
+    const trigger = ()=> scheduleNoteAutosave(note.id, titleInput, bodyRte);
+    titleInput.addEventListener("input", trigger);
+    bodyRte.addEventListener("input", trigger);
+  }
+}
+
+function scheduleNoteAutosave(noteId, titleInput, bodyRte){
+  const statusEl = document.getElementById("note-save-status");
+  if(statusEl) statusEl.textContent = "Saving…";
+  clearTimeout(noteSaveTimer);
+  noteSaveTimer = setTimeout(async ()=>{
+    const title = titleInput.value.trim() || "Untitled note";
+    const body = bodyRte.innerHTML;
+    await supabase.from("personal_notes").update({ title, body, updated_at: new Date().toISOString() }).eq("id", noteId);
+    const n = PERSONAL_NOTES.find(x=>x.id===noteId);
+    if(n){ n.title = title; n.body = body; }
+    const titleEl = document.querySelector(`[data-note-select="${noteId}"] .ref-row-title`);
+    if(titleEl) titleEl.textContent = title;
+    const statusElNow = document.getElementById("note-save-status");
+    if(statusElNow) statusElNow.textContent = "Saved";
+  }, 900);
+}
+
+async function reorderNoteDrop(draggedId, targetId, pos){
+  const dragged = PERSONAL_NOTES.find(n=>n.id===draggedId);
+  const target = PERSONAL_NOTES.find(n=>n.id===targetId);
+  if(!dragged || !target) return;
+  if((dragged.parent_id||null) !== (target.parent_id||null)) return;
+  const siblings = (dragged.parent_id ? childNotes(dragged.parent_id) : topLevelNotes());
+  const fromIdx = siblings.findIndex(s=>s.id===draggedId);
+  let toIdx = siblings.findIndex(s=>s.id===targetId);
+  if(fromIdx===-1 || toIdx===-1) return;
+  if(pos==="after") toIdx++;
+  const reordered = siblings.slice();
+  reordered.splice(fromIdx,1);
+  if(fromIdx < toIdx) toIdx--;
+  reordered.splice(toIdx,0,dragged);
+  for(let i=0;i<reordered.length;i++){
+    if(reordered[i].sort_order !== i){ await supabase.from("personal_notes").update({ sort_order:i }).eq("id", reordered[i].id); }
+  }
+  await loadPersonalNotes(); render();
+}
+
+/* ============================================================
    ROUTER
    ============================================================ */
 function render(){
@@ -1898,6 +2142,7 @@ function render(){
   else if(view==="reference") renderReference();
   else if(view==="notifications") renderNotifications();
   else if(view==="chat") renderChat();
+  else if(view==="notes") renderNotes();
   // Catch any raw <img> tags left over from before this fix existed (or from
   // any other source) so every picture gets resize/click-to-enlarge, not just
   // newly pasted ones — this only touches the live DOM, no save needed.
