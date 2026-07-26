@@ -146,21 +146,23 @@
   .two-col-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
   @media (max-width:640px){ .two-col-grid{ grid-template-columns:1fr; } }
   .ref-layout{ display:flex; gap:14px; align-items:flex-start; }
-  .ref-sidebar{ width:145px; flex:none; }
+  .ref-sidebar{ width:168px; flex:none; }
   .ref-content{ flex:1; min-width:0; }
-  .ref-sidebar-list{ display:flex; flex-direction:column; gap:2px; }
-  .ref-row{ display:flex; align-items:center; justify-content:space-between; gap:6px; padding:9px 10px; border-radius:8px; cursor:pointer; font-size:13px; color:var(--text-dim); position:relative; transition:background .12s; }
+  .ref-sidebar-list{ display:flex; flex-direction:column; gap:5px; }
+  .ref-row{ display:flex; align-items:center; padding:9px 10px; border-radius:8px; cursor:pointer; font-size:13px; color:var(--text-dim); position:relative; transition:background .12s; }
   .ref-row:hover{ background:#141d30; } html.theme-light .ref-row:hover{ background:#eef1f8; }
   .ref-row.active{ background:var(--cyan-dim); color:var(--cyan); }
-  .ref-row.child{ margin-left:28px; font-size:12.5px; color:var(--text-faint); position:relative; }
-  .ref-row.child::before{ content:""; position:absolute; left:-16px; top:0; bottom:0; width:1px; background:var(--stroke); }
+  .ref-row.child{ margin-left:16px; font-size:12.5px; color:var(--text-faint); position:relative; }
+  .ref-row.child::before{ content:""; position:absolute; left:-10px; top:2px; bottom:2px; width:1px; background:var(--stroke); }
   .ref-row.child .ref-row-title::before{ content:"—"; margin-right:5px; color:var(--text-faint); }
   .ref-row-title{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
-  .ref-row-tools{ display:flex; gap:3px; flex:none; opacity:0; pointer-events:none; transition:opacity .12s; }
+  .ref-row-tools{ display:flex; gap:2px; flex:none; opacity:0; pointer-events:none; transition:opacity .12s; position:absolute; right:6px; top:50%; transform:translateY(-50%); background:#141d30; border-radius:6px; padding:2px; }
+  html.theme-light .ref-row-tools{ background:#eef1f8; }
+  .ref-row.active .ref-row-tools{ background:var(--cyan-dim); }
   .ref-row:hover .ref-row-tools{ opacity:1; pointer-events:auto; }
   .ref-row-tools .mini-btn{ padding:2px 6px; font-size:9px; }
-  .ref-row.drag-over-top::before, .mod-card.drag-over-top::before{ content:""; position:absolute; left:4px; right:4px; top:-2px; height:3px; border-radius:2px; background:var(--cyan); box-shadow:0 0 6px var(--cyan); z-index:2; }
-  .ref-row.drag-over-bottom::after, .mod-card.drag-over-bottom::after{ content:""; position:absolute; left:4px; right:4px; bottom:-2px; height:3px; border-radius:2px; background:var(--cyan); box-shadow:0 0 6px var(--cyan); z-index:2; }
+  .ref-row.drag-over-top::before, .mod-card.drag-over-top::before{ content:""; position:absolute; left:4px; right:4px; top:-4px; height:3px; border-radius:2px; background:var(--cyan); box-shadow:0 0 6px var(--cyan); z-index:2; }
+  .ref-row.drag-over-bottom::after, .mod-card.drag-over-bottom::after{ content:""; position:absolute; left:4px; right:4px; bottom:-4px; height:3px; border-radius:2px; background:var(--cyan); box-shadow:0 0 6px var(--cyan); z-index:2; }
   .drag-handle{ cursor:grab; color:var(--text-faint); font-size:15px; width:28px; height:28px; display:flex; align-items:center; justify-content:center; }
   .ref-row[draggable="true"]{ cursor:grab; }
   .onenote-title-input{ width:100%; background:none; border:none; border-bottom:1px solid var(--stroke); font-size:26px; font-weight:700; color:var(--text); font-family:var(--sans); padding:4px 2px 14px; outline:none; margin-bottom:14px; }
@@ -207,7 +209,7 @@
   .rte-body p{ margin:0 0 10px; } .rte-body ul,.rte-body ol{ margin:0 0 10px; padding-left:22px; }
   .rte-img-wrap{ display:inline-block; overflow:hidden; max-width:100%; vertical-align:bottom; width:280px; height:190px; margin:6px 4px; border-radius:8px; }
   .rte-body .rte-img-wrap{ resize:both; cursor:grab; max-height:60vh; }
-  .rte-img-wrap img{ width:100%; height:100%; display:block; object-fit:contain; pointer-events:none; }
+  .rte-img-wrap img{ width:100%; height:100%; display:block; object-fit:cover; pointer-events:none; }
   .card .body .rte-img-wrap img, .chat-bubble-body .rte-img-wrap img, .sub-card .rte-img-wrap img{ pointer-events:auto; cursor:zoom-in; }
 
   .lightbox-overlay{ position:fixed; inset:0; background:#050810e6; display:flex; align-items:center; justify-content:center; z-index:400; cursor:zoom-out; padding:40px; }
@@ -828,12 +830,30 @@ function bellBadgeCount(){
   return unread + (isAdmin() ? NOTIF_UNCLAIMED.length : 0);
 }
 
-async function openNotifications(){
+async function refreshNotificationsData(){
   await loadAllNotifications();
   const unreadIds = [];
   NOTIF_THREADS.forEach(t=> t.messages.forEach(m=>{ if(m.recipient_id===session.user.id && !m.is_read) unreadIds.push(m.id); }));
   if(unreadIds.length){ await supabase.from("messages").update({ is_read:true }).in("id", unreadIds); await loadAllNotifications(); }
+}
+
+function applyDefaultThreadVisibility(){
+  if(NOTIF_THREADS.length > 1){
+    NOTIF_THREADS.forEach(t=> collapsedThreadIds.add(t.root.id));
+  } else if(NOTIF_THREADS.length === 1){
+    collapsedThreadIds.delete(NOTIF_THREADS[0].root.id);
+  }
+}
+
+async function openNotifications(){
+  await refreshNotificationsData();
+  applyDefaultThreadVisibility();
   view = "notifications"; render();
+}
+
+async function refreshNotificationsView(){
+  await refreshNotificationsData();
+  if(view==="notifications") render();
 }
 
 function renderNotifications(){
@@ -927,14 +947,15 @@ function renderNotifications(){
 
   root.querySelectorAll("[data-dismiss-announce]").forEach(el=> el.addEventListener("click", async ()=>{
     await supabase.from("announcement_dismissals").upsert({ user_id: session.user.id, message_id: el.getAttribute("data-dismiss-announce") });
-    await openNotifications();
+    await refreshNotificationsView();
   }));
   root.querySelectorAll("[data-discard-thread]").forEach(el=> el.addEventListener("click", async ()=>{
     const id = el.getAttribute("data-discard-thread");
     if(confirm("Discard this conversation? This can't be undone.")){
       await supabase.from("messages").delete().eq("thread_id", id);
       await supabase.from("messages").delete().eq("id", id);
-      await openNotifications();
+      collapsedThreadIds.delete(id);
+      await refreshNotificationsView();
     }
   }));
   root.querySelectorAll("[data-send-thread]").forEach(el=> el.addEventListener("click", async ()=>{
@@ -967,7 +988,7 @@ async function sendThreadMessage(rootId){
     }
   }
   await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: recipientId, audience:"user", type:"reply", body, context: root.context, thread_id: root.id });
-  await openNotifications();
+  await refreshNotificationsView();
 }
 
 /* ============================================================
@@ -990,14 +1011,14 @@ function setupRealtime(){
     .on("postgres_changes", { event:"INSERT", schema:"public", table:"messages", filter:"audience=eq.all" }, (payload)=>{
       if(payload.new.sender_id === session.user.id) return;
       showToast("📣 " + stripHtml(payload.new.body).slice(0,90));
-      if(view==="notifications") openNotifications(); else loadAllNotifications();
+      if(view==="notifications") refreshNotificationsView(); else loadAllNotifications();
     }).subscribe();
   realtimeChannels.push(chAnnounce);
 
   const chToMe = supabase.channel("rt-to-me-"+session.user.id)
     .on("postgres_changes", { event:"INSERT", schema:"public", table:"messages", filter:`recipient_id=eq.${session.user.id}` }, (payload)=>{
       showToast("💬 " + escapeHtml(payload.new.sender_name) + ": " + stripHtml(payload.new.body).slice(0,70));
-      if(view==="notifications") openNotifications(); else loadAllNotifications();
+      if(view==="notifications") refreshNotificationsView(); else loadAllNotifications();
     }).subscribe();
   realtimeChannels.push(chToMe);
 
@@ -1006,7 +1027,7 @@ function setupRealtime(){
       .on("postgres_changes", { event:"INSERT", schema:"public", table:"messages", filter:"audience=eq.admins" }, (payload)=>{
         if(payload.new.thread_id || payload.new.sender_id === session.user.id) return;
         showToast("🚩 New item waiting in the admin inbox");
-        if(view==="notifications") openNotifications(); else loadAllNotifications();
+        if(view==="notifications") refreshNotificationsView(); else loadAllNotifications();
       }).subscribe();
     realtimeChannels.push(chAdmin);
   }
@@ -1254,7 +1275,16 @@ document.addEventListener("click", (e)=>{
 
 function insertResizableImage(editorEl, dataUrl){
   editorEl.focus();
-  document.execCommand("insertHTML", false, `<span class="rte-img-wrap" contenteditable="false" draggable="true"><img src="${dataUrl}"></span>&nbsp;`);
+  const probe = new Image();
+  probe.onload = ()=>{
+    const maxW = 340, maxH = 260;
+    let w = probe.naturalWidth || maxW, h = probe.naturalHeight || maxH;
+    const scale = Math.min(maxW/w, maxH/h, 1);
+    w = Math.max(Math.round(w*scale), 80);
+    h = Math.max(Math.round(h*scale), 60);
+    document.execCommand("insertHTML", false, `<span class="rte-img-wrap" contenteditable="false" draggable="true" style="width:${w}px;height:${h}px;"><img src="${dataUrl}"></span>&nbsp;`);
+  };
+  probe.src = dataUrl;
 }
 function compressImageFile(file, maxDim, quality){
   maxDim = maxDim || 900; quality = quality || 0.82;
