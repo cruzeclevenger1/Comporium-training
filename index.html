@@ -1003,10 +1003,7 @@ function renderTeam(){
       <div class="k-label">ADMIN</div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <h2 style="margin:0;">Teams</h2>
-        <div style="display:flex;gap:10px;">
-          <button class="btn" id="go-analyze-btn">📊 Analyze</button>
-          <button class="btn primary" id="new-team-btn">+ New team</button>
-        </div>
+        <button class="btn primary" id="new-team-btn">+ New team</button>
       </div>
       <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 14px;">Group people together to filter progress by cohort, or target announcements at just this group.</p>
       <div>${teamsHtml}</div>
@@ -1015,6 +1012,7 @@ function renderTeam(){
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:6px;">
         <h2 style="margin:0;">Progress</h2>
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn" id="go-analyze-btn">📊 Analyze</button>
           <input type="text" id="team-search" placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" style="width:180px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
           <select id="team-filter" style="width:auto;">
             <option value="">All teams</option>
