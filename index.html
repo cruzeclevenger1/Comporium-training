@@ -492,8 +492,8 @@ function renderShell(inner){
         <div class="brand-text"><div class="name">COMPORIUM TRAINING MODULES</div></div>
       </div>
       <div class="top-right">
-        <nav class="crumbs">${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes") ? "" : `<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAM PROGRESS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':''))}`}</nav>
-        ${isAdmin() ? `<button class="pill-btn" id="go-team-btn">Team Progress</button>` : ""}
+        <nav class="crumbs">${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes") ? "" : `<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':''))}`}</nav>
+        ${isAdmin() ? `<button class="pill-btn" id="go-team-btn">Teams</button>` : ""}
         <div class="bell-wrap">
           <button class="gear-btn" id="notif-bell" title="Notifications">🔔${notifBadgeCount()>0?`<span class="notif-dot"></span>`:''}</button>
         </div>
@@ -749,13 +749,23 @@ function renderResults(){
 }
 
 /* ============================================================
-   TEAM PROGRESS (admin only)
+   TEAMS (admin only) — progress roster + group management
    ============================================================ */
 let teamExpandedRows = new Set();
+let TEAMS_LIST = [];
+let teamRosterFilter = "";
 
 async function openTeamProgress(){
   const { data: people } = await supabase.from("profiles").select("*").order("name");
   const { data: allProgress } = await supabase.from("progress").select("*");
+  const { data: teamsData } = await supabase.from("teams").select("*").order("name");
+  const { data: memberships } = await supabase.from("team_members").select("*");
+
+  TEAMS_LIST = (teamsData||[]).map(t=>({
+    id: t.id, name: t.name,
+    memberIds: (memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id)
+  }));
+
   teamRows = (people||[]).map(p=>{
     const rows = (allProgress||[]).filter(pr=>pr.user_id===p.id);
     const perModule = {};
@@ -770,13 +780,68 @@ async function openTeamProgress(){
     const values = Object.values(perModule);
     const overall = values.length ? Math.round(values.reduce((a,b)=>a+b,0)/values.length) : 0;
     const mastered = values.filter(v=>v===100).length;
-    return { id:p.id, name:p.name, role:p.role, perModule, overall, mastered };
+    const teamIds = (memberships||[]).filter(m=>m.user_id===p.id).map(m=>m.team_id);
+    return { id:p.id, name:p.name, role:p.role, perModule, overall, mastered, teamIds };
   });
   view = "team"; render();
 }
 
+function openTeamManageModal(teamId){
+  const team = teamId ? TEAMS_LIST.find(t=>t.id===teamId) : null;
+  const memberIds = new Set(team ? team.memberIds : []);
+  openModal(`
+    <h3>${team ? "Manage team" : "New team"}</h3>
+    <div class="field"><label>Team name</label><input type="text" id="team-name-input" value="${team?escapeHtml(team.name):''}" placeholder="e.g. July 2026 New Hires"></div>
+    <div class="field"><label>Members</label>
+      <div style="max-height:220px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">
+        ${teamRows.map(r=>`
+          <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);">
+            <input type="checkbox" value="${r.id}" class="team-member-check" ${memberIds.has(r.id)?'checked':''}> ${escapeHtml(r.name)}${r.role==='admin'?' <span class="role-tag admin">ADMIN</span>':''}
+          </label>`).join("")}
+      </div>
+    </div>
+    <div class="modal-actions" style="justify-content:space-between;">
+      ${team ? `<button class="btn danger" id="team-delete-btn">Delete team</button>` : `<span></span>`}
+      <div style="display:flex;gap:10px;"><button class="btn" id="team-cancel-btn">Cancel</button><button class="btn primary" id="team-save-btn">${team?"Save":"Create"}</button></div>
+    </div>
+  `, true);
+  document.getElementById("team-cancel-btn").addEventListener("click", closeModal);
+  const delBtn = document.getElementById("team-delete-btn");
+  if(delBtn) delBtn.addEventListener("click", async ()=>{
+    if(confirm(`Delete "${team.name}"? This can't be undone.`)){
+      await supabase.from("teams").delete().eq("id", team.id);
+      closeModal(); await openTeamProgress();
+    }
+  });
+  document.getElementById("team-save-btn").addEventListener("click", async ()=>{
+    const name = document.getElementById("team-name-input").value.trim();
+    if(!name){ alert("Give the team a name."); return; }
+    const selectedIds = Array.from(document.querySelectorAll(".team-member-check:checked")).map(cb=>cb.value);
+    let tid = team ? team.id : null;
+    if(!tid){
+      const { data, error } = await supabase.from("teams").insert({ name }).select().single();
+      if(error){ alert("Couldn't create team: " + error.message); return; }
+      tid = data.id;
+    } else {
+      await supabase.from("teams").update({ name }).eq("id", tid);
+    }
+    await supabase.from("team_members").delete().eq("team_id", tid);
+    if(selectedIds.length){
+      await supabase.from("team_members").insert(selectedIds.map(uid=>({ team_id: tid, user_id: uid })));
+    }
+    closeModal();
+    await openTeamProgress();
+  });
+}
+
 function renderTeam(){
-  const rows = teamRows.map(r=>{
+  const teamsHtml = TEAMS_LIST.length ? TEAMS_LIST.map(t=>`
+    <button class="mini-btn" data-manage-team="${t.id}" style="margin:0 6px 6px 0;">${escapeHtml(t.name)} · ${t.memberIds.length}</button>
+  `).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No teams yet.</p>`;
+
+  const filteredRows = teamRosterFilter ? teamRows.filter(r=> r.teamIds.includes(teamRosterFilter)) : teamRows;
+
+  const rows = filteredRows.map(r=>{
     const isSelf = r.id===profile.id;
     const expanded = teamExpandedRows.has(r.id);
     const roleSelect = isSelf
@@ -817,12 +882,34 @@ function renderTeam(){
 
   renderShell(`
     <div class="card">
-      <div class="k-label">ADMIN VIEW</div><h2>Team progress</h2>
+      <div class="k-label">ADMIN</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <h2 style="margin:0;">Teams</h2>
+        <button class="btn primary" id="new-team-btn">+ New team</button>
+      </div>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 14px;">Group people together to filter progress by cohort, or target announcements at just this group.</p>
+      <div>${teamsHtml}</div>
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:6px;">
+        <h2 style="margin:0;">Progress</h2>
+        <div style="min-width:200px;">
+          <select id="team-filter">
+            <option value="">All people</option>
+            ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
+          </select>
+        </div>
+      </div>
       <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">Click a person to see their module-by-module breakdown. Click a module pill to see missed questions on their latest attempt.</p>
       <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th><th>Overall</th><th>Mastered</th><th></th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>
     <div id="attempt-detail" style="margin-top:16px;"></div>
   `);
+
+  document.getElementById("new-team-btn").addEventListener("click", ()=> openTeamManageModal(null));
+  root.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
+  document.getElementById("team-filter").addEventListener("change", (e)=>{ teamRosterFilter = e.target.value; render(); });
+
   root.querySelectorAll("[data-role-select]").forEach(el=> el.addEventListener("change", async ()=>{
     const id = el.getAttribute("data-role-select");
     await supabase.from("profiles").update({ role: el.value }).eq("id", id);
@@ -1208,8 +1295,10 @@ function openFeedbackModal(type, context){
   });
 }
 
-function openAnnouncementModal(){
+async function openAnnouncementModal(){
   const editorId = "announce-rte";
+  const { data: teamsForModal } = await supabase.from("teams").select("*").order("name");
+  const teamOptions = (teamsForModal||[]).map(t=>`<option value="${t.id}">${escapeHtml(t.name)}</option>`).join("");
   openModal(`
     <h3>Announcement</h3>
     <p class="sub">Choose who should see this.</p>
@@ -1219,8 +1308,13 @@ function openAnnouncementModal(){
         <option value="all">Everyone</option>
         <option value="admin">Admins only</option>
         <option value="agent">Agents only</option>
+        <option value="team">A specific team…</option>
         <option value="specific">Specific people…</option>
       </select>
+    </div>
+    <div class="field" id="ann-team-field" style="display:none;">
+      <label>Team</label>
+      <select id="ann-team-select">${teamOptions || `<option value="">No teams yet — create one under Teams first</option>`}</select>
     </div>
     <div class="field" id="ann-people-field" style="display:none;">
       <label>Choose people</label>
@@ -1233,9 +1327,11 @@ function openAnnouncementModal(){
   document.getElementById(editorId).focus();
 
   document.getElementById("ann-scope").addEventListener("change", async (e)=>{
-    const field = document.getElementById("ann-people-field");
+    const teamField = document.getElementById("ann-team-field");
+    const peopleField = document.getElementById("ann-people-field");
+    teamField.style.display = e.target.value === "team" ? "block" : "none";
     if(e.target.value === "specific"){
-      field.style.display = "block";
+      peopleField.style.display = "block";
       const list = document.getElementById("ann-people-list");
       if(!list.dataset.loaded){
         const { data: people } = await supabase.from("profiles").select("id,name,role").neq("id", session.user.id).order("name");
@@ -1246,7 +1342,7 @@ function openAnnouncementModal(){
           </label>`).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No one else found.</p>`;
       }
     } else {
-      field.style.display = "none";
+      peopleField.style.display = "none";
     }
   });
 
@@ -1257,11 +1353,16 @@ function openAnnouncementModal(){
     const scope = document.getElementById("ann-scope").value;
     const recipientRole = scope === "all" ? null : scope;
     let selectedIds = [];
+    let teamId = null;
     if(scope === "specific"){
       selectedIds = Array.from(document.querySelectorAll(".ann-person-check:checked")).map(cb=>cb.value);
       if(!selectedIds.length){ alert("Pick at least one person, or choose a different audience."); return; }
     }
-    const { data, error } = await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement", body, recipient_role: recipientRole }).select().single();
+    if(scope === "team"){
+      teamId = document.getElementById("ann-team-select").value;
+      if(!teamId){ alert("Pick a team, or create one first under Teams."); return; }
+    }
+    const { data, error } = await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement", body, recipient_role: recipientRole, team_id: teamId }).select().single();
     if(error){ alert("Couldn't send announcement: " + error.message); console.error("Announcement insert failed:", error); return; }
     if(scope === "specific" && selectedIds.length){
       const { error: recErr } = await supabase.from("announcement_recipients").insert(selectedIds.map(uid=>({ message_id: data.id, user_id: uid })));
