@@ -204,7 +204,8 @@
   html.theme-light .rte-body{ background:#fff; }
   .rte-body:focus{ outline:none; border-color:var(--cyan); }
   .rte-body p{ margin:0 0 10px; } .rte-body ul,.rte-body ol{ margin:0 0 10px; padding-left:22px; }
-  .rte-img-wrap{ display:inline-block; resize:both; overflow:hidden; max-width:100%; border:1px solid var(--stroke); vertical-align:bottom; width:280px; height:190px; margin:6px 4px; cursor:grab; }
+  .rte-img-wrap{ display:inline-block; overflow:hidden; max-width:100%; border:1px solid var(--stroke); vertical-align:bottom; width:280px; height:190px; margin:6px 4px; }
+  .rte-body .rte-img-wrap{ resize:both; cursor:grab; }
   .rte-img-wrap img{ width:100%; height:100%; display:block; object-fit:contain; pointer-events:none; }
 
   .thread-card{}
@@ -380,6 +381,32 @@ async function afterLogin(){
   await loadAllNotifications();
   setupRealtime();
   view = "home"; render();
+  await showUnseenAnnouncements();
+}
+
+async function showUnseenAnnouncements(){
+  const since = profile.last_seen_announcement_at || "1970-01-01T00:00:00Z";
+  const { data, error } = await supabase.from("messages").select("*").eq("audience","all").gt("created_at", since).order("created_at",{ascending:true});
+  if(error){ console.error("Failed to check for new announcements:", error); return; }
+  const unseen = data || [];
+  if(!unseen.length) return;
+  const itemsHtml = unseen.map(a=>`
+    <div class="sub-card">
+      <div class="sub-card-head"><span class="tag">📣 ${escapeHtml(a.sender_name)} · ${new Date(a.created_at).toLocaleString()}</span></div>
+      <div style="font-size:14px;color:var(--text);">${a.body}</div>
+    </div>`).join("");
+  openModal(`
+    <h3>${unseen.length===1 ? "New announcement" : `${unseen.length} new announcements`}</h3>
+    <p class="sub">Posted while you were away.</p>
+    ${itemsHtml}
+    <div class="modal-actions"><button class="btn primary" id="ann-digest-ok">Got it</button></div>
+  `, true);
+  document.getElementById("ann-digest-ok").addEventListener("click", async ()=>{
+    closeModal();
+    const latest = unseen[unseen.length-1].created_at;
+    await supabase.from("profiles").update({ last_seen_announcement_at: latest }).eq("id", session.user.id);
+    profile.last_seen_announcement_at = latest;
+  });
 }
 
 async function logout(){
@@ -524,9 +551,10 @@ function renderDashboard(){
     let dragModId = null;
     let dragOverEl = null;
     root.querySelectorAll("[data-mod-drag]").forEach(el=>{
-      el.addEventListener("dragstart", (e)=>{ dragModId = el.getAttribute("data-mod-drag"); e.dataTransfer.effectAllowed = "move"; el.style.opacity = "0.4"; });
+      el.addEventListener("dragstart", (e)=>{ dragModId = el.getAttribute("data-mod-drag"); e.dataTransfer.effectAllowed = "move"; el.style.opacity = "0.4"; startDragAutoScroll(); });
       el.addEventListener("dragend", ()=>{
         el.style.opacity = "";
+        stopDragAutoScroll();
         if(dragOverEl){ dragOverEl.classList.remove("drag-over-top","drag-over-bottom"); dragOverEl = null; }
       });
       el.addEventListener("dragover", (e)=>{
@@ -728,7 +756,8 @@ async function showAttemptDetail(userId, moduleId){
    NOTIFICATIONS / MESSAGING
    ============================================================ */
 async function loadAllNotifications(){
-  const { data: announcements } = await supabase.from("messages").select("*").eq("audience","all").order("created_at",{ascending:false}).limit(15);
+  const { data: announcements, error: announceErr } = await supabase.from("messages").select("*").eq("audience","all").order("created_at",{ascending:false}).limit(15);
+  if(announceErr) console.error("Failed to load announcements:", announceErr);
   NOTIF_ANNOUNCEMENTS = announcements || [];
 
   const { data: myRoots } = await supabase.from("messages").select("*").eq("audience","admins").is("thread_id", null).eq("sender_id", session.user.id).order("created_at",{ascending:false});
@@ -962,7 +991,8 @@ function openAnnouncementModal(){
   document.getElementById("an-send").addEventListener("click", async ()=>{
     const body = document.getElementById(editorId).innerHTML.trim();
     if(!body || body === "<br>") { closeModal(); return; }
-    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement", body });
+    const { error } = await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement", body });
+    if(error){ alert("Couldn't send announcement: " + error.message); return; }
     closeModal();
     await loadAllNotifications(); render();
   });
@@ -1017,6 +1047,35 @@ function openPasswordResetModal(userId, name){
 function blankModule(){ return { id:null, title:"", short:"", ledColor:"green", lessons:[], quiz:[] }; }
 function blankLesson(){ return { title:"New lesson", label:"Lesson · Untitled", body:"<p>Write the lesson content here.</p>" }; }
 function blankQuestion(){ return { q:"New question", opts:["Option A","Option B"], correct:0, explain:"" }; }
+/* ============================================================
+   DRAG AUTO-SCROLL — activated during any drag-to-reorder gesture
+   so dragging near the top/bottom edge scrolls the page.
+   ============================================================ */
+let _dragScrollSpeed = 0;
+let _dragScrollRAF = null;
+function _dragScrollHandler(e){
+  const threshold = 110;
+  const y = e.clientY;
+  const h = window.innerHeight;
+  if(y < threshold) _dragScrollSpeed = -((threshold - y) * 0.5 + 3);
+  else if(y > h - threshold) _dragScrollSpeed = ((y - (h - threshold)) * 0.5 + 3);
+  else _dragScrollSpeed = 0;
+}
+function _dragScrollStep(){
+  if(_dragScrollSpeed !== 0) window.scrollBy(0, _dragScrollSpeed);
+  _dragScrollRAF = requestAnimationFrame(_dragScrollStep);
+}
+function startDragAutoScroll(){
+  _dragScrollSpeed = 0;
+  document.addEventListener("dragover", _dragScrollHandler);
+  if(!_dragScrollRAF) _dragScrollRAF = requestAnimationFrame(_dragScrollStep);
+}
+function stopDragAutoScroll(){
+  document.removeEventListener("dragover", _dragScrollHandler);
+  if(_dragScrollRAF){ cancelAnimationFrame(_dragScrollRAF); _dragScrollRAF = null; }
+  _dragScrollSpeed = 0;
+}
+
 function slugify(s){ const base=(s||"").toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,''); let id=base||("module-"+Date.now()); let i=2;
   while(MODULES.some(m=>m.id===id && m.id!==editingExistingId)){ id=base+"-"+i; i++; } return id; }
 
@@ -1443,9 +1502,10 @@ function renderReference(){
   if(editOn){
     let dragOverEl = null;
     root.querySelectorAll("[data-ref-drag]").forEach(el=>{
-      el.addEventListener("dragstart", (e)=>{ dragRefId = el.getAttribute("data-ref-drag"); e.dataTransfer.effectAllowed = "move"; el.style.opacity = "0.4"; });
+      el.addEventListener("dragstart", (e)=>{ dragRefId = el.getAttribute("data-ref-drag"); e.dataTransfer.effectAllowed = "move"; el.style.opacity = "0.4"; startDragAutoScroll(); });
       el.addEventListener("dragend", ()=>{
         el.style.opacity = "";
+        stopDragAutoScroll();
         if(dragOverEl){ dragOverEl.classList.remove("drag-over-top","drag-over-bottom"); dragOverEl = null; }
       });
       el.addEventListener("dragover", (e)=>{
