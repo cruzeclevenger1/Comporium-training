@@ -1508,7 +1508,9 @@ function wireRichEditor(id){
   });
 }
 function normalizePastedImages(editorEl){
-  const rawImgs = Array.from(editorEl.querySelectorAll("img")).filter(img => !img.closest(".rte-img-wrap"));
+  const rawImgs = Array.from(editorEl.querySelectorAll("img")).filter(img =>
+    !img.closest(".rte-img-wrap") && !img.classList.contains("brand-mark") && !img.closest("header.top")
+  );
   rawImgs.forEach(img=>{
     const wrap = document.createElement("span");
     wrap.className = "rte-img-wrap";
