@@ -228,6 +228,14 @@
   .lightbox-img{ max-width:90vw; max-height:90vh; object-fit:contain; border-radius:8px; box-shadow:0 20px 60px #000000aa; cursor:zoom-in; touch-action:none; user-select:none; transition:transform .04s linear; }
   .lightbox-close{ position:absolute; top:22px; right:26px; background:none; border:1px solid #ffffff55; color:#fff; font-size:20px; width:40px; height:40px; border-radius:50%; cursor:pointer; z-index:2; }
   .lightbox-hint{ position:absolute; bottom:22px; left:50%; transform:translateX(-50%); color:#ffffff99; font-family:var(--mono); font-size:11px; letter-spacing:.03em; }
+
+  .guest-banner{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; background:var(--amber-dim); border:1px solid var(--amber); border-radius:10px; padding:10px 16px; margin-bottom:16px; font-size:13px; color:var(--amber); }
+  .tour-overlay{ position:fixed; inset:0; z-index:500; pointer-events:none; }
+  .tour-card{ position:fixed; bottom:28px; left:50%; transform:translateX(-50%); pointer-events:auto; background:var(--panel); border:1px solid var(--cyan); border-radius:14px; padding:20px 24px; max-width:460px; width:calc(100% - 40px); box-shadow:0 20px 50px #000000aa; }
+  .tour-card .tour-step{ font-family:var(--mono); font-size:11px; color:var(--cyan); letter-spacing:.05em; margin-bottom:6px; }
+  .tour-card h3{ margin:0 0 8px; font-size:16px; }
+  .tour-card p{ margin:0 0 16px; font-size:13.5px; color:var(--text-dim); line-height:1.6; }
+  .tour-card .tour-actions{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
   .ult-edit-text{ cursor:pointer; border-bottom:1px dashed var(--amber); }
   .ult-edit-text:hover{ background:var(--amber-dim); }
   .lightbox-close:hover{ background:#ffffff22; }
@@ -262,6 +270,42 @@ const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
 
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ============================================================
+   GUEST MODE — lets a visitor tour the real app with sample data
+   and zero writes ever reaching the database. Rather than
+   rewriting every screen to use fake data, we let the real
+   render/data functions run exactly as normal, but transparently
+   redirect every supabase.from(...) call to an in-memory,
+   always-empty, always-successful fake result while guest mode is
+   on. Combined with skipping the handful of top-level "load from
+   DB" functions (which would otherwise overwrite our sample data
+   with that emptiness), this means the whole app just works as a
+   sandbox with zero risk to real data and zero code duplication.
+   ============================================================ */
+let guestMode = false;
+let guestViewingAsAdmin = false;
+
+function _fakeQueryChain(){
+  const result = { data: [], error: null, count: 0 };
+  const chain = {
+    select(){ return chain; }, insert(){ return chain; }, update(){ return chain; }, upsert(){ return chain; }, delete(){ return chain; },
+    eq(){ return chain; }, neq(){ return chain; }, in(){ return chain; }, is(){ return chain; },
+    gt(){ return chain; }, gte(){ return chain; }, lt(){ return chain; }, lte(){ return chain; },
+    order(){ return chain; }, limit(){ return chain; }, range(){ return chain; },
+    single(){ return Promise.resolve({ data:null, error:null }); },
+    then(resolve, reject){ return Promise.resolve(result).then(resolve, reject); },
+    catch(reject){ return Promise.resolve(result).catch(reject); },
+  };
+  return chain;
+}
+const _realSupabaseFrom = supabase.from.bind(supabase);
+supabase.from = function(table){ return guestMode ? _fakeQueryChain() : _realSupabaseFrom(table); };
+const _realInvoke = supabase.functions.invoke.bind(supabase.functions);
+supabase.functions.invoke = function(name, opts){
+  if(guestMode){ showToast("Preview only — nothing was actually changed."); return Promise.resolve({ data:{ success:true }, error:null }); }
+  return _realInvoke(name, opts);
+};
 
 /* ============================================================
    APP STATE
@@ -386,13 +430,14 @@ async function markLessonViewed(m, lessonId){
   }, { onConflict: "user_id,module_id" });
 }
 let editMode = false;
-function isAdmin(){ return profile && profile.role === "admin"; }
+function isAdmin(){ if(guestMode) return guestViewingAsAdmin; return profile && profile.role === "admin"; }
 function canEdit(){ return isAdmin() && editMode; }
 
 /* ============================================================
    DATA LOADING
    ============================================================ */
 async function loadEverything(){
+  if(guestMode) return;
   const { data: mods } = await supabase.from("modules").select("*").order("sort_order");
   const { data: lessons } = await supabase.from("lessons").select("*").order("sort_order");
   const { data: quiz } = await supabase.from("quiz_questions").select("*").order("sort_order");
@@ -408,6 +453,7 @@ async function loadEverything(){
 }
 
 async function loadProfile(){
+  if(guestMode) return;
   const { data } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
   profile = data;
 }
@@ -434,11 +480,180 @@ function renderAuth(){
         <div class="field"><label>Password</label><input type="password" id="auth-password" placeholder="••••••••"></div>
         <button class="btn primary" id="auth-submit" style="width:100%;">${authMode==='login'?'Log in':'Create account'}</button>
       </div>
+      <div style="text-align:center;margin-top:16px;">
+        <button class="btn" id="guest-tour-btn" style="width:100%;">👀 View site as guest</button>
+      </div>
     </div>
   `;
   document.getElementById("tab-login").addEventListener("click", ()=>{ authMode="login"; authError=""; authInfo=""; renderAuth(); });
   document.getElementById("tab-signup").addEventListener("click", ()=>{ authMode="signup"; authError=""; authInfo=""; renderAuth(); });
   document.getElementById("auth-submit").addEventListener("click", submitAuth);
+  document.getElementById("guest-tour-btn").addEventListener("click", openGuestIntroModal);
+}
+
+/* ============================================================
+   GUEST MODE — intro flow, fixtures, and tour
+   ============================================================ */
+function openGuestIntroModal(){
+  openModal(`
+    <h3>You're about to view a guest preview</h3>
+    <p class="sub">Feel free to click around — but nothing here is real data. Any module edits, quiz answers, notes, announcements, or messages you create will <strong style="color:var(--text);">not</strong> be saved anywhere. This is a sandboxed look at the site, not the live system.</p>
+    <div class="modal-actions"><button class="btn" id="guest-cancel">Never mind</button><button class="btn primary" id="guest-continue">Got it, continue</button></div>
+  `);
+  document.getElementById("guest-cancel").addEventListener("click", closeModal);
+  document.getElementById("guest-continue").addEventListener("click", ()=>{ closeModal(); openGuestTourChoiceModal(); });
+}
+
+function openGuestTourChoiceModal(){
+  openModal(`
+    <h3>Want a guided walkthrough?</h3>
+    <p class="sub">I can walk you through the main features — both what a regular agent sees day to day, and what an admin can do. Takes about two minutes. Or you're welcome to just explore on your own.</p>
+    <div class="modal-actions"><button class="btn" id="guest-explore">No thanks, let me explore</button><button class="btn primary" id="guest-tour-start">Yes, show me around</button></div>
+  `);
+  document.getElementById("guest-explore").addEventListener("click", ()=>{ closeModal(); enterGuestMode(false); });
+  document.getElementById("guest-tour-start").addEventListener("click", ()=>{ closeModal(); enterGuestMode(true); });
+}
+
+function enterGuestMode(startTour){
+  guestMode = true;
+  guestViewingAsAdmin = false;
+  buildGuestFixtures();
+  view = "home"; render();
+  if(startTour) setTimeout(()=> startGuestTour(), 400);
+}
+
+function exitGuestMode(){
+  guestMode = false; guestViewingAsAdmin = false;
+  session = null; profile = null;
+  MODULES = []; progressMap = {}; REFERENCE_PAGES = []; PERSONAL_NOTES = []; TEAMS_LIST = []; teamRows = [];
+  NOTIF_ANNOUNCEMENTS = []; NOTIF_THREADS = []; NOTIF_UNCLAIMED = [];
+  ANALYZE_MODULE_STATS = []; ANALYZE_MISSED_QUESTIONS = []; ANALYZE_TOTALS = { totalPeople:0, notStarted:0, totalAttempts:0, totalFlags:0 };
+  view = "auth"; authMode = "login"; render();
+}
+
+function buildGuestFixtures(){
+  const now = new Date().toISOString();
+  session = { user: { id: "guest-user", email: "guest@example.com" } };
+  profile = { id:"guest-user", name:"Guest Visitor", role:"agent", created_at: now, is_first_login:false, last_seen_announcement_at: now };
+  wasFirstLoginThisSession = false;
+  editMode = false;
+
+  MODULES = [
+    { id:"guest-modems", title:"Modems & Routers", short:"Reading the box: DOCSIS basics, LED patterns, and power-cycle order.", ledColor:"green",
+      lessons:[
+        { id:"gl1", label:"Lesson 1 · Fundamentals", title:"What the modem actually does", body:"<p>A modem's only job is to translate the signal coming from the provider into something the customer's local network can use — and back again.</p>" },
+        { id:"gl2", label:"Lesson 2 · Diagnostics", title:"Reading the lights", body:"<p>Every light on a modem reports a stage of a process. Learn the pattern, and the lights stop being decoration and start being a diagnosis.</p>" }
+      ],
+      quiz:[
+        { id:"gq1", q:"What does a solid green Online light usually mean?", opts:["The modem is registered and passing traffic","The modem has no power","The WiFi password is wrong","The account is suspended"], correct:0, explain:"Solid Online means the modem finished registering with the head-end." },
+        { id:"gq2", q:"What's the correct order for a power cycle?", opts:["Router, then modem","Modem, wait 30 seconds, then router","Both at the same time","Never restart either"], correct:1, explain:"The modem needs to fully re-register before the router builds a connection on top of it." }
+      ] },
+    { id:"guest-fiber", title:"Fiber Connections", short:"ONT lights, loss of signal, and when it's a truck-roll, not a reset.", ledColor:"cyan",
+      lessons:[
+        { id:"gl3", label:"Lesson 1 · Fundamentals", title:"How fiber carries data", body:"<p>Fiber sends pulses of light down glass — immune to electrical interference, but physically fragile in different ways than copper.</p>" }
+      ],
+      quiz:[
+        { id:"gq3", q:"A solid red LOS light on an ONT usually means:", opts:["A software glitch","No optical signal reaching the ONT at all","The WiFi needs a reset","Normal startup behavior"], correct:1, explain:"LOS means Loss of Signal — a physical fiber issue, not something a reset fixes." }
+      ] }
+  ];
+  progressMap = { "guest-modems": { best:1, total:2, lastScore:1, attempts:1, lessonsViewed:["gl1","gl2"] } };
+
+  REFERENCE_PAGES = [
+    { id:"grp1", parent_id:null, sort_order:0, title:"Pulling up a modem", body:"<p>To look up a modem, search the account number or the MAC address on the customer's internet account.</p>" },
+    { id:"grp2", parent_id:"grp1", sort_order:0, title:"Finding the MAC address", body:"<p>Click View under Details, then scroll to Internet Equipment.</p>" },
+    { id:"grp3", parent_id:null, sort_order:1, title:"Common truck-roll triggers", body:"<p>LOS lights, damaged coax at the pole, and repeated failed self-installs.</p>" }
+  ];
+  currentRefId = "grp1"; refEditing = false; notesCollapsed = new Set(); refCollapsed = new Set();
+
+  PERSONAL_NOTES = [ { id:"gn1", parent_id:null, sort_order:0, title:"Shortcuts I keep forgetting", body:"<p>DS = downstream, US = upstream.</p>" } ];
+  currentNoteId = "gn1";
+
+  TEAMS_LIST = [ { id:"gt1", name:"July 2026 New Hires", memberIds:["gu1","gu2"] } ];
+  teamRows = [
+    { id:"gu1", name:"Jordan Smith", role:"agent", perModule:{"guest-modems":80,"guest-fiber":20}, perModuleRaw:{"guest-modems":{best:1,total:2,attempts:1},"guest-fiber":{best:0,total:1,attempts:0}}, overall:50, mastered:0, teamIds:["gt1"] },
+    { id:"gu2", name:"Alex Rivera", role:"agent", perModule:{"guest-modems":100,"guest-fiber":100}, perModuleRaw:{"guest-modems":{best:2,total:2,attempts:2},"guest-fiber":{best:1,total:1,attempts:1}}, overall:100, mastered:2, teamIds:["gt1"] },
+    { id:"guest-user", name:"Guest Visitor", role:"agent", perModule:{"guest-modems":50,"guest-fiber":0}, perModuleRaw:{"guest-modems":{best:1,total:2,attempts:1},"guest-fiber":{best:0,total:1,attempts:0}}, overall:25, mastered:0, teamIds:[] }
+  ];
+
+  NOTIF_ANNOUNCEMENTS = [ { id:"gann1", sender_name:"Sam (Admin)", created_at: now, body:"<p>Welcome to the new Fiber Connections module — go take a look!</p>" } ];
+  NOTIF_THREADS = [];
+  NOTIF_UNCLAIMED = [ { id:"gflag1", type:"flag", sender_name:"Jordan Smith", created_at: now, context:"Fiber Connections — Q1", body:"<p>Is this LOS question a trick question? A little confused on the wording.</p>" } ];
+
+  ANALYZE_MODULE_STATS = [
+    { id:"guest-modems", title:"Modems & Routers", avgCompletion:74, masteredCount:1, startedCount:3 },
+    { id:"guest-fiber", title:"Fiber Connections", avgCompletion:40, masteredCount:1, startedCount:2 }
+  ];
+  ANALYZE_MISSED_QUESTIONS = [ { moduleId:"guest-fiber", moduleTitle:"Fiber Connections", question:"A solid red LOS light on an ONT usually means:", missed:4, total:6, missRate:67 } ];
+  ANALYZE_TOTALS = { totalPeople:3, notStarted:1, totalAttempts:9, totalFlags:1 };
+
+  UI_TEXT = {}; UI_TEXT_DEFAULTS = {};
+}
+
+let tourSteps = [];
+let tourStepIndex = 0;
+
+function buildTourSteps(){
+  return [
+    { run: ()=>{ guestViewingAsAdmin=false; view="home"; render(); }, title:"This is Home", text:"Every agent lands here after logging in. It links out to Training Modules, the Reference Guide, and their own private Notes." },
+    { run: ()=>{ view="dashboard"; render(); }, title:"Training Modules", text:"Each card is a module — lessons plus a scored quiz. The progress bar reflects real progress: reading the lessons counts for half, the quiz score for the other half." },
+    { run: ()=>{ currentModId="guest-modems"; currentLessonIdx=0; view="lesson"; render(); }, title:"Lessons", text:"Simple, readable pages. Agents can leave a comment on anything confusing, and it goes straight to whichever admin picks it up." },
+    { run: ()=>{ startQuiz(); }, title:"Quizzes", text:"Multiple choice with instant feedback, plus a \"Flag this question\" option if something seems worded oddly or feels wrong." },
+    { run: ()=>{ openReference(); }, title:"Reference Guide", text:"A living, searchable knowledge base for the whole team, not just new hires. Pages can have sub-pages, similar to OneNote." },
+    { run: ()=>{ openNotes(); }, title:"My Notes", text:"A fully private notepad just for this one agent. Autosaves as they type — not even admins can see someone else's notes." },
+    { run: ()=>{ openNotifications(); }, title:"Notifications", text:"Announcements from admins land here, and anyone can flag or comment on specific content they run into." },
+    { run: ()=>{ guestViewingAsAdmin=true; editMode=false; view="home"; render(); }, title:"Now, the admin view", text:"Let's switch perspectives. Admins get everything an agent has, plus tools for managing the team and the content itself." },
+    { run: ()=>{ openTeamProgress(); }, title:"Teams & progress", text:"Admins see everyone's progress, can group people into teams, search by name, filter by module, and reset a password or remove an account if needed." },
+    { run: ()=>{ openAnalyze(); }, title:"Analyze", text:"Team-wide trends: average completion per module, and — this one matters — which quiz questions get missed most often across everyone. That usually points to the content, not the reps." },
+    { run: ()=>{ editMode=true; view="dashboard"; render(); }, title:"Editing content", text:"With edit mode on, admins can add modules, drag to reorder them, and edit lessons and quiz questions directly — no code required." },
+    { run: ()=>{ editMode=false; }, title:"That's the tour", text:"Feel free to keep clicking around on your own — remember, nothing in this preview is saved anywhere. Exit guest mode any time from the button in the top right." }
+  ];
+}
+
+async function startGuestTour(){
+  tourSteps = buildTourSteps();
+  tourStepIndex = 0;
+  await runTourStep();
+}
+async function runTourStep(){
+  const step = tourSteps[tourStepIndex];
+  await step.run();
+  renderTourCard();
+}
+function renderTourCard(){
+  let overlay = document.getElementById("tour-overlay");
+  if(!overlay){
+    overlay = document.createElement("div");
+    overlay.id = "tour-overlay";
+    overlay.className = "tour-overlay";
+    document.body.appendChild(overlay);
+  }
+  const step = tourSteps[tourStepIndex];
+  const isLast = tourStepIndex === tourSteps.length-1;
+  overlay.innerHTML = `
+    <div class="tour-card">
+      <div class="tour-step">STEP ${tourStepIndex+1} OF ${tourSteps.length}</div>
+      <h3>${escapeHtml(step.title)}</h3>
+      <p>${escapeHtml(step.text)}</p>
+      <div class="tour-actions">
+        <button class="btn" id="tour-skip">Skip tour</button>
+        <div style="display:flex;gap:8px;">
+          ${tourStepIndex>0 ? `<button class="btn" id="tour-back">Back</button>` : ""}
+          <button class="btn primary" id="tour-next">${isLast ? "Finish" : "Next →"}</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById("tour-skip").addEventListener("click", endGuestTour);
+  const backBtn = document.getElementById("tour-back");
+  if(backBtn) backBtn.addEventListener("click", async ()=>{ tourStepIndex--; await runTourStep(); });
+  document.getElementById("tour-next").addEventListener("click", async ()=>{
+    if(isLast){ endGuestTour(); return; }
+    tourStepIndex++; await runTourStep();
+  });
+}
+function endGuestTour(){
+  const overlay = document.getElementById("tour-overlay");
+  if(overlay) overlay.remove();
 }
 
 async function submitAuth(){
@@ -577,6 +792,11 @@ function renderShell(inner){
   const section = view==="home" ? "home" : ["dashboard","lesson","quiz","results","editor"].includes(view) ? "modules" : view==="reference" ? "reference" : view==="notes" ? "notes" : null;
 
   root.innerHTML = `
+    ${guestMode ? `
+    <div class="guest-banner">
+      <span>👀 Guest preview — nothing you do here is saved</span>
+      <button class="mini-btn" id="guest-view-toggle">Viewing as: ${guestViewingAsAdmin ? "Admin" : "Agent"} (switch)</button>
+    </div>` : ""}
     <header class="top">
       <div class="brand">
         <button class="gear-btn" id="open-settings" title="Settings">⚙</button>
@@ -601,7 +821,7 @@ function renderShell(inner){
               <button id="open-announce">📣 Make Announcement</button>
             </div>
           </div>` : ""}
-        <button class="pill-btn" id="logout-btn">Log out</button>
+        <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
       </div>
     </header>
     ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':''))}`}</nav>`}
@@ -622,7 +842,7 @@ function renderShell(inner){
   document.getElementById("open-settings").addEventListener("click", ()=>{ view="settings"; render(); });
   const ultToggle = document.getElementById("ult-edit-toggle");
   if(ultToggle) ultToggle.addEventListener("click", ()=>{ ultimateEditMode = !ultimateEditMode; render(); });
-  document.getElementById("logout-btn").addEventListener("click", logout);
+  document.getElementById("logout-btn").addEventListener("click", ()=>{ guestMode ? exitGuestMode() : logout(); });
   document.getElementById("notif-bell").addEventListener("click", openNotifications);
   document.getElementById("chat-bubble").addEventListener("click", ()=> openChat());
   const toggleEdit = document.getElementById("toggle-edit-mode");
@@ -631,6 +851,8 @@ function renderShell(inner){
   if(openAnnounce) openAnnounce.addEventListener("click", ()=> openAnnouncementModal());
   const goTeamBtn = document.getElementById("go-team-btn");
   if(goTeamBtn) goTeamBtn.addEventListener("click", openTeamProgress);
+  const guestViewToggle = document.getElementById("guest-view-toggle");
+  if(guestViewToggle) guestViewToggle.addEventListener("click", ()=>{ guestViewingAsAdmin = !guestViewingAsAdmin; view="home"; render(); });
 }
 
 /* ============================================================
@@ -853,6 +1075,7 @@ let teamSearchQuery = "";
 let teamModuleFilter = "";
 
 async function openTeamProgress(){
+  if(guestMode){ view = "team"; render(); return; }
   const { data: people } = await supabase.from("profiles").select("*").order("name");
   const { data: allProgress } = await supabase.from("progress").select("*");
   const { data: teamsData } = await supabase.from("teams").select("*").order("name");
@@ -1118,6 +1341,7 @@ let ANALYZE_MISSED_QUESTIONS = [];
 let ANALYZE_TOTALS = { totalPeople:0, notStarted:0, totalAttempts:0, totalFlags:0 };
 
 async function openAnalyze(){
+  if(guestMode){ view = "analyze"; render(); return; }
   const { data: profilesData } = await supabase.from("profiles").select("id");
   const { data: allProgress } = await supabase.from("progress").select("*");
   const { data: allAttempts } = await supabase.from("quiz_attempts").select("*");
@@ -1205,6 +1429,7 @@ function renderAnalyze(){
    NOTIFICATIONS / MESSAGING
    ============================================================ */
 async function loadAllNotifications(){
+  if(guestMode) return;
   const joinCutoff = (profile && profile.created_at) ? profile.created_at : "1970-01-01T00:00:00Z";
   const { data: announcements, error: announceErr } = await supabase.from("messages").select("*").eq("audience","all").gte("created_at", joinCutoff).order("created_at",{ascending:false}).limit(15);
   if(announceErr) console.error("Failed to load announcements:", announceErr);
@@ -2370,6 +2595,7 @@ let refCollapsed = new Set();
 let dragRefId = null;
 
 async function loadReference(){
+  if(guestMode) return;
   const { data } = await supabase.from("reference_pages").select("*").order("sort_order");
   REFERENCE_PAGES = data || [];
   if(!REFERENCE_PAGES.find(p=>p.id===currentRefId)) currentRefId = null;
@@ -2566,6 +2792,7 @@ let dragNoteId = null;
 let noteSaveTimer = null;
 
 async function loadPersonalNotes(){
+  if(guestMode) return;
   const { data } = await supabase.from("personal_notes").select("*").eq("user_id", session.user.id).order("sort_order");
   PERSONAL_NOTES = data || [];
   if(!PERSONAL_NOTES.find(n=>n.id===currentNoteId)) currentNoteId = null;
