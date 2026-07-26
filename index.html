@@ -252,7 +252,6 @@
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
 
-
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /* ============================================================
@@ -570,9 +569,12 @@ async function reorderModuleDrop(draggedId, targetId, pos){
   render();
 }
 
+let dashboardFilterIncomplete = false;
+
 function renderDashboard(){
   const editOn = canEdit();
-  const cards = MODULES.map(m=>{
+  const visibleModules = dashboardFilterIncomplete ? MODULES.filter(m=> moduleStatus(m.id)!=="mastered") : MODULES;
+  const cards = visibleModules.map(m=>{
     const status = moduleStatus(m.id); const s = progressMap[m.id];
     const pillHtml = status==="mastered" ? `<span class="status-pill done">Mastered</span>`
       : status==="attempted" ? `<span class="status-pill progress">${s.best}/${s.total} correct</span>`
@@ -591,6 +593,7 @@ function renderDashboard(){
   const totalQ = MODULES.reduce((a,m)=>a+m.quiz.length,0);
   const doneQ = Object.values(progressMap).reduce((a,s)=>a+(s.best||0),0);
   const modsMastered = MODULES.filter(m=>moduleStatus(m.id)==="mastered").length;
+  const emptyFilterMsg = (dashboardFilterIncomplete && !visibleModules.length) ? `<p style="color:var(--text-faint);font-size:13.5px;padding:10px 2px;">Everything's mastered — nothing incomplete to show.</p>` : "";
 
   renderShell(`
     <section class="hero">
@@ -600,8 +603,16 @@ function renderDashboard(){
       <div class="panel-row"><div class="stat"><div class="num">${modsMastered}/${MODULES.length}</div><div class="lbl">MODULES MASTERED</div></div>
       <div class="stat"><div class="num">${doneQ}/${totalQ}</div><div class="lbl">BEST-SCORE QUESTIONS CORRECT</div></div></div>
     </section>
-    <div class="grid">${cards}${addCard}</div>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
+      <button class="pill-btn" id="toggle-incomplete-filter">${dashboardFilterIncomplete ? "✓ Showing incomplete only" : "Filter: incomplete only"}</button>
+    </div>
+    <div class="grid">${cards}${emptyFilterMsg}${addCard}</div>
   `);
+
+  document.getElementById("toggle-incomplete-filter").addEventListener("click", ()=>{
+    dashboardFilterIncomplete = !dashboardFilterIncomplete;
+    render();
+  });
 
   root.querySelectorAll(".mod-card").forEach(el=> el.addEventListener("click",(e)=>{
     if(e.target.closest("[data-edit]")||e.target.closest("[data-del]")||e.target.closest(".drag-handle")) return;
