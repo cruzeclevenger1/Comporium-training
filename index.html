@@ -48,6 +48,11 @@
   .mod-card h3{ margin:0 0 6px; font-size:16.5px; } .mod-card .sub{ color:var(--text-dim); font-size:13px; line-height:1.5; margin:0; }
   .mod-card .meta{ font-family:var(--mono); font-size:11px; color:var(--text-faint); display:flex; gap:14px; margin-top:2px; align-items:center; }
   .status-pill{ font-family:var(--mono); font-size:10.5px; letter-spacing:.05em; padding:4px 9px; border-radius:20px; border:1px solid var(--stroke); color:var(--text-faint); white-space:nowrap; text-transform:uppercase; }
+  button.status-pill{ background:var(--panel); text-transform:none; letter-spacing:0; font-size:11.5px; }
+  button.status-pill:hover{ border-color:#3a4a70; color:var(--text); }
+  .team-row-main:hover{ background:#141d30; } html.theme-light .team-row-main:hover{ background:#eef1f8; }
+  .team-row-detail td{ border-bottom:1px solid var(--stroke); background:#0e1626; }
+  html.theme-light .team-row-detail td{ background:#f5f7fb; }
   .status-pill.done{ color:var(--green); border-color:var(--green-dim); background:var(--green-dim); }
   .status-pill.progress{ color:var(--amber); border-color:var(--amber-dim); background:var(--amber-dim); }
   .progress-bar{ height:5px; border-radius:4px; background:#1c2740; overflow:hidden; } .progress-bar>div{ height:100%; background:linear-gradient(90deg,var(--cyan),var(--green)); }
@@ -746,6 +751,8 @@ function renderResults(){
 /* ============================================================
    TEAM PROGRESS (admin only)
    ============================================================ */
+let teamExpandedRows = new Set();
+
 async function openTeamProgress(){
   const { data: people } = await supabase.from("profiles").select("*").order("name");
   const { data: allProgress } = await supabase.from("progress").select("*");
@@ -760,27 +767,59 @@ async function openTeamProgress(){
       const quizFraction = r && m.quiz.length ? (r.best_score||0)/m.quiz.length : 0;
       perModule[m.id] = Math.round((lessonFraction*0.5 + quizFraction*0.5) * 100);
     });
-    return { id:p.id, name:p.name, role:p.role, perModule };
+    const values = Object.values(perModule);
+    const overall = values.length ? Math.round(values.reduce((a,b)=>a+b,0)/values.length) : 0;
+    const mastered = values.filter(v=>v===100).length;
+    return { id:p.id, name:p.name, role:p.role, perModule, overall, mastered };
   });
   view = "team"; render();
 }
 
 function renderTeam(){
-  const headerCols = MODULES.map(m=>`<th>${escapeHtml(m.title)}</th>`).join("");
   const rows = teamRows.map(r=>{
-    const cells = MODULES.map(m=>`<td><button class="mini-btn" data-view-attempt="${r.id}:${m.id}">${r.perModule[m.id]}%</button></td>`).join("");
     const isSelf = r.id===profile.id;
+    const expanded = teamExpandedRows.has(r.id);
     const roleSelect = isSelf
       ? `<span class="role-tag ${r.role==='admin'?'admin':''}">${r.role.toUpperCase()} (YOU)</span>`
       : `<select class="mini-btn" data-role-select="${r.id}"><option value="agent" ${r.role==='agent'?'selected':''}>User</option><option value="admin" ${r.role==='admin'?'selected':''}>Admin</option></select>`;
     const resetBtn = !isSelf ? `<button class="mini-btn" data-reset-pw="${r.id}" data-reset-name="${escapeHtml(r.name)}">Reset password</button>` : "";
-    return `<tr><td>${escapeHtml(r.name)}</td><td>${roleSelect}</td>${cells}<td>${resetBtn}</td></tr>`;
+
+    const moduleGrid = MODULES.map(m=>{
+      const pct = r.perModule[m.id];
+      const cls = pct===100 ? "done" : pct>0 ? "progress" : "";
+      return `<button class="status-pill ${cls}" data-view-attempt="${r.id}:${m.id}" style="cursor:pointer;">${escapeHtml(m.title)} · ${pct}%</button>`;
+    }).join("");
+
+    const mainRow = `
+      <tr class="team-row-main" data-team-toggle="${r.id}" style="cursor:pointer;">
+        <td>${escapeHtml(r.name)}</td>
+        <td>${roleSelect}</td>
+        <td style="min-width:160px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="progress-bar" style="flex:1;"><div style="width:${r.overall}%"></div></div>
+            <span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${r.overall}%</span>
+          </div>
+        </td>
+        <td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${r.mastered}/${MODULES.length} mastered</td>
+        <td>${resetBtn}</td>
+        <td style="text-align:center;color:var(--text-faint);">${expanded?'▾':'▸'}</td>
+      </tr>`;
+
+    const detailRow = expanded ? `
+      <tr class="team-row-detail"><td colspan="6">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;padding:6px 4px 14px;">
+          ${moduleGrid || `<span style="color:var(--text-faint);font-size:12.5px;">No modules yet.</span>`}
+        </div>
+      </td></tr>` : "";
+
+    return mainRow + detailRow;
   }).join("");
+
   renderShell(`
     <div class="card">
       <div class="k-label">ADMIN VIEW</div><h2>Team progress</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">Combined lesson + quiz completion per person. Click a percentage to see missed questions on their latest attempt.</p>
-      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th>${headerCols}<th></th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">Click a person to see their module-by-module breakdown. Click a module pill to see missed questions on their latest attempt.</p>
+      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th><th>Overall</th><th>Mastered</th><th></th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>
     <div id="attempt-detail" style="margin-top:16px;"></div>
   `);
@@ -789,10 +828,18 @@ function renderTeam(){
     await supabase.from("profiles").update({ role: el.value }).eq("id", id);
     await openTeamProgress();
   }));
-  root.querySelectorAll("[data-reset-pw]").forEach(el=> el.addEventListener("click", ()=>{
+  root.querySelectorAll("[data-reset-pw]").forEach(el=> el.addEventListener("click", (e)=>{
+    e.stopPropagation();
     openPasswordResetModal(el.getAttribute("data-reset-pw"), el.getAttribute("data-reset-name"));
   }));
-  root.querySelectorAll("[data-view-attempt]").forEach(el=> el.addEventListener("click", async ()=>{
+  root.querySelectorAll("[data-team-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
+    if(e.target.closest("[data-role-select]")||e.target.closest("[data-reset-pw]")) return;
+    const id = el.getAttribute("data-team-toggle");
+    if(teamExpandedRows.has(id)) teamExpandedRows.delete(id); else teamExpandedRows.add(id);
+    render();
+  }));
+  root.querySelectorAll("[data-view-attempt]").forEach(el=> el.addEventListener("click", async (e)=>{
+    e.stopPropagation();
     const [userId, moduleId] = el.getAttribute("data-view-attempt").split(":");
     await showAttemptDetail(userId, moduleId);
   }));
