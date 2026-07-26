@@ -931,10 +931,16 @@ function renderNotifications(){
     </div>` : ""}
     <div class="card" style="margin-top:16px;">
       <div class="k-label">YOUR ACTIVITY</div>
-      <h2 style="margin-bottom:14px;">Conversations</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+        <h2 style="margin:0;">Conversations</h2>
+        <button class="btn primary" id="new-convo-btn">+ New Conversation</button>
+      </div>
       ${threadsHtml}
     </div>
   `);
+
+  const newConvoBtn = document.getElementById("new-convo-btn");
+  if(newConvoBtn) newConvoBtn.addEventListener("click", openNewConversationModal);
 
   NOTIF_UNCLAIMED.forEach(m=> wireRichEditor(`thread-rte-${m.id}`));
   NOTIF_THREADS.forEach(t=> wireRichEditor(`thread-rte-${t.root.id}`));
@@ -1058,23 +1064,106 @@ function openFeedbackModal(type, context){
 function openAnnouncementModal(){
   const editorId = "announce-rte";
   openModal(`
-    <h3>Announcement to everyone</h3>
-    <p class="sub">Every logged-in user will see this in their notifications.</p>
+    <h3>Announcement</h3>
+    <p class="sub">Choose who should see this.</p>
+    <div class="field">
+      <label>Send to</label>
+      <select id="ann-scope">
+        <option value="all">Everyone</option>
+        <option value="admin">Admins only</option>
+        <option value="agent">Agents only</option>
+        <option value="specific">Specific people…</option>
+      </select>
+    </div>
+    <div class="field" id="ann-people-field" style="display:none;">
+      <label>Choose people</label>
+      <div id="ann-people-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;"></div>
+    </div>
     ${richEditorHtml(editorId, "")}
-    <div class="modal-actions"><button class="btn" id="an-cancel">Cancel</button><button class="btn primary" id="an-send">Send to everyone</button></div>
+    <div class="modal-actions"><button class="btn" id="an-cancel">Cancel</button><button class="btn primary" id="an-send">Send</button></div>
   `, true);
   wireRichEditor(editorId);
   document.getElementById(editorId).focus();
+
+  document.getElementById("ann-scope").addEventListener("change", async (e)=>{
+    const field = document.getElementById("ann-people-field");
+    if(e.target.value === "specific"){
+      field.style.display = "block";
+      const list = document.getElementById("ann-people-list");
+      if(!list.dataset.loaded){
+        const { data: people } = await supabase.from("profiles").select("id,name,role").neq("id", session.user.id).order("name");
+        list.dataset.loaded = "1";
+        list.innerHTML = (people||[]).length ? (people||[]).map(p=>`
+          <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);">
+            <input type="checkbox" value="${p.id}" class="ann-person-check"> ${escapeHtml(p.name)}${p.role==='admin'?' <span class="role-tag admin">ADMIN</span>':''}
+          </label>`).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No one else found.</p>`;
+      }
+    } else {
+      field.style.display = "none";
+    }
+  });
+
   document.getElementById("an-cancel").addEventListener("click", closeModal);
   document.getElementById("an-send").addEventListener("click", async ()=>{
     const body = document.getElementById(editorId).innerHTML.trim();
     if(!body || body === "<br>") { closeModal(); return; }
-    const { data, error } = await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement", body }).select().single();
+    const scope = document.getElementById("ann-scope").value;
+    const recipientRole = scope === "all" ? null : scope;
+    let selectedIds = [];
+    if(scope === "specific"){
+      selectedIds = Array.from(document.querySelectorAll(".ann-person-check:checked")).map(cb=>cb.value);
+      if(!selectedIds.length){ alert("Pick at least one person, or choose a different audience."); return; }
+    }
+    const { data, error } = await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement", body, recipient_role: recipientRole }).select().single();
     if(error){ alert("Couldn't send announcement: " + error.message); console.error("Announcement insert failed:", error); return; }
+    if(scope === "specific" && selectedIds.length){
+      const { error: recErr } = await supabase.from("announcement_recipients").insert(selectedIds.map(uid=>({ message_id: data.id, user_id: uid })));
+      if(recErr) console.error("Failed to save announcement recipients:", recErr);
+    }
     console.log("Announcement saved to database:", data);
     closeModal();
-    alert("Announcement sent to everyone.");
+    alert("Announcement sent.");
     await loadAllNotifications(); render();
+  });
+}
+
+async function openNewConversationModal(){
+  let people;
+  if(isAdmin()){
+    const { data } = await supabase.from("profiles").select("id,name,role").neq("id", session.user.id).order("name");
+    people = data || [];
+  } else {
+    const { data } = await supabase.from("profiles").select("id,name,role").eq("role","admin").order("name");
+    people = data || [];
+  }
+  if(!people.length){
+    alert(isAdmin() ? "No one else to message yet." : "No admins found to message yet.");
+    return;
+  }
+  const editorId = "newconvo-rte";
+  openModal(`
+    <h3>New conversation</h3>
+    <p class="sub">${isAdmin() ? "Message anyone on the team." : "Send a message to an admin."}</p>
+    <div class="field">
+      <label>To</label>
+      <select id="newconvo-person">
+        ${people.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}${p.role==='admin'?' (Admin)':''}</option>`).join("")}
+      </select>
+    </div>
+    ${richEditorHtml(editorId, "")}
+    <div class="modal-actions"><button class="btn" id="newconvo-cancel">Cancel</button><button class="btn primary" id="newconvo-send">Send</button></div>
+  `, true);
+  wireRichEditor(editorId);
+  document.getElementById(editorId).focus();
+  document.getElementById("newconvo-cancel").addEventListener("click", closeModal);
+  document.getElementById("newconvo-send").addEventListener("click", async ()=>{
+    const body = document.getElementById(editorId).innerHTML.trim();
+    if(!body || body === "<br>") { closeModal(); return; }
+    const targetId = document.getElementById("newconvo-person").value;
+    const { error } = await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: targetId, audience:"user", type:"comment", body, claimed_by: session.user.id });
+    if(error){ alert("Couldn't send: " + error.message); console.error(error); return; }
+    closeModal();
+    await refreshNotificationsView();
   });
 }
 
