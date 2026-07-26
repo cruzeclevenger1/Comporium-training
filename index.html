@@ -464,9 +464,16 @@ async function submitAuth(){
   await afterLogin();
 }
 
+let wasFirstLoginThisSession = false;
+
 async function afterLogin(){
   view = "loading"; render();
   await loadProfile();
+  wasFirstLoginThisSession = profile.is_first_login === true;
+  if(wasFirstLoginThisSession){
+    await supabase.from("profiles").update({ is_first_login:false }).eq("id", session.user.id);
+    profile.is_first_login = false;
+  }
   await loadEverything();
   await loadUiTextOverrides();
   await loadAllNotifications();
@@ -476,7 +483,7 @@ async function afterLogin(){
 }
 
 async function showUnseenAnnouncements(){
-  const since = profile.last_seen_announcement_at || "1970-01-01T00:00:00Z";
+  const since = profile.last_seen_announcement_at || profile.created_at || "1970-01-01T00:00:00Z";
   const { data, error } = await supabase.from("messages").select("*").eq("audience","all").gt("created_at", since).order("created_at",{ascending:true});
   if(error){ console.error("Failed to check for new announcements:", error); return; }
   const { data: dismissals } = await supabase.from("announcement_dismissals").select("message_id").eq("user_id", session.user.id);
@@ -829,6 +836,7 @@ function renderResults(){
 let teamExpandedRows = new Set();
 let TEAMS_LIST = [];
 let teamRosterFilter = "";
+let teamSearchQuery = "";
 
 async function openTeamProgress(){
   const { data: people } = await supabase.from("profiles").select("*").order("name");
@@ -914,7 +922,11 @@ function renderTeam(){
     <button class="mini-btn" data-manage-team="${t.id}" style="margin:0 6px 6px 0;">${escapeHtml(t.name)} · ${t.memberIds.length}</button>
   `).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No teams yet.</p>`;
 
-  const filteredRows = teamRosterFilter ? teamRows.filter(r=> r.teamIds.includes(teamRosterFilter)) : teamRows;
+  let filteredRows = teamRosterFilter ? teamRows.filter(r=> r.teamIds.includes(teamRosterFilter)) : teamRows;
+  if(teamSearchQuery.trim()){
+    const q = teamSearchQuery.trim().toLowerCase();
+    filteredRows = filteredRows.filter(r=> r.name.toLowerCase().includes(q));
+  }
 
   const rows = filteredRows.map(r=>{
     const isSelf = r.id===profile.id;
@@ -968,15 +980,16 @@ function renderTeam(){
     <div class="card" style="margin-top:16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:6px;">
         <h2 style="margin:0;">Progress</h2>
-        <div style="min-width:200px;">
-          <select id="team-filter">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <input type="text" id="team-search" placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" style="width:180px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
+          <select id="team-filter" style="width:auto;">
             <option value="">All people</option>
             ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
           </select>
         </div>
       </div>
       <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">Click a person to see their module-by-module breakdown. Click a module pill to see missed questions on their latest attempt.</p>
-      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th><th>Overall</th><th>Mastered</th><th></th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th><th>Overall</th><th>Mastered</th><th></th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="6" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
     </div>
     <div id="attempt-detail" style="margin-top:16px;"></div>
   `);
@@ -984,6 +997,16 @@ function renderTeam(){
   document.getElementById("new-team-btn").addEventListener("click", ()=> openTeamManageModal(null));
   root.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
   document.getElementById("team-filter").addEventListener("change", (e)=>{ teamRosterFilter = e.target.value; render(); });
+  let teamSearchDebounce = null;
+  document.getElementById("team-search").addEventListener("input", (e)=>{
+    teamSearchQuery = e.target.value;
+    clearTimeout(teamSearchDebounce);
+    teamSearchDebounce = setTimeout(()=>{
+      render();
+      const el = document.getElementById("team-search");
+      if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    }, 250);
+  });
 
   root.querySelectorAll("[data-role-select]").forEach(el=> el.addEventListener("change", async ()=>{
     const id = el.getAttribute("data-role-select");
@@ -1044,7 +1067,8 @@ async function showAttemptDetail(userId, moduleId){
    NOTIFICATIONS / MESSAGING
    ============================================================ */
 async function loadAllNotifications(){
-  const { data: announcements, error: announceErr } = await supabase.from("messages").select("*").eq("audience","all").order("created_at",{ascending:false}).limit(15);
+  const joinCutoff = (profile && profile.created_at) ? profile.created_at : "1970-01-01T00:00:00Z";
+  const { data: announcements, error: announceErr } = await supabase.from("messages").select("*").eq("audience","all").gte("created_at", joinCutoff).order("created_at",{ascending:false}).limit(15);
   if(announceErr) console.error("Failed to load announcements:", announceErr);
   const { data: dismissals } = await supabase.from("announcement_dismissals").select("message_id").eq("user_id", session.user.id);
   const dismissedIds = new Set((dismissals||[]).map(d=>d.message_id));
@@ -1993,7 +2017,7 @@ function renderHome(){
     : `<span class="led on-green"></span><span class="led on-amber blink"></span><span class="led on-green"></span>`;
   renderShell(`
     <section class="hero">
-      <h1 style="font-size:32px;">${T('home.greeting','Welcome back,')} ${escapeHtml(profile.name)}</h1>
+      <h1 style="font-size:32px;">${wasFirstLoginThisSession ? T('home.greeting.first','Welcome,') : T('home.greeting','Welcome back,')} ${escapeHtml(profile.name)}</h1>
       <p style="margin-top:10px;"><strong style="color:var(--text);">${T('home.modules.label','Training Modules')}</strong> — ${T('home.modules.desc','structured lessons and scored quizzes for onboarding and skill-building.')}</p>
       <p style="margin-top:-6px;"><strong style="color:var(--text);">${T('home.reference.label','Reference Guide')}</strong> — ${T('home.reference.desc','a living knowledge base the whole team can look things up in, anytime.')}</p>
     </section>
