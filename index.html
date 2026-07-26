@@ -514,10 +514,19 @@ function openGuestTourChoiceModal(){
   document.getElementById("guest-tour-start").addEventListener("click", ()=>{ closeModal(); enterGuestMode(true); });
 }
 
-function enterGuestMode(startTour){
+async function fetchGuestDemoCustomization(){
+  try{
+    const { data, error } = await supabase.from("guest_demo_data").select("*").eq("id", 1).single();
+    if(error || !data) return null;
+    return data.data || null;
+  }catch(e){ return null; }
+}
+
+async function enterGuestMode(startTour){
+  const customization = await fetchGuestDemoCustomization(); // fetched BEFORE guestMode flips on, using the real client
   guestMode = true;
   guestViewingAsAdmin = false;
-  buildGuestFixtures();
+  buildGuestFixtures(customization);
   view = "home"; render();
   if(startTour) setTimeout(()=> startGuestTour(), 400);
 }
@@ -531,60 +540,99 @@ function exitGuestMode(){
   view = "auth"; authMode = "login"; render();
 }
 
-function buildGuestFixtures(){
+function defaultGuestData(){
+  return {
+    modules: [
+      { id:"guest-modems", title:"Modems & Routers", short:"Reading the box: DOCSIS basics, LED patterns, and power-cycle order.", ledColor:"green",
+        lessons:[
+          { id:"gl1", label:"Lesson 1 · Fundamentals", title:"What the modem actually does", body:"<p>A modem's only job is to translate the signal coming from the provider into something the customer's local network can use — and back again.</p>" },
+          { id:"gl2", label:"Lesson 2 · Diagnostics", title:"Reading the lights", body:"<p>Every light on a modem reports a stage of a process. Learn the pattern, and the lights stop being decoration and start being a diagnosis.</p>" }
+        ],
+        quiz:[
+          { id:"gq1", q:"What does a solid green Online light usually mean?", opts:["The modem is registered and passing traffic","The modem has no power","The WiFi password is wrong","The account is suspended"], correct:0, explain:"Solid Online means the modem finished registering with the head-end." },
+          { id:"gq2", q:"What's the correct order for a power cycle?", opts:["Router, then modem","Modem, wait 30 seconds, then router","Both at the same time","Never restart either"], correct:1, explain:"The modem needs to fully re-register before the router builds a connection on top of it." }
+        ] },
+      { id:"guest-fiber", title:"Fiber Connections", short:"ONT lights, loss of signal, and when it's a truck-roll, not a reset.", ledColor:"cyan",
+        lessons:[
+          { id:"gl3", label:"Lesson 1 · Fundamentals", title:"How fiber carries data", body:"<p>Fiber sends pulses of light down glass — immune to electrical interference, but physically fragile in different ways than copper.</p>" }
+        ],
+        quiz:[
+          { id:"gq3", q:"A solid red LOS light on an ONT usually means:", opts:["A software glitch","No optical signal reaching the ONT at all","The WiFi needs a reset","Normal startup behavior"], correct:1, explain:"LOS means Loss of Signal — a physical fiber issue, not something a reset fixes." }
+        ] }
+    ],
+    referencePages: [
+      { id:"grp1", parent_id:null, title:"Pulling up a modem", body:"<p>To look up a modem, search the account number or the MAC address on the customer's internet account.</p>" },
+      { id:"grp2", parent_id:"grp1", title:"Finding the MAC address", body:"<p>Click View under Details, then scroll to Internet Equipment.</p>" },
+      { id:"grp3", parent_id:null, title:"Common truck-roll triggers", body:"<p>LOS lights, damaged coax at the pole, and repeated failed self-installs.</p>" }
+    ],
+    notes: [ { id:"gn1", title:"Shortcuts I keep forgetting", body:"<p>DS = downstream, US = upstream.</p>" } ],
+    team: [
+      { name:"Jordan Smith", role:"agent", overall:50, mastered:0 },
+      { name:"Alex Rivera", role:"agent", overall:100, mastered:2 },
+      { name:"Guest Visitor", role:"agent", overall:25, mastered:0 }
+    ],
+    announcement: { senderName:"Sam (Admin)", body:"<p>Welcome to the new Fiber Connections module — go take a look!</p>" }
+  };
+}
+
+function buildGuestFixtures(customization){
   const now = new Date().toISOString();
   session = { user: { id: "guest-user", email: "guest@example.com" } };
+  const defaults = defaultGuestData();
+  const g = (customization && typeof customization === "object") ? customization : {};
+
   profile = { id:"guest-user", name:"Guest Visitor", role:"agent", created_at: now, is_first_login:false, last_seen_announcement_at: now };
   wasFirstLoginThisSession = false;
   editMode = false;
 
-  MODULES = [
-    { id:"guest-modems", title:"Modems & Routers", short:"Reading the box: DOCSIS basics, LED patterns, and power-cycle order.", ledColor:"green",
-      lessons:[
-        { id:"gl1", label:"Lesson 1 · Fundamentals", title:"What the modem actually does", body:"<p>A modem's only job is to translate the signal coming from the provider into something the customer's local network can use — and back again.</p>" },
-        { id:"gl2", label:"Lesson 2 · Diagnostics", title:"Reading the lights", body:"<p>Every light on a modem reports a stage of a process. Learn the pattern, and the lights stop being decoration and start being a diagnosis.</p>" }
-      ],
-      quiz:[
-        { id:"gq1", q:"What does a solid green Online light usually mean?", opts:["The modem is registered and passing traffic","The modem has no power","The WiFi password is wrong","The account is suspended"], correct:0, explain:"Solid Online means the modem finished registering with the head-end." },
-        { id:"gq2", q:"What's the correct order for a power cycle?", opts:["Router, then modem","Modem, wait 30 seconds, then router","Both at the same time","Never restart either"], correct:1, explain:"The modem needs to fully re-register before the router builds a connection on top of it." }
-      ] },
-    { id:"guest-fiber", title:"Fiber Connections", short:"ONT lights, loss of signal, and when it's a truck-roll, not a reset.", ledColor:"cyan",
-      lessons:[
-        { id:"gl3", label:"Lesson 1 · Fundamentals", title:"How fiber carries data", body:"<p>Fiber sends pulses of light down glass — immune to electrical interference, but physically fragile in different ways than copper.</p>" }
-      ],
-      quiz:[
-        { id:"gq3", q:"A solid red LOS light on an ONT usually means:", opts:["A software glitch","No optical signal reaching the ONT at all","The WiFi needs a reset","Normal startup behavior"], correct:1, explain:"LOS means Loss of Signal — a physical fiber issue, not something a reset fixes." }
-      ] }
-  ];
-  progressMap = { "guest-modems": { best:1, total:2, lastScore:1, attempts:1, lessonsViewed:["gl1","gl2"] } };
+  const srcModules = (g.modules && g.modules.length) ? g.modules : defaults.modules;
+  MODULES = srcModules.map((m,mi)=>({
+    id: m.id || `guest-mod-${mi}`,
+    title: m.title || "Untitled module",
+    short: m.short || "",
+    ledColor: m.ledColor || "green",
+    lessons: (m.lessons||[]).map((l,li)=>({ id: l.id || `guest-lesson-${mi}-${li}`, label: l.label||"", title: l.title||"", body: l.body||"" })),
+    quiz: (m.quiz||[]).map((q,qi)=>({ id: q.id || `guest-q-${mi}-${qi}`, q: q.q||"", opts: q.opts||["Option A","Option B"], correct: q.correct||0, explain: q.explain||"" }))
+  }));
+  progressMap = {};
+  if(MODULES[0]){
+    progressMap[MODULES[0].id] = { best: MODULES[0].quiz.length?1:0, total: MODULES[0].quiz.length, lastScore: MODULES[0].quiz.length?1:0, attempts: MODULES[0].quiz.length?1:0, lessonsViewed: MODULES[0].lessons.map(l=>l.id) };
+  }
 
-  REFERENCE_PAGES = [
-    { id:"grp1", parent_id:null, sort_order:0, title:"Pulling up a modem", body:"<p>To look up a modem, search the account number or the MAC address on the customer's internet account.</p>" },
-    { id:"grp2", parent_id:"grp1", sort_order:0, title:"Finding the MAC address", body:"<p>Click View under Details, then scroll to Internet Equipment.</p>" },
-    { id:"grp3", parent_id:null, sort_order:1, title:"Common truck-roll triggers", body:"<p>LOS lights, damaged coax at the pole, and repeated failed self-installs.</p>" }
-  ];
-  currentRefId = "grp1"; refEditing = false; notesCollapsed = new Set(); refCollapsed = new Set();
+  const srcRef = (g.referencePages && g.referencePages.length) ? g.referencePages : defaults.referencePages;
+  REFERENCE_PAGES = srcRef.map((p,i)=>({ id: p.id || `guest-ref-${i}`, parent_id: p.parent_id || null, sort_order: i, title: p.title||"Untitled page", body: p.body||"" }));
+  currentRefId = REFERENCE_PAGES[0] ? REFERENCE_PAGES[0].id : null;
+  refEditing = false; notesCollapsed = new Set(); refCollapsed = new Set();
 
-  PERSONAL_NOTES = [ { id:"gn1", parent_id:null, sort_order:0, title:"Shortcuts I keep forgetting", body:"<p>DS = downstream, US = upstream.</p>" } ];
-  currentNoteId = "gn1";
+  const srcNotes = (g.notes && g.notes.length) ? g.notes : defaults.notes;
+  PERSONAL_NOTES = srcNotes.map((n,i)=>({ id: n.id || `guest-note-${i}`, parent_id:null, sort_order:i, title: n.title||"Untitled note", body: n.body||"" }));
+  currentNoteId = PERSONAL_NOTES[0] ? PERSONAL_NOTES[0].id : null;
 
-  TEAMS_LIST = [ { id:"gt1", name:"July 2026 New Hires", memberIds:["gu1","gu2"] } ];
-  teamRows = [
-    { id:"gu1", name:"Jordan Smith", role:"agent", perModule:{"guest-modems":80,"guest-fiber":20}, perModuleRaw:{"guest-modems":{best:1,total:2,attempts:1},"guest-fiber":{best:0,total:1,attempts:0}}, overall:50, mastered:0, teamIds:["gt1"] },
-    { id:"gu2", name:"Alex Rivera", role:"agent", perModule:{"guest-modems":100,"guest-fiber":100}, perModuleRaw:{"guest-modems":{best:2,total:2,attempts:2},"guest-fiber":{best:1,total:1,attempts:1}}, overall:100, mastered:2, teamIds:["gt1"] },
-    { id:"guest-user", name:"Guest Visitor", role:"agent", perModule:{"guest-modems":50,"guest-fiber":0}, perModuleRaw:{"guest-modems":{best:1,total:2,attempts:1},"guest-fiber":{best:0,total:1,attempts:0}}, overall:25, mastered:0, teamIds:[] }
-  ];
+  const srcTeam = (g.team && g.team.length) ? g.team : defaults.team;
+  TEAMS_LIST = [ { id:"gt1", name:"July 2026 New Hires", memberIds: srcTeam.map((_,i)=>`gu${i}`) } ];
+  teamRows = srcTeam.map((t,i)=>{
+    const overall = typeof t.overall === "number" ? t.overall : 0;
+    const perModule = {}; const perModuleRaw = {};
+    MODULES.forEach(m=>{
+      perModule[m.id] = overall;
+      perModuleRaw[m.id] = { best: Math.round((overall/100)*(m.quiz.length||0)), total: m.quiz.length, attempts: overall>0?1:0 };
+    });
+    return { id:`gu${i}`, name: t.name||"Unnamed", role: t.role||"agent", perModule, perModuleRaw, overall, mastered: t.mastered!=null ? t.mastered : (overall===100?MODULES.length:0), teamIds:["gt1"] };
+  });
 
-  NOTIF_ANNOUNCEMENTS = [ { id:"gann1", sender_name:"Sam (Admin)", created_at: now, body:"<p>Welcome to the new Fiber Connections module — go take a look!</p>" } ];
+  const srcAnn = (g.announcement && g.announcement.body) ? g.announcement : defaults.announcement;
+  NOTIF_ANNOUNCEMENTS = [ { id:"gann1", sender_name: srcAnn.senderName || "Admin", created_at: now, body: srcAnn.body } ];
   NOTIF_THREADS = [];
-  NOTIF_UNCLAIMED = [ { id:"gflag1", type:"flag", sender_name:"Jordan Smith", created_at: now, context:"Fiber Connections — Q1", body:"<p>Is this LOS question a trick question? A little confused on the wording.</p>" } ];
+  NOTIF_UNCLAIMED = (MODULES[1] && MODULES[1].quiz[0]) ? [ { id:"gflag1", type:"flag", sender_name: teamRows[0]?teamRows[0].name:"A teammate", created_at: now, context:`${MODULES[1].title} — Q1`, body:"<p>Is this question worded confusingly? Just double-checking before I answer.</p>" } ] : [];
 
-  ANALYZE_MODULE_STATS = [
-    { id:"guest-modems", title:"Modems & Routers", avgCompletion:74, masteredCount:1, startedCount:3 },
-    { id:"guest-fiber", title:"Fiber Connections", avgCompletion:40, masteredCount:1, startedCount:2 }
-  ];
-  ANALYZE_MISSED_QUESTIONS = [ { moduleId:"guest-fiber", moduleTitle:"Fiber Connections", question:"A solid red LOS light on an ONT usually means:", missed:4, total:6, missRate:67 } ];
-  ANALYZE_TOTALS = { totalPeople:3, notStarted:1, totalAttempts:9, totalFlags:1 };
+  ANALYZE_MODULE_STATS = MODULES.map(m=>({
+    id:m.id, title:m.title,
+    avgCompletion: teamRows.length ? Math.round(teamRows.reduce((a,r)=>a+(r.perModule[m.id]||0),0)/teamRows.length) : 0,
+    masteredCount: teamRows.filter(r=>r.perModule[m.id]===100).length,
+    startedCount: teamRows.filter(r=>(r.perModule[m.id]||0)>0).length
+  }));
+  ANALYZE_MISSED_QUESTIONS = (MODULES[1] && MODULES[1].quiz[0]) ? [ { moduleId:MODULES[1].id, moduleTitle:MODULES[1].title, question:MODULES[1].quiz[0].q, missed:4, total:6, missRate:67 } ] : [];
+  ANALYZE_TOTALS = { totalPeople: teamRows.length, notStarted: teamRows.filter(r=>r.overall===0).length, totalAttempts: teamRows.length*3, totalFlags: NOTIF_UNCLAIMED.length };
 
   UI_TEXT = {}; UI_TEXT_DEFAULTS = {};
 }
@@ -596,7 +644,7 @@ function buildTourSteps(){
   return [
     { run: ()=>{ guestViewingAsAdmin=false; view="home"; render(); }, title:"This is Home", text:"Every agent lands here after logging in. It links out to Training Modules, the Reference Guide, and their own private Notes." },
     { run: ()=>{ view="dashboard"; render(); }, title:"Training Modules", text:"Each card is a module — lessons plus a scored quiz. The progress bar reflects real progress: reading the lessons counts for half, the quiz score for the other half." },
-    { run: ()=>{ currentModId="guest-modems"; currentLessonIdx=0; view="lesson"; render(); }, title:"Lessons", text:"Simple, readable pages. Agents can leave a comment on anything confusing, and it goes straight to whichever admin picks it up." },
+    { run: ()=>{ currentModId=MODULES[0]?MODULES[0].id:null; currentLessonIdx=0; view="lesson"; render(); }, title:"Lessons", text:"Simple, readable pages. Agents can leave a comment on anything confusing, and it goes straight to whichever admin picks it up." },
     { run: ()=>{ startQuiz(); }, title:"Quizzes", text:"Multiple choice with instant feedback, plus a \"Flag this question\" option if something seems worded oddly or feels wrong." },
     { run: ()=>{ openReference(); }, title:"Reference Guide", text:"A living, searchable knowledge base for the whole team, not just new hires. Pages can have sub-pages, similar to OneNote." },
     { run: ()=>{ openNotes(); }, title:"My Notes", text:"A fully private notepad just for this one agent. Autosaves as they type — not even admins can see someone else's notes." },
@@ -819,12 +867,13 @@ function renderShell(inner){
             <div class="admin-menu-panel">
               <button id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>
               <button id="open-announce">📣 Make Announcement</button>
+              <button id="open-guest-editor">👀 Edit Guest Preview</button>
             </div>
           </div>` : ""}
         <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
       </div>
     </header>
-    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':''))}`}</nav>`}
+    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':''))}`}</nav>`}
     <div class="top-nav">
       <button class="top-nav-btn ${section==='home'?'active':''}" id="nav-home">${T('nav.dashboard','Dashboard')}</button>
       <button class="top-nav-btn ${section==='modules'?'active':''}" id="nav-modules">${T('nav.modules','Training Modules')}</button>
@@ -849,6 +898,8 @@ function renderShell(inner){
   if(toggleEdit) toggleEdit.addEventListener("click", ()=>{ editMode = !editMode; render(); });
   const openAnnounce = document.getElementById("open-announce");
   if(openAnnounce) openAnnounce.addEventListener("click", ()=> openAnnouncementModal());
+  const openGuestEditorBtn = document.getElementById("open-guest-editor");
+  if(openGuestEditorBtn) openGuestEditorBtn.addEventListener("click", openGuestEditor);
   const goTeamBtn = document.getElementById("go-team-btn");
   if(goTeamBtn) goTeamBtn.addEventListener("click", openTeamProgress);
   const guestViewToggle = document.getElementById("guest-view-toggle");
@@ -2468,6 +2519,151 @@ function wireEditorEvents(){
   });
 }
 
+/* ============================================================
+   EDIT GUEST PREVIEW (admin only) — customizes what a guest sees
+   ============================================================ */
+let guestEditorDraft = null;
+
+async function openGuestEditor(){
+  const { data } = await supabase.from("guest_demo_data").select("*").eq("id", 1).single();
+  const existing = (data && data.data) ? data.data : null;
+  const defaults = defaultGuestData();
+  guestEditorDraft = (existing && Object.keys(existing).length) ? existing : JSON.parse(JSON.stringify(defaults));
+  guestEditorDraft.modules = guestEditorDraft.modules && guestEditorDraft.modules.length ? guestEditorDraft.modules : defaults.modules;
+  guestEditorDraft.referencePages = guestEditorDraft.referencePages && guestEditorDraft.referencePages.length ? guestEditorDraft.referencePages : defaults.referencePages;
+  guestEditorDraft.notes = guestEditorDraft.notes && guestEditorDraft.notes.length ? guestEditorDraft.notes : defaults.notes;
+  guestEditorDraft.team = guestEditorDraft.team && guestEditorDraft.team.length ? guestEditorDraft.team : defaults.team;
+  guestEditorDraft.announcement = guestEditorDraft.announcement || defaults.announcement;
+  view = "guest-editor"; render();
+}
+
+function renderGuestEditor(){
+  const d = guestEditorDraft;
+
+  const modulesHtml = d.modules.map((m,mi)=>`
+    <div class="sub-card">
+      <div class="sub-card-head"><span class="tag">MODULE ${mi+1}</span><button class="mini-btn danger" data-gmod-del="${mi}">Delete module</button></div>
+      <div class="field"><label>Title</label><input type="text" data-gmod-title="${mi}" value="${escapeHtml(m.title)}"></div>
+      <div class="field"><label>Short description</label><input type="text" data-gmod-short="${mi}" value="${escapeHtml(m.short)}"></div>
+      <div class="editor-section-head" style="margin-top:12px;"><h3 style="font-size:11px;">Lessons</h3></div>
+      ${(m.lessons||[]).map((l,li)=>`
+        <div class="sub-card" style="background:#0a0f1c;">
+          <div class="sub-card-head"><span class="tag">LESSON ${li+1}</span><button class="mini-btn danger" data-glesson-del="${mi}:${li}">Delete</button></div>
+          <div class="field"><label>Title</label><input type="text" data-glesson-title="${mi}:${li}" value="${escapeHtml(l.title)}"></div>
+          <div class="field"><label>Body (HTML)</label><textarea data-glesson-body="${mi}:${li}" style="min-height:70px;">${escapeHtml(l.body)}</textarea></div>
+        </div>`).join("")}
+      <button class="mini-btn" data-gmod-addlesson="${mi}">+ Add lesson</button>
+      <div class="editor-section-head" style="margin-top:14px;"><h3 style="font-size:11px;">Quiz questions</h3></div>
+      ${(m.quiz||[]).map((q,qi)=>`
+        <div class="sub-card" style="background:#0a0f1c;">
+          <div class="sub-card-head"><span class="tag">QUESTION ${qi+1}</span><button class="mini-btn danger" data-gq-del="${mi}:${qi}">Delete</button></div>
+          <div class="field"><label>Question</label><textarea data-gq-text="${mi}:${qi}" style="min-height:50px;">${escapeHtml(q.q)}</textarea></div>
+          <div class="field"><label>Options (select correct)</label>
+            ${q.opts.map((opt,oi)=>`<div class="opt-row"><input type="radio" name="gcorrect-${mi}-${qi}" data-gq-correct="${mi}:${qi}" value="${oi}" ${q.correct===oi?'checked':''}><input type="text" data-gq-opt="${mi}:${qi}:${oi}" value="${escapeHtml(opt)}"></div>`).join("")}
+          </div>
+          <div class="field"><label>Explanation</label><textarea data-gq-explain="${mi}:${qi}" style="min-height:50px;">${escapeHtml(q.explain)}</textarea></div>
+        </div>`).join("")}
+      <button class="mini-btn" data-gmod-addq="${mi}">+ Add question</button>
+    </div>`).join("");
+
+  const refHtml = d.referencePages.map((p,i)=>`
+    <div class="sub-card">
+      <div class="sub-card-head"><span class="tag">PAGE ${i+1}</span><button class="mini-btn danger" data-gref-del="${i}">Delete</button></div>
+      <div class="field"><label>Title</label><input type="text" data-gref-title="${i}" value="${escapeHtml(p.title)}"></div>
+      <div class="field"><label>Body (HTML)</label><textarea data-gref-body="${i}" style="min-height:70px;">${escapeHtml(p.body)}</textarea></div>
+    </div>`).join("");
+
+  const notesHtml = d.notes.map((n,i)=>`
+    <div class="sub-card">
+      <div class="sub-card-head"><span class="tag">NOTE ${i+1}</span><button class="mini-btn danger" data-gnote-del="${i}">Delete</button></div>
+      <div class="field"><label>Title</label><input type="text" data-gnote-title="${i}" value="${escapeHtml(n.title)}"></div>
+      <div class="field"><label>Body (HTML)</label><textarea data-gnote-body="${i}" style="min-height:60px;">${escapeHtml(n.body)}</textarea></div>
+    </div>`).join("");
+
+  const teamHtml = d.team.map((t,i)=>`
+    <div class="sub-card">
+      <div class="sub-card-head"><span class="tag">PERSON ${i+1}</span><button class="mini-btn danger" data-gteam-del="${i}">Delete</button></div>
+      <div class="field"><label>Name</label><input type="text" data-gteam-name="${i}" value="${escapeHtml(t.name)}"></div>
+      <div class="field"><label>Overall progress % (0-100)</label><input type="text" data-gteam-overall="${i}" value="${t.overall}"></div>
+    </div>`).join("");
+
+  renderShell(`
+    <div class="card">
+      <div class="k-label">ADMIN</div>
+      <h2 style="margin-bottom:4px;">Edit Guest Preview</h2>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">This is exactly what someone sees when they click "View site as guest." Changes here only affect that demo — never real data or real people.</p>
+
+      <div class="editor-section"><div class="editor-section-head"><h3>Sample Modules</h3></div>${modulesHtml||'<p style="color:var(--text-faint);font-size:13px;">No modules yet.</p>'}<button class="dashed-btn" id="gadd-module">+ Add module</button></div>
+      <div class="editor-section"><div class="editor-section-head"><h3>Sample Reference Pages</h3></div>${refHtml||'<p style="color:var(--text-faint);font-size:13px;">No pages yet.</p>'}<button class="dashed-btn" id="gadd-ref">+ Add page</button></div>
+      <div class="editor-section"><div class="editor-section-head"><h3>Sample Notes</h3></div>${notesHtml||'<p style="color:var(--text-faint);font-size:13px;">No notes yet.</p>'}<button class="dashed-btn" id="gadd-note">+ Add note</button></div>
+      <div class="editor-section"><div class="editor-section-head"><h3>Sample Team Roster</h3></div>${teamHtml||'<p style="color:var(--text-faint);font-size:13px;">No one yet.</p>'}<button class="dashed-btn" id="gadd-team">+ Add person</button></div>
+      <div class="editor-section">
+        <div class="editor-section-head"><h3>Sample Announcement</h3></div>
+        <div class="field"><label>From</label><input type="text" id="gann-sender" value="${escapeHtml(d.announcement.senderName||'')}"></div>
+        <div class="field"><label>Message (HTML)</label><textarea id="gann-body" style="min-height:60px;">${escapeHtml(d.announcement.body||'')}</textarea></div>
+      </div>
+
+      <div class="nav-buttons"><button class="btn" id="gedit-cancel">Cancel</button><button class="btn primary" id="gedit-save">Save guest preview</button></div>
+    </div>`);
+  wireGuestEditorEvents();
+}
+
+function wireGuestEditorEvents(){
+  const d = guestEditorDraft;
+
+  root.querySelectorAll("[data-gmod-title]").forEach(el=> el.addEventListener("input", e=>{ d.modules[+el.dataset.gmodTitle].title = e.target.value; }));
+  root.querySelectorAll("[data-gmod-short]").forEach(el=> el.addEventListener("input", e=>{ d.modules[+el.dataset.gmodShort].short = e.target.value; }));
+  root.querySelectorAll("[data-gmod-del]").forEach(el=> el.addEventListener("click", ()=>{ if(confirm("Delete this module?")){ d.modules.splice(+el.dataset.gmodDel,1); renderGuestEditor(); } }));
+  root.querySelectorAll("[data-gmod-addlesson]").forEach(el=> el.addEventListener("click", ()=>{
+    const mi = +el.dataset.gmodAddlesson;
+    (d.modules[mi].lessons = d.modules[mi].lessons||[]).push({ title:"New lesson", body:"<p>Write here.</p>" });
+    renderGuestEditor();
+  }));
+  root.querySelectorAll("[data-gmod-addq]").forEach(el=> el.addEventListener("click", ()=>{
+    const mi = +el.dataset.gmodAddq;
+    (d.modules[mi].quiz = d.modules[mi].quiz||[]).push({ q:"New question", opts:["Option A","Option B"], correct:0, explain:"" });
+    renderGuestEditor();
+  }));
+
+  root.querySelectorAll("[data-glesson-title]").forEach(el=> el.addEventListener("input", e=>{ const [mi,li]=el.dataset.glessonTitle.split(":").map(Number); d.modules[mi].lessons[li].title = e.target.value; }));
+  root.querySelectorAll("[data-glesson-body]").forEach(el=> el.addEventListener("input", e=>{ const [mi,li]=el.dataset.glessonBody.split(":").map(Number); d.modules[mi].lessons[li].body = e.target.value; }));
+  root.querySelectorAll("[data-glesson-del]").forEach(el=> el.addEventListener("click", ()=>{ const [mi,li]=el.dataset.glessonDel.split(":").map(Number); d.modules[mi].lessons.splice(li,1); renderGuestEditor(); }));
+
+  root.querySelectorAll("[data-gq-text]").forEach(el=> el.addEventListener("input", e=>{ const [mi,qi]=el.dataset.gqText.split(":").map(Number); d.modules[mi].quiz[qi].q = e.target.value; }));
+  root.querySelectorAll("[data-gq-explain]").forEach(el=> el.addEventListener("input", e=>{ const [mi,qi]=el.dataset.gqExplain.split(":").map(Number); d.modules[mi].quiz[qi].explain = e.target.value; }));
+  root.querySelectorAll("[data-gq-opt]").forEach(el=> el.addEventListener("input", e=>{ const [mi,qi,oi]=el.dataset.gqOpt.split(":").map(Number); d.modules[mi].quiz[qi].opts[oi] = e.target.value; }));
+  root.querySelectorAll("[data-gq-correct]").forEach(el=> el.addEventListener("change", e=>{ const [mi,qi]=el.dataset.gqCorrect.split(":").map(Number); d.modules[mi].quiz[qi].correct = +e.target.value; }));
+  root.querySelectorAll("[data-gq-del]").forEach(el=> el.addEventListener("click", ()=>{ const [mi,qi]=el.dataset.gqDel.split(":").map(Number); d.modules[mi].quiz.splice(qi,1); renderGuestEditor(); }));
+
+  document.getElementById("gadd-module").addEventListener("click", ()=>{ d.modules.push({ title:"New module", short:"", ledColor:"green", lessons:[], quiz:[] }); renderGuestEditor(); });
+
+  root.querySelectorAll("[data-gref-title]").forEach(el=> el.addEventListener("input", e=>{ d.referencePages[+el.dataset.grefTitle].title = e.target.value; }));
+  root.querySelectorAll("[data-gref-body]").forEach(el=> el.addEventListener("input", e=>{ d.referencePages[+el.dataset.grefBody].body = e.target.value; }));
+  root.querySelectorAll("[data-gref-del]").forEach(el=> el.addEventListener("click", ()=>{ d.referencePages.splice(+el.dataset.grefDel,1); renderGuestEditor(); }));
+  document.getElementById("gadd-ref").addEventListener("click", ()=>{ d.referencePages.push({ parent_id:null, title:"New page", body:"<p>Write here.</p>" }); renderGuestEditor(); });
+
+  root.querySelectorAll("[data-gnote-title]").forEach(el=> el.addEventListener("input", e=>{ d.notes[+el.dataset.gnoteTitle].title = e.target.value; }));
+  root.querySelectorAll("[data-gnote-body]").forEach(el=> el.addEventListener("input", e=>{ d.notes[+el.dataset.gnoteBody].body = e.target.value; }));
+  root.querySelectorAll("[data-gnote-del]").forEach(el=> el.addEventListener("click", ()=>{ d.notes.splice(+el.dataset.gnoteDel,1); renderGuestEditor(); }));
+  document.getElementById("gadd-note").addEventListener("click", ()=>{ d.notes.push({ title:"New note", body:"<p>Write here.</p>" }); renderGuestEditor(); });
+
+  root.querySelectorAll("[data-gteam-name]").forEach(el=> el.addEventListener("input", e=>{ d.team[+el.dataset.gteamName].name = e.target.value; }));
+  root.querySelectorAll("[data-gteam-overall]").forEach(el=> el.addEventListener("input", e=>{ d.team[+el.dataset.gteamOverall].overall = Math.max(0, Math.min(100, parseInt(e.target.value)||0)); }));
+  root.querySelectorAll("[data-gteam-del]").forEach(el=> el.addEventListener("click", ()=>{ d.team.splice(+el.dataset.gteamDel,1); renderGuestEditor(); }));
+  document.getElementById("gadd-team").addEventListener("click", ()=>{ d.team.push({ name:"New person", role:"agent", overall:0, mastered:0 }); renderGuestEditor(); });
+
+  document.getElementById("gann-sender").addEventListener("input", e=>{ d.announcement.senderName = e.target.value; });
+  document.getElementById("gann-body").addEventListener("input", e=>{ d.announcement.body = e.target.value; });
+
+  document.getElementById("gedit-cancel").addEventListener("click", ()=>{ view="home"; render(); });
+  document.getElementById("gedit-save").addEventListener("click", async ()=>{
+    const { error } = await supabase.from("guest_demo_data").upsert({ id:1, data: d, updated_at: new Date().toISOString() });
+    if(error){ alert("Couldn't save: " + error.message); return; }
+    alert("Guest preview updated.");
+    view = "home"; render();
+  });
+}
+
 function openNewModuleNotifyModal(title){
   openModal(`
     <h3>Module created</h3>
@@ -2994,6 +3190,7 @@ function render(){
   else if(view==="notifications") renderNotifications();
   else if(view==="chat") renderChat();
   else if(view==="notes") renderNotes();
+  else if(view==="guest-editor") renderGuestEditor();
   // Catch any raw <img> tags left over from before this fix existed (or from
   // any other source) so every picture gets resize/click-to-enlarge, not just
   // newly pasted ones — this only touches the live DOM, no save needed.
