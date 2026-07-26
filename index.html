@@ -130,7 +130,9 @@
   html.theme-light .mini-btn{ background:#eef1f8; }
   html.theme-light .icon-btn{ background:#eef1f8; }
   html.theme-light .lesson-tab{ background:#eef1f8; }
-  html.theme-light select{ background:#eef1f8; color:var(--text); }
+  select{ width:100%; background:#0e1626; border:1px solid var(--stroke); border-radius:8px; color:var(--text); padding:10px 12px; font-size:13.5px; font-family:var(--sans); cursor:pointer; appearance:none; -webkit-appearance:none; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%238A96AD'/></svg>"); background-repeat:no-repeat; background-position:right 12px center; padding-right:32px; }
+  select:focus{ outline:none; border-color:var(--cyan); }
+  html.theme-light select{ background-color:#eef1f8; color:var(--text); }
   html.theme-light table.team td{ color:#333d52; }
 
   .gear-btn{ width:34px; height:34px; border-radius:8px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); cursor:pointer; font-size:15px; display:flex; align-items:center; justify-content:center; }
@@ -470,7 +472,7 @@ function renderShell(inner){
             <span class="admin-badge">ADMIN ▾</span>
             <div class="admin-menu-panel">
               <button id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>
-              <button id="open-announce">📣 Make announcement to everyone</button>
+              <button id="open-announce">📣 Make Announcement</button>
               <button id="go-team-menu">Team progress</button>
             </div>
           </div>` : ""}
@@ -1037,6 +1039,14 @@ function setupRealtime(){
       }).subscribe();
     realtimeChannels.push(chAdmin);
   }
+
+  // Discarding a conversation deletes rows — without listening for DELETE too,
+  // the other participant would never see it disappear until they refresh.
+  const chDeletes = supabase.channel("rt-deletes-"+session.user.id)
+    .on("postgres_changes", { event:"DELETE", schema:"public", table:"messages" }, ()=>{
+      if(view==="notifications") refreshNotificationsView(); else loadAllNotifications();
+    }).subscribe();
+  realtimeChannels.push(chDeletes);
 }
 function teardownRealtime(){ realtimeChannels.forEach(ch=> supabase.removeChannel(ch)); realtimeChannels = []; }
 
@@ -1343,6 +1353,29 @@ function wireRichEditor(id){
         return;
       }
     }
+    // Pasting mixed content (text + images together, e.g. from a webpage or document)
+    // doesn't come through as a clipboard image item above — it arrives as HTML with
+    // plain <img> tags. Let the default paste happen, then wrap any of those images
+    // so they get the same resize/drag/click-to-enlarge behavior as ones we insert.
+    setTimeout(()=> normalizePastedImages(editorEl), 0);
+  });
+}
+function normalizePastedImages(editorEl){
+  const rawImgs = Array.from(editorEl.querySelectorAll("img")).filter(img => !img.closest(".rte-img-wrap"));
+  rawImgs.forEach(img=>{
+    const wrap = document.createElement("span");
+    wrap.className = "rte-img-wrap";
+    wrap.setAttribute("contenteditable", "false");
+    wrap.setAttribute("draggable", "true");
+    const w = img.naturalWidth || img.width || 280;
+    const h = img.naturalHeight || img.height || 190;
+    const maxW = 340, maxH = 260;
+    const scale = Math.min(maxW/w, maxH/h, 1);
+    wrap.style.width = Math.max(Math.round(w*scale), 80) + "px";
+    wrap.style.height = Math.max(Math.round(h*scale), 60) + "px";
+    img.parentNode.insertBefore(wrap, img);
+    img.removeAttribute("width"); img.removeAttribute("height"); img.removeAttribute("style");
+    wrap.appendChild(img);
   });
 }
 function openImageLightbox(src){
