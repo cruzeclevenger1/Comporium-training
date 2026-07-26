@@ -394,25 +394,42 @@ async function showUnseenAnnouncements(){
   const since = profile.last_seen_announcement_at || "1970-01-01T00:00:00Z";
   const { data, error } = await supabase.from("messages").select("*").eq("audience","all").gt("created_at", since).order("created_at",{ascending:true});
   if(error){ console.error("Failed to check for new announcements:", error); return; }
-  const unseen = data || [];
+  const { data: dismissals } = await supabase.from("announcement_dismissals").select("message_id").eq("user_id", session.user.id);
+  const dismissedIds = new Set((dismissals||[]).map(d=>d.message_id));
+  const unseen = (data || []).filter(a=> !dismissedIds.has(a.id));
   if(!unseen.length) return;
-  const itemsHtml = unseen.map(a=>`
-    <div class="sub-card">
-      <div class="sub-card-head"><span class="tag">📣 ${escapeHtml(a.sender_name)} · ${new Date(a.created_at).toLocaleString()}</span></div>
-      <div style="font-size:14px;color:var(--text);">${a.body}</div>
-    </div>`).join("");
-  openModal(`
-    <h3>${unseen.length===1 ? "New announcement" : `${unseen.length} new announcements`}</h3>
-    <p class="sub">Posted while you were away.</p>
-    ${itemsHtml}
-    <div class="modal-actions"><button class="btn primary" id="ann-digest-ok">Got it</button></div>
-  `, true);
-  document.getElementById("ann-digest-ok").addEventListener("click", async ()=>{
-    closeModal();
-    const latest = unseen[unseen.length-1].created_at;
+
+  function renderDigest(){
+    const itemsHtml = unseen.map(a=>`
+      <div class="sub-card" data-digest-item="${a.id}">
+        <div class="sub-card-head"><span class="tag">📣 ${escapeHtml(a.sender_name)} · ${new Date(a.created_at).toLocaleString()}</span>
+          <button class="mini-btn" data-digest-dismiss="${a.id}">Dismiss</button></div>
+        <div style="font-size:14px;color:var(--text);">${a.body}</div>
+      </div>`).join("");
+    openModal(`
+      <h3>${unseen.length===1 ? "New announcement" : `${unseen.length} new announcements`}</h3>
+      <p class="sub">Posted while you were away.</p>
+      ${itemsHtml}
+      <div class="modal-actions"><button class="btn primary" id="ann-digest-ok">Got it</button></div>
+    `, true);
+    document.querySelectorAll("[data-digest-dismiss]").forEach(el=> el.addEventListener("click", async ()=>{
+      const id = el.getAttribute("data-digest-dismiss");
+      await supabase.from("announcement_dismissals").upsert({ user_id: session.user.id, message_id: id });
+      const idx = unseen.findIndex(u=>u.id===id);
+      if(idx>-1) unseen.splice(idx,1);
+      if(!unseen.length){ closeModal(); markAnnouncementsSeen(); }
+      else renderDigest();
+    }));
+    document.getElementById("ann-digest-ok").addEventListener("click", ()=>{ closeModal(); markAnnouncementsSeen(); });
+  }
+
+  async function markAnnouncementsSeen(){
+    const latest = data[data.length-1].created_at;
     await supabase.from("profiles").update({ last_seen_announcement_at: latest }).eq("id", session.user.id);
     profile.last_seen_announcement_at = latest;
-  });
+  }
+
+  renderDigest();
 }
 
 async function logout(){
@@ -764,7 +781,9 @@ async function showAttemptDetail(userId, moduleId){
 async function loadAllNotifications(){
   const { data: announcements, error: announceErr } = await supabase.from("messages").select("*").eq("audience","all").order("created_at",{ascending:false}).limit(15);
   if(announceErr) console.error("Failed to load announcements:", announceErr);
-  NOTIF_ANNOUNCEMENTS = announcements || [];
+  const { data: dismissals } = await supabase.from("announcement_dismissals").select("message_id").eq("user_id", session.user.id);
+  const dismissedIds = new Set((dismissals||[]).map(d=>d.message_id));
+  NOTIF_ANNOUNCEMENTS = (announcements||[]).filter(a=> !dismissedIds.has(a.id));
 
   const { data: myRoots } = await supabase.from("messages").select("*").eq("audience","admins").is("thread_id", null).eq("sender_id", session.user.id).order("created_at",{ascending:false});
 
@@ -819,7 +838,9 @@ function renderNotifications(){
   const typeLabel = { flag:"🚩 Flag", highlight:"✨ Highlight", comment:"💬 Comment" };
 
   const announceHtml = NOTIF_ANNOUNCEMENTS.length ? NOTIF_ANNOUNCEMENTS.map(a=>`
-    <div class="sub-card"><div class="sub-card-head"><span class="tag">📣 ${escapeHtml(a.sender_name)} · ${new Date(a.created_at).toLocaleString()}</span></div>
+    <div class="sub-card">
+      <div class="sub-card-head"><span class="tag">📣 ${escapeHtml(a.sender_name)} · ${new Date(a.created_at).toLocaleString()}</span>
+        <button class="mini-btn" data-dismiss-announce="${a.id}">Dismiss</button></div>
       <div style="font-size:14px;color:var(--text);">${a.body}</div>
     </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">No announcements yet.</p>`;
 
@@ -878,6 +899,10 @@ function renderNotifications(){
   NOTIF_UNCLAIMED.forEach(m=> wireRichEditor(`thread-rte-${m.id}`));
   NOTIF_THREADS.forEach(t=> wireRichEditor(`thread-rte-${t.root.id}`));
 
+  root.querySelectorAll("[data-dismiss-announce]").forEach(el=> el.addEventListener("click", async ()=>{
+    await supabase.from("announcement_dismissals").upsert({ user_id: session.user.id, message_id: el.getAttribute("data-dismiss-announce") });
+    await openNotifications();
+  }));
   root.querySelectorAll("[data-discard-thread]").forEach(el=> el.addEventListener("click", async ()=>{
     const id = el.getAttribute("data-discard-thread");
     if(confirm("Discard this conversation? This can't be undone.")){
@@ -1130,6 +1155,24 @@ function richEditorHtml(id, initialHtml){
     <div class="rte-body" id="${id}" contenteditable="true">${initialHtml || ""}</div>
   `;
 }
+function clearFormatting(editorEl){
+  editorEl.focus();
+  // Handles native bold/italic/underline/execCommand-applied styles.
+  document.execCommand("removeFormat", false, null);
+  // Pasted content (Word, Google Docs, other browser tabs, etc.) often carries
+  // inline style/color attributes that removeFormat doesn't touch — strip those directly.
+  editorEl.querySelectorAll("*").forEach(el=>{
+    el.removeAttribute("style");
+    el.removeAttribute("color");
+    el.removeAttribute("bgcolor");
+    el.removeAttribute("face");
+  });
+  editorEl.querySelectorAll("font").forEach(f=>{
+    while(f.firstChild) f.parentNode.insertBefore(f.firstChild, f);
+    f.parentNode.removeChild(f);
+  });
+}
+
 function wireRichEditor(id){
   const toolbar = document.querySelector(`.rte-toolbar[data-rte="${id}"]`);
   const editorEl = document.getElementById(id);
@@ -1140,12 +1183,7 @@ function wireRichEditor(id){
       editorEl.focus();
       const cmd = btn.getAttribute("data-cmd");
       if(cmd === "image"){ document.getElementById(`${id}-file`).click(); return; }
-      if(cmd === "clearFormat"){
-        document.execCommand("removeFormat", false, null);
-        document.execCommand("fontSize", false, "3");
-        document.execCommand("foreColor", false, "inherit");
-        return;
-      }
+      if(cmd === "clearFormat"){ clearFormatting(editorEl); return; }
       document.execCommand(cmd, false, null);
     });
   });
