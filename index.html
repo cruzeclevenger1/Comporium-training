@@ -1984,6 +1984,10 @@ function renderSettings(){
    HOME (landing selector)
    ============================================================ */
 function renderHome(){
+  const allModulesMastered = MODULES.length>0 && MODULES.every(m=> moduleStatus(m.id)==="mastered");
+  const modulesLeds = allModulesMastered
+    ? `<span class="led on-green"></span><span class="led on-green"></span><span class="led on-green"></span>`
+    : `<span class="led on-green"></span><span class="led on-amber blink"></span><span class="led on-green"></span>`;
   renderShell(`
     <section class="hero">
       <h1 style="font-size:32px;">${T('home.greeting','Welcome back,')} ${escapeHtml(profile.name)}</h1>
@@ -1992,7 +1996,7 @@ function renderHome(){
     </section>
     <div class="three-col-grid">
       <div class="mod-card" id="go-modules-card">
-        <div class="row-top"><div><h3>${T('home.card.modules.title','Training Modules')}</h3><p class="sub">${T('home.card.modules.sub','Structured lessons and scored quizzes for onboarding and skill-building.')}</p></div><div class="led-strip"><span class="led on-green"></span><span class="led on-amber blink"></span><span class="led on-green"></span></div></div>
+        <div class="row-top"><div><h3>${T('home.card.modules.title','Training Modules')}</h3><p class="sub">${T('home.card.modules.sub','Structured lessons and scored quizzes for onboarding and skill-building.')}</p></div><div class="led-strip">${modulesLeds}</div></div>
         <div class="meta"><span>${MODULES.length} MODULES</span></div>
       </div>
       <div class="mod-card" id="go-reference-card">
