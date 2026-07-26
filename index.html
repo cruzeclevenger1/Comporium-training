@@ -148,14 +148,20 @@
   .ref-sidebar{ width:230px; flex:none; }
   .ref-content{ flex:1; min-width:0; }
   .ref-sidebar-list{ display:flex; flex-direction:column; gap:2px; }
-  .ref-row{ display:flex; align-items:center; justify-content:space-between; gap:6px; padding:9px 10px; border-radius:8px; cursor:pointer; font-size:13px; color:var(--text-dim); }
+  .ref-row{ display:flex; align-items:center; justify-content:space-between; gap:6px; padding:9px 10px; border-radius:8px; cursor:pointer; font-size:13px; color:var(--text-dim); position:relative; transition:background .12s; }
   .ref-row:hover{ background:#141d30; } html.theme-light .ref-row:hover{ background:#eef1f8; }
   .ref-row.active{ background:var(--cyan-dim); color:var(--cyan); }
   .ref-row.child{ margin-left:16px; font-size:12.5px; }
-  .ref-row-title{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .ref-row-tools{ display:none; gap:3px; flex:none; }
-  .ref-row:hover .ref-row-tools{ display:flex; }
+  .ref-row-title{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+  .ref-row-tools{ display:flex; gap:3px; flex:none; opacity:0; pointer-events:none; transition:opacity .12s; }
+  .ref-row:hover .ref-row-tools{ opacity:1; pointer-events:auto; }
   .ref-row-tools .mini-btn{ padding:2px 6px; font-size:9px; }
+  .ref-row.drag-over-top::before{ content:""; position:absolute; left:4px; right:4px; top:-2px; height:3px; border-radius:2px; background:var(--cyan); box-shadow:0 0 6px var(--cyan); }
+  .ref-row.drag-over-bottom::after{ content:""; position:absolute; left:4px; right:4px; bottom:-2px; height:3px; border-radius:2px; background:var(--cyan); box-shadow:0 0 6px var(--cyan); }
+  .ref-row[draggable="true"]{ cursor:grab; }
+  .onenote-title-input{ width:100%; background:none; border:none; border-bottom:1px solid var(--stroke); font-size:26px; font-weight:700; color:var(--text); font-family:var(--sans); padding:4px 2px 14px; outline:none; margin-bottom:14px; }
+  .onenote-title-input::placeholder{ color:var(--text-faint); font-weight:400; }
+  .onenote-title-input:focus{ border-bottom-color:var(--cyan); }
   @media (max-width:768px){ .ref-layout{ flex-direction:column; } .ref-sidebar{ width:100%; } }
 
   .bell-wrap{ position:relative; }
@@ -197,6 +203,21 @@
   .rte-body p{ margin:0 0 10px; } .rte-body ul,.rte-body ol{ margin:0 0 10px; padding-left:22px; }
   .rte-img-wrap{ display:inline-block; resize:both; overflow:hidden; max-width:100%; border:1px solid var(--stroke); vertical-align:bottom; width:280px; height:190px; margin:6px 4px; cursor:grab; }
   .rte-img-wrap img{ width:100%; height:100%; display:block; object-fit:contain; pointer-events:none; }
+
+  .thread-card{}
+  .chat-scroll{ max-height:320px; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:6px 2px; }
+  .chat-bubble{ max-width:82%; padding:10px 13px; border-radius:12px; font-size:13.5px; line-height:1.55; }
+  .chat-bubble.mine{ align-self:flex-end; background:var(--cyan-dim); border:1px solid var(--cyan-dim); }
+  .chat-bubble.theirs{ align-self:flex-start; background:#0e1626; border:1px solid var(--stroke); }
+  html.theme-light .chat-bubble.theirs{ background:#eef1f8; }
+  .chat-bubble-meta{ font-family:var(--mono); font-size:10px; color:var(--text-faint); margin-bottom:4px; }
+  .chat-bubble-body p{ margin:0 0 6px; } .chat-bubble-body p:last-child{ margin-bottom:0; }
+
+  .app-toast{ position:fixed; bottom:24px; right:24px; max-width:320px; background:var(--panel); border:1px solid var(--cyan); border-radius:10px; padding:14px 16px; font-size:13px; color:var(--text); box-shadow:0 12px 30px #00000066; z-index:300; cursor:pointer; animation:toast-in .25s ease; }
+  html.theme-light .app-toast{ background:#fff; }
+  .app-toast.out{ animation:toast-out .3s ease forwards; }
+  @keyframes toast-in{ from{ transform:translateY(20px); opacity:0; } to{ transform:translateY(0); opacity:1; } }
+  @keyframes toast-out{ to{ transform:translateY(20px); opacity:0; } }
   .theme-switch button.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
 </style>
 </head>
@@ -239,10 +260,9 @@ let refEditing = false;
 let refDraft = null;
 
 let NOTIF_ANNOUNCEMENTS = [];
-let NOTIF_REPLIES = [];       // audience=user, recipient=me — replies to my own feedback
-let NOTIF_SENT = [];          // audience=admins, sender=me — my own submitted flags/comments, with _answered flag
-let NOTIF_UNCLAIMED = [];     // admin only: flags/comments nobody has replied to yet
-let NOTIF_CLAIMED_BY_ME = []; // admin only: flags/comments I personally replied to, each with ._reply
+let NOTIF_UNCLAIMED = [];  // admin only: flags/comments nobody has claimed yet (no messages yet)
+let NOTIF_THREADS = [];    // conversations I'm part of: { root, messages, lastActivity }
+let realtimeChannels = [];
 
 const root = document.getElementById("app");
 function escapeHtml(s){ const d=document.createElement("div"); d.textContent=s==null?"":s; return d.innerHTML; }
@@ -355,10 +375,12 @@ async function afterLogin(){
   await loadProfile();
   await loadEverything();
   await loadAllNotifications();
+  setupRealtime();
   view = "home"; render();
 }
 
 async function logout(){
+  teardownRealtime();
   await supabase.auth.signOut();
   session = null; profile = null; MODULES = []; progressMap = {};
   view = "auth"; authMode = "login"; render();
@@ -652,44 +674,46 @@ async function loadAllNotifications(){
   const { data: announcements } = await supabase.from("messages").select("*").eq("audience","all").order("created_at",{ascending:false}).limit(15);
   NOTIF_ANNOUNCEMENTS = announcements || [];
 
-  const { data: repliesToMe } = await supabase.from("messages").select("*").eq("audience","user").eq("recipient_id", session.user.id).order("created_at",{ascending:false});
-  NOTIF_REPLIES = repliesToMe || [];
+  const { data: myRoots } = await supabase.from("messages").select("*").eq("audience","admins").is("thread_id", null).eq("sender_id", session.user.id).order("created_at",{ascending:false});
 
-  const { data: mySent } = await supabase.from("messages").select("*").eq("audience","admins").eq("sender_id", session.user.id).order("created_at",{ascending:false});
-  let sent = mySent || [];
-  if(sent.length){
-    const sentIds = sent.map(m=>m.id);
-    const { data: repliesToSent } = await supabase.from("messages").select("*").eq("audience","user").eq("type","reply").in("thread_id", sentIds);
-    const map = {}; (repliesToSent||[]).forEach(r=>{ map[r.thread_id] = r; });
-    sent = sent.map(m=>({ ...m, _answered: !!map[m.id] }));
-  }
-  NOTIF_SENT = sent;
-
+  let claimedRoots = [];
   if(isAdmin()){
-    const { data: adminItems } = await supabase.from("messages").select("*").eq("audience","admins").order("created_at",{ascending:false});
-    const items = adminItems || [];
-    const ids = items.map(m=>m.id);
-    let replyRows = [];
-    if(ids.length){
-      const { data: r } = await supabase.from("messages").select("*").eq("audience","user").eq("type","reply").in("thread_id", ids);
-      replyRows = r || [];
-    }
-    const replyMap = {}; replyRows.forEach(r=>{ replyMap[r.thread_id] = r; });
-    NOTIF_UNCLAIMED = items.filter(m=> !replyMap[m.id]);
-    NOTIF_CLAIMED_BY_ME = items.filter(m=> replyMap[m.id] && replyMap[m.id].sender_id === session.user.id).map(m=>({ ...m, _reply: replyMap[m.id] }));
+    const { data: uc } = await supabase.from("messages").select("*").eq("audience","admins").is("thread_id", null).is("claimed_by", null).order("created_at",{ascending:false});
+    NOTIF_UNCLAIMED = uc || [];
+    const { data: mc } = await supabase.from("messages").select("*").eq("audience","admins").is("thread_id", null).eq("claimed_by", session.user.id).order("created_at",{ascending:false});
+    claimedRoots = mc || [];
   } else {
-    NOTIF_UNCLAIMED = []; NOTIF_CLAIMED_BY_ME = [];
+    NOTIF_UNCLAIMED = [];
   }
+
+  const rootMap = {};
+  (myRoots||[]).forEach(r=> rootMap[r.id]=r);
+  claimedRoots.forEach(r=> rootMap[r.id]=r);
+  const allRoots = Object.values(rootMap);
+  const rootIds = allRoots.map(r=>r.id);
+
+  let followUps = [];
+  if(rootIds.length){
+    const { data: fu } = await supabase.from("messages").select("*").eq("audience","user").in("thread_id", rootIds).order("created_at",{ascending:true});
+    followUps = fu || [];
+  }
+  NOTIF_THREADS = allRoots.map(root=>{
+    const messages = followUps.filter(f=>f.thread_id===root.id);
+    const lastActivity = messages.length ? messages[messages.length-1].created_at : root.created_at;
+    return { root, messages, lastActivity };
+  }).sort((a,b)=> new Date(b.lastActivity) - new Date(a.lastActivity));
 }
+
 function bellBadgeCount(){
-  const unreadReplies = NOTIF_REPLIES.filter(r=>!r.is_read).length;
-  const unclaimed = isAdmin() ? NOTIF_UNCLAIMED.length : 0;
-  return unreadReplies + unclaimed;
+  let unread = 0;
+  NOTIF_THREADS.forEach(t=> t.messages.forEach(m=>{ if(m.recipient_id===session.user.id && !m.is_read) unread++; }));
+  return unread + (isAdmin() ? NOTIF_UNCLAIMED.length : 0);
 }
 
 async function openNotifications(){
   await loadAllNotifications();
-  const unreadIds = NOTIF_REPLIES.filter(r=>!r.is_read).map(r=>r.id);
+  const unreadIds = [];
+  NOTIF_THREADS.forEach(t=> t.messages.forEach(m=>{ if(m.recipient_id===session.user.id && !m.is_read) unreadIds.push(m.id); }));
   if(unreadIds.length){ await supabase.from("messages").update({ is_read:true }).in("id", unreadIds); await loadAllNotifications(); }
   view = "notifications"; render();
 }
@@ -705,35 +729,34 @@ function renderNotifications(){
   const unclaimedHtml = NOTIF_UNCLAIMED.map(m=>`
     <div class="sub-card">
       <div class="sub-card-head"><span class="tag">${typeLabel[m.type]||m.type} · ${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</span>
-        <button class="mini-btn danger" data-discard-item="${m.id}">Discard</button></div>
+        <button class="mini-btn danger" data-discard-thread="${m.id}">Discard</button></div>
       ${m.context ? `<div style="font-size:12px;color:var(--text-faint);margin-bottom:6px;">${escapeHtml(m.context)}</div>` : ""}
       <div style="font-size:14px;margin-bottom:12px;color:var(--text);">${m.body}</div>
-      <div class="field"><label>Reply</label>${richEditorHtml(`reply-rte-${m.id}`, "")}</div>
-      <button class="mini-btn" data-send-reply="${m.id}" style="margin-top:8px;">Send reply</button>
+      <div class="field"><label>Reply</label>${richEditorHtml(`thread-rte-${m.id}`, "")}</div>
+      <button class="mini-btn" data-send-thread="${m.id}" style="margin-top:8px;">Send</button>
     </div>`).join("");
 
-  const claimedHtml = NOTIF_CLAIMED_BY_ME.map(m=>`
-    <div class="sub-card">
-      <div class="sub-card-head"><span class="tag">${typeLabel[m.type]||m.type} · ${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</span>
-        <button class="mini-btn danger" data-discard-item="${m.id}">Discard</button></div>
-      ${m.context ? `<div style="font-size:12px;color:var(--text-faint);margin-bottom:6px;">${escapeHtml(m.context)}</div>` : ""}
-      <div style="font-size:14px;margin-bottom:10px;color:var(--text);">${m.body}</div>
-      <div style="font-size:12px;color:var(--text-faint);margin-bottom:4px;">Your reply:</div>
-      <div style="font-size:13.5px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;padding:10px 12px;">${m._reply.body}</div>
-    </div>`).join("");
-
-  const repliesHtml = NOTIF_REPLIES.length ? NOTIF_REPLIES.map(r=>`
-    <div class="notif-item ${!r.is_read?'unread':''}">
-      <div class="notif-item-meta">${escapeHtml(r.sender_name)} replied · re: ${escapeHtml(r.context||'your feedback')} · ${new Date(r.created_at).toLocaleDateString()}</div>
-      <div class="notif-item-body">${r.body}</div>
-      <button class="mini-btn" data-dismiss-notif="${r.id}" style="margin-top:6px;">Dismiss</button>
-    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">No replies yet.</p>`;
-
-  const sentHtml = NOTIF_SENT.length ? NOTIF_SENT.map(m=>`
-    <div class="notif-item">
-      <div class="notif-item-meta">${typeLabel[m.type]||m.type} · ${new Date(m.created_at).toLocaleDateString()} · <span style="color:${m._answered?'var(--green)':'var(--amber)'};">${m._answered?'Answered':'Pending'}</span></div>
-      <div class="notif-item-body">${m.body}</div>
-    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">You haven't sent any comments or flags.</p>`;
+  function threadCardHtml(t){
+    const bubbles = [t.root, ...t.messages].map(m=>{
+      const mine = m.sender_id === session.user.id;
+      return `<div class="chat-bubble ${mine?'mine':'theirs'}">
+        <div class="chat-bubble-meta">${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</div>
+        <div class="chat-bubble-body">${m.body}</div>
+      </div>`;
+    }).join("");
+    const statusPill = !t.root.claimed_by ? `<span class="status-pill progress">Awaiting reply</span>` : `<span class="status-pill done">In conversation</span>`;
+    return `
+      <div class="sub-card thread-card">
+        <div class="sub-card-head">
+          <span class="tag">${typeLabel[t.root.type]||t.root.type}${t.root.context?(' · '+escapeHtml(t.root.context)):''}</span>
+          <span style="display:flex;gap:8px;align-items:center;">${statusPill}<button class="mini-btn danger" data-discard-thread="${t.root.id}">Discard</button></span>
+        </div>
+        <div class="chat-scroll">${bubbles}</div>
+        <div class="field" style="margin-top:10px;">${richEditorHtml(`thread-rte-${t.root.id}`, "")}</div>
+        <button class="mini-btn" data-send-thread="${t.root.id}" style="margin-top:8px;">Send</button>
+      </div>`;
+  }
+  const threadsHtml = NOTIF_THREADS.map(threadCardHtml).join("") || `<p style="color:var(--text-faint);font-size:13px;">No conversations yet.</p>`;
 
   renderShell(`
     <div class="card">
@@ -745,36 +768,96 @@ function renderNotifications(){
     <div class="card" style="margin-top:16px;">
       <div class="k-label">ADMIN</div>
       <h2 style="margin-bottom:4px;">Needs a reply</h2>
-      <p style="color:var(--text-dim);font-size:13px;margin:0 0 16px;">First admin to reply owns it — it'll disappear from other admins' view.</p>
+      <p style="color:var(--text-dim);font-size:13px;margin:0 0 16px;">First admin to reply owns it — it moves into your conversations below and disappears from other admins' view.</p>
       ${unclaimedHtml || `<p style="color:var(--text-faint);font-size:13px;">Nothing waiting on a reply.</p>`}
-      ${claimedHtml ? `<h3 style="font-size:14px;color:var(--text-dim);margin:22px 0 12px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">You've replied to</h3>${claimedHtml}` : ""}
     </div>` : ""}
     <div class="card" style="margin-top:16px;">
       <div class="k-label">YOUR ACTIVITY</div>
-      <h2 style="margin-bottom:14px;">Replies to you</h2>
-      ${repliesHtml}
-      <h3 style="font-size:14px;color:var(--text-dim);margin:22px 0 12px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Your submitted comments &amp; flags</h3>
-      ${sentHtml}
+      <h2 style="margin-bottom:14px;">Conversations</h2>
+      ${threadsHtml}
     </div>
   `);
 
-  NOTIF_UNCLAIMED.forEach(m=> wireRichEditor(`reply-rte-${m.id}`));
-  root.querySelectorAll("[data-discard-item]").forEach(el=> el.addEventListener("click", async ()=>{
-    if(confirm("Discard this item?")){ await supabase.from("messages").delete().eq("id", el.getAttribute("data-discard-item")); await openNotifications(); }
+  NOTIF_UNCLAIMED.forEach(m=> wireRichEditor(`thread-rte-${m.id}`));
+  NOTIF_THREADS.forEach(t=> wireRichEditor(`thread-rte-${t.root.id}`));
+
+  root.querySelectorAll("[data-discard-thread]").forEach(el=> el.addEventListener("click", async ()=>{
+    const id = el.getAttribute("data-discard-thread");
+    if(confirm("Discard this conversation? This can't be undone.")){
+      await supabase.from("messages").delete().eq("thread_id", id);
+      await supabase.from("messages").delete().eq("id", id);
+      await openNotifications();
+    }
   }));
-  root.querySelectorAll("[data-send-reply]").forEach(el=> el.addEventListener("click", async ()=>{
-    const id = el.getAttribute("data-send-reply");
-    const original = NOTIF_UNCLAIMED.find(m=>m.id===id);
-    const body = document.getElementById(`reply-rte-${id}`).innerHTML.trim();
-    if(!body || body === "<br>") return;
-    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: original.sender_id, audience:"user", type:"reply", body, context: original.context, thread_id: id });
-    await openNotifications();
-  }));
-  root.querySelectorAll("[data-dismiss-notif]").forEach(el=> el.addEventListener("click", async ()=>{
-    await supabase.from("messages").delete().eq("id", el.getAttribute("data-dismiss-notif"));
-    await openNotifications();
+  root.querySelectorAll("[data-send-thread]").forEach(el=> el.addEventListener("click", async ()=>{
+    await sendThreadMessage(el.getAttribute("data-send-thread"));
   }));
 }
+
+async function sendThreadMessage(rootId){
+  const editorEl = document.getElementById(`thread-rte-${rootId}`);
+  const body = editorEl.innerHTML.trim();
+  if(!body || body === "<br>") return;
+  const root = NOTIF_UNCLAIMED.find(m=>m.id===rootId) || (NOTIF_THREADS.find(t=>t.root.id===rootId)||{}).root;
+  if(!root) return;
+
+  const iAmOriginalSender = root.sender_id === session.user.id;
+  let recipientId;
+  if(iAmOriginalSender){
+    recipientId = root.claimed_by;
+    if(!recipientId){ alert("No admin has picked this up yet — nothing to send to."); return; }
+  } else {
+    recipientId = root.sender_id;
+    if(!root.claimed_by){
+      await supabase.from("messages").update({ claimed_by: session.user.id }).eq("id", root.id).is("claimed_by", null);
+    }
+  }
+  await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: recipientId, audience:"user", type:"reply", body, context: root.context, thread_id: root.id });
+  await openNotifications();
+}
+
+/* ============================================================
+   REALTIME + TOASTS
+   ============================================================ */
+function stripHtml(html){ const d = document.createElement("div"); d.innerHTML = html; return (d.textContent||"").trim(); }
+
+function showToast(text){
+  const el = document.createElement("div");
+  el.className = "app-toast";
+  el.textContent = text;
+  el.addEventListener("click", ()=>{ el.remove(); openNotifications(); });
+  document.body.appendChild(el);
+  setTimeout(()=>{ el.classList.add("out"); setTimeout(()=>el.remove(), 300); }, 6000);
+}
+
+function setupRealtime(){
+  teardownRealtime();
+  const chAnnounce = supabase.channel("rt-announcements-"+session.user.id)
+    .on("postgres_changes", { event:"INSERT", schema:"public", table:"messages", filter:"audience=eq.all" }, (payload)=>{
+      if(payload.new.sender_id === session.user.id) return;
+      showToast("📣 " + stripHtml(payload.new.body).slice(0,90));
+      if(view==="notifications") openNotifications(); else loadAllNotifications();
+    }).subscribe();
+  realtimeChannels.push(chAnnounce);
+
+  const chToMe = supabase.channel("rt-to-me-"+session.user.id)
+    .on("postgres_changes", { event:"INSERT", schema:"public", table:"messages", filter:`recipient_id=eq.${session.user.id}` }, (payload)=>{
+      showToast("💬 " + escapeHtml(payload.new.sender_name) + ": " + stripHtml(payload.new.body).slice(0,70));
+      if(view==="notifications") openNotifications(); else loadAllNotifications();
+    }).subscribe();
+  realtimeChannels.push(chToMe);
+
+  if(isAdmin()){
+    const chAdmin = supabase.channel("rt-admin-inbox-"+session.user.id)
+      .on("postgres_changes", { event:"INSERT", schema:"public", table:"messages", filter:"audience=eq.admins" }, (payload)=>{
+        if(payload.new.thread_id || payload.new.sender_id === session.user.id) return;
+        showToast("🚩 New item waiting in the admin inbox");
+        if(view==="notifications") openNotifications(); else loadAllNotifications();
+      }).subscribe();
+    realtimeChannels.push(chAdmin);
+  }
+}
+function teardownRealtime(){ realtimeChannels.forEach(ch=> supabase.removeChannel(ch)); realtimeChannels = []; }
 
 function openFeedbackModal(type, context){
   const editorId = "feedback-rte";
@@ -1205,9 +1288,9 @@ function renderReference(){
   } else if(refEditing){
     contentHtml = `
       <div class="card">
-        <div class="k-label">EDITING PAGE</div>
-        <div class="field"><label>Page title</label><input type="text" id="ref-title" value="${escapeHtml(refDraft.title)}"></div>
-        <div class="field"><label>Body</label>${richEditorHtml("ref-body-rte", refDraft.body)}<div class="hint">Paste an image directly, or use the 🖼 button. Drag the corner of an image to resize it.</div></div>
+        <input type="text" id="ref-title" class="onenote-title-input" placeholder="Page title" value="${escapeHtml(refDraft.title)}">
+        ${richEditorHtml("ref-body-rte", refDraft.body)}
+        <div class="hint" style="margin-top:8px;">Paste an image directly, or use the 🖼 button. Drag an image's corner to resize it.</div>
         <div class="nav-buttons">
           <div style="display:flex;gap:10px;"><button class="btn" id="ref-cancel">Cancel</button><button class="btn danger" id="ref-delete">Delete page</button></div>
           <button class="btn primary" id="ref-save">Save page</button>
@@ -1270,15 +1353,30 @@ function renderReference(){
   }));
 
   if(editOn){
+    let dragOverEl = null;
     root.querySelectorAll("[data-ref-drag]").forEach(el=>{
       el.addEventListener("dragstart", (e)=>{ dragRefId = el.getAttribute("data-ref-drag"); e.dataTransfer.effectAllowed = "move"; el.style.opacity = "0.4"; });
-      el.addEventListener("dragend", ()=>{ el.style.opacity = ""; });
-      el.addEventListener("dragover", (e)=>{ e.preventDefault(); });
+      el.addEventListener("dragend", ()=>{
+        el.style.opacity = "";
+        if(dragOverEl){ dragOverEl.classList.remove("drag-over-top","drag-over-bottom"); dragOverEl = null; }
+      });
+      el.addEventListener("dragover", (e)=>{
+        e.preventDefault();
+        const rect = el.getBoundingClientRect();
+        const pos = (e.clientY - rect.top) < rect.height/2 ? "before" : "after";
+        if(dragOverEl && dragOverEl!==el) dragOverEl.classList.remove("drag-over-top","drag-over-bottom");
+        dragOverEl = el;
+        el.classList.toggle("drag-over-top", pos==="before");
+        el.classList.toggle("drag-over-bottom", pos==="after");
+      });
+      el.addEventListener("dragleave", ()=>{ el.classList.remove("drag-over-top","drag-over-bottom"); });
       el.addEventListener("drop", async (e)=>{
         e.preventDefault();
+        const pos = el.classList.contains("drag-over-top") ? "before" : "after";
+        el.classList.remove("drag-over-top","drag-over-bottom");
         const targetId = el.getAttribute("data-ref-drag");
-        if(!dragRefId || dragRefId===targetId) return;
-        await reorderRefDrop(dragRefId, targetId);
+        if(!dragRefId || dragRefId===targetId){ dragRefId=null; return; }
+        await reorderRefDrop(dragRefId, targetId, pos);
         dragRefId = null;
       });
     });
@@ -1304,17 +1402,19 @@ function renderReference(){
   });
 }
 
-async function reorderRefDrop(draggedId, targetId){
+async function reorderRefDrop(draggedId, targetId, pos){
   const dragged = REFERENCE_PAGES.find(p=>p.id===draggedId);
   const target = REFERENCE_PAGES.find(p=>p.id===targetId);
   if(!dragged || !target) return;
   if((dragged.parent_id||null) !== (target.parent_id||null)) return; // only reorder within the same level
   const siblings = (dragged.parent_id ? childPages(dragged.parent_id) : topLevelPages());
   const fromIdx = siblings.findIndex(s=>s.id===draggedId);
-  const toIdx = siblings.findIndex(s=>s.id===targetId);
+  let toIdx = siblings.findIndex(s=>s.id===targetId);
   if(fromIdx===-1 || toIdx===-1) return;
+  if(pos==="after") toIdx++;
   const reordered = siblings.slice();
   reordered.splice(fromIdx,1);
+  if(fromIdx < toIdx) toIdx--;
   reordered.splice(toIdx,0,dragged);
   for(let i=0;i<reordered.length;i++){
     if(reordered[i].sort_order !== i){ await supabase.from("reference_pages").update({ sort_order:i }).eq("id", reordered[i].id); }
