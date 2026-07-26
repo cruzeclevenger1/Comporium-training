@@ -2203,11 +2203,27 @@ function fixImageSizing(wrap){
     // Legacy content: size was stored on the wrapper span (an older version of this
     // feature), not on the image itself, which is what the current system expects.
     // Migrate it onto the image so it renders identically everywhere.
-    w = w || parseInt(wrap.style.width) || 280;
-    h = h || parseInt(wrap.style.height) || 190;
+    w = w || parseInt(wrap.style.width) || 0;
+    h = h || parseInt(wrap.style.height) || 0;
     wrap.style.width = ""; wrap.style.height = "";
   }
-  if(w && h) setImageSize(img, w, h);
+  if(w && h){ setImageSize(img, w, h); return; }
+  // No size data anywhere (img, its attributes, or the wrapper) — this is content
+  // with zero sizing info at all. Fall back to computing from the image's real
+  // pixel dimensions, same as a freshly pasted image, so it can never be left
+  // completely unconstrained (which is what "giant" actually was).
+  const applyNatural = ()=>{
+    const nw = img.naturalWidth || 280;
+    const nh = img.naturalHeight || 190;
+    const maxW = 340, maxH = 260;
+    const scale = Math.min(maxW/nw, maxH/nh, 1);
+    setImageSize(img, Math.max(Math.round(nw*scale), 80), Math.max(Math.round(nh*scale), 60));
+  };
+  if(img.complete && img.naturalWidth){ applyNatural(); }
+  else {
+    setImageSize(img, 280, 190); // safe placeholder while it loads
+    img.addEventListener("load", applyNatural, { once:true });
+  }
 }
 function attachImageResizeHandles(editorEl){
   editorEl.querySelectorAll(".rte-img-wrap").forEach(wrap=>{
