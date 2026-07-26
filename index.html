@@ -218,10 +218,10 @@
   html.theme-light .rte-body{ background:#fff; }
   .rte-body:focus{ outline:none; border-color:var(--cyan); }
   .rte-body p{ margin:0 0 10px; } .rte-body ul,.rte-body ol{ margin:0 0 10px; padding-left:22px; }
-  .rte-img-wrap{ display:inline-block; position:relative; overflow:hidden; max-width:100%; vertical-align:bottom; width:280px; height:190px; margin:6px 4px; border-radius:8px; box-sizing:border-box; }
-  .rte-body .rte-img-wrap{ cursor:grab; max-height:60vh; }
+  .rte-img-wrap{ display:inline-block; position:relative; overflow:hidden; max-width:100%; vertical-align:bottom; margin:6px 4px; border-radius:8px; }
+  .rte-body .rte-img-wrap{ cursor:grab; }
   .rte-resize-handle{ position:absolute; right:2px; bottom:2px; width:14px; height:14px; cursor:nwse-resize; background:linear-gradient(135deg, transparent 50%, var(--cyan) 50%); border-radius:0 0 4px 0; opacity:0.9; z-index:1; }
-  .rte-img-wrap img{ width:100%; height:100%; display:block; object-fit:cover; pointer-events:none; }
+  .rte-img-wrap img{ display:block; object-fit:cover; pointer-events:none; max-width:100%; }
   .card .body .rte-img-wrap img, .chat-bubble-body .rte-img-wrap img, .sub-card .rte-img-wrap img{ pointer-events:auto; cursor:zoom-in; }
 
   .lightbox-overlay{ position:fixed; inset:0; background:#050810e6; display:flex; align-items:center; justify-content:center; z-index:400; padding:40px; overflow:hidden; }
@@ -1916,13 +1916,16 @@ document.addEventListener("mousedown", (e)=>{
   if(!handle) return;
   e.preventDefault(); e.stopPropagation();
   const wrap = handle.parentElement;
-  _imgResizeDrag = { wrap, startX:e.clientX, startY:e.clientY, startW:wrap.offsetWidth, startH:wrap.offsetHeight };
+  const img = wrap.querySelector("img");
+  if(!img) return;
+  _imgResizeDrag = { img, startX:e.clientX, startY:e.clientY, startW:img.offsetWidth, startH:img.offsetHeight };
 });
 document.addEventListener("mousemove", (e)=>{
   if(!_imgResizeDrag) return;
-  const { wrap, startX, startY, startW, startH } = _imgResizeDrag;
-  wrap.style.width = Math.max(80, startW + (e.clientX - startX)) + "px";
-  wrap.style.height = Math.max(60, startH + (e.clientY - startY)) + "px";
+  const { img, startX, startY, startW, startH } = _imgResizeDrag;
+  const w = Math.max(80, startW + (e.clientX - startX));
+  const h = Math.max(60, startH + (e.clientY - startY));
+  setImageSize(img, w, h);
 });
 document.addEventListener("mouseup", ()=>{ _imgResizeDrag = null; });
 function normalizePastedImages(editorEl){
@@ -1939,8 +1942,7 @@ function normalizePastedImages(editorEl){
       const h = img.naturalHeight || img.height || 190;
       const maxW = 340, maxH = 260;
       const scale = Math.min(maxW/w, maxH/h, 1);
-      wrap.style.width = Math.max(Math.round(w*scale), 80) + "px";
-      wrap.style.height = Math.max(Math.round(h*scale), 60) + "px";
+      setImageSize(img, Math.max(Math.round(w*scale), 80), Math.max(Math.round(h*scale), 60));
     };
     sizeToImage();
     if(!img.naturalWidth){
@@ -1949,9 +1951,15 @@ function normalizePastedImages(editorEl){
       img.addEventListener("load", sizeToImage, { once:true });
     }
     img.parentNode.insertBefore(wrap, img);
-    img.removeAttribute("width"); img.removeAttribute("height"); img.removeAttribute("style");
+    img.removeAttribute("style");
     wrap.appendChild(img);
   });
+}
+function setImageSize(img, w, h){
+  img.setAttribute("width", w);
+  img.setAttribute("height", h);
+  img.style.width = w + "px";
+  img.style.height = h + "px";
 }
 function openImageLightbox(src){
   const wrap = document.createElement("div");
@@ -2026,7 +2034,7 @@ function insertResizableImage(editorEl, dataUrl){
     const scale = Math.min(maxW/w, maxH/h, 1);
     w = Math.max(Math.round(w*scale), 80);
     h = Math.max(Math.round(h*scale), 60);
-    document.execCommand("insertHTML", false, `<span class="rte-img-wrap" contenteditable="false" draggable="true" style="width:${w}px;height:${h}px;"><img src="${dataUrl}"></span>&nbsp;`);
+    document.execCommand("insertHTML", false, `<span class="rte-img-wrap" contenteditable="false" draggable="true"><img src="${dataUrl}" width="${w}" height="${h}" style="width:${w}px;height:${h}px;"></span>&nbsp;`);
   };
   probe.src = dataUrl;
 }
@@ -2133,13 +2141,15 @@ function wireEditorEvents(){
     const rteEl = document.getElementById(`lesson-rte-${expandedLessonIdx}`);
     if(rteEl) rteEl.addEventListener("input", ()=>{ d.lessons[expandedLessonIdx].body = rteEl.innerHTML; });
   }
-  root.querySelectorAll("[data-lesson-up]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.lessonUp; [d.lessons[i-1],d.lessons[i]]=[d.lessons[i],d.lessons[i-1]]; renderEditor(); }));
-  root.querySelectorAll("[data-lesson-down]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.lessonDown; [d.lessons[i+1],d.lessons[i]]=[d.lessons[i],d.lessons[i+1]]; renderEditor(); }));
+  root.querySelectorAll("[data-lesson-up]").forEach(el=> el.addEventListener("click", ()=>{ if(expandedLessonIdx!==null) return; const i=+el.dataset.lessonUp; [d.lessons[i-1],d.lessons[i]]=[d.lessons[i],d.lessons[i-1]]; renderEditor(); }));
+  root.querySelectorAll("[data-lesson-down]").forEach(el=> el.addEventListener("click", ()=>{ if(expandedLessonIdx!==null) return; const i=+el.dataset.lessonDown; [d.lessons[i+1],d.lessons[i]]=[d.lessons[i],d.lessons[i+1]]; renderEditor(); }));
   root.querySelectorAll("[data-lesson-del]").forEach(el=> el.addEventListener("click", ()=>{
+    if(expandedLessonIdx!==null) return;
     const i=+el.dataset.lessonDel;
     if(confirm("Delete this lesson?")){ d.lessons.splice(i,1); expandedLessonIdx=null; lessonSnapshot=null; renderEditor(); }
   }));
   root.querySelectorAll("[data-lesson-edit]").forEach(el=> el.addEventListener("click", ()=>{
+    if(expandedLessonIdx !== null){ alert("Save or cancel the lesson you're currently editing first."); return; }
     const i = +el.dataset.lessonEdit;
     lessonSnapshot = JSON.parse(JSON.stringify(d.lessons[i]));
     expandedLessonIdx = i; renderEditor();
@@ -2155,6 +2165,7 @@ function wireEditorEvents(){
     expandedLessonIdx = null; lessonSnapshot = null; renderEditor();
   }));
   document.getElementById("add-lesson").addEventListener("click", ()=>{
+    if(expandedLessonIdx !== null){ alert("Save or cancel the lesson you're currently editing first."); return; }
     d.lessons.push(blankLesson());
     const i = d.lessons.length-1;
     lessonSnapshot = JSON.parse(JSON.stringify(d.lessons[i]));
@@ -2170,13 +2181,15 @@ function wireEditorEvents(){
     const [qi,oi]=el.dataset.qOptDel.split(":").map(Number); if(d.quiz[qi].opts.length<=2) return;
     d.quiz[qi].opts.splice(oi,1); if(d.quiz[qi].correct===oi) d.quiz[qi].correct=0; else if(d.quiz[qi].correct>oi) d.quiz[qi].correct-=1; renderEditor();
   }));
-  root.querySelectorAll("[data-q-up]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.qUp; [d.quiz[i-1],d.quiz[i]]=[d.quiz[i],d.quiz[i-1]]; renderEditor(); }));
-  root.querySelectorAll("[data-q-down]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.qDown; [d.quiz[i+1],d.quiz[i]]=[d.quiz[i],d.quiz[i+1]]; renderEditor(); }));
+  root.querySelectorAll("[data-q-up]").forEach(el=> el.addEventListener("click", ()=>{ if(expandedQuestionIdx!==null) return; const i=+el.dataset.qUp; [d.quiz[i-1],d.quiz[i]]=[d.quiz[i],d.quiz[i-1]]; renderEditor(); }));
+  root.querySelectorAll("[data-q-down]").forEach(el=> el.addEventListener("click", ()=>{ if(expandedQuestionIdx!==null) return; const i=+el.dataset.qDown; [d.quiz[i+1],d.quiz[i]]=[d.quiz[i],d.quiz[i+1]]; renderEditor(); }));
   root.querySelectorAll("[data-q-del]").forEach(el=> el.addEventListener("click", ()=>{
+    if(expandedQuestionIdx!==null) return;
     const i=+el.dataset.qDel;
     if(confirm("Delete this question?")){ d.quiz.splice(i,1); expandedQuestionIdx=null; questionSnapshot=null; renderEditor(); }
   }));
   root.querySelectorAll("[data-q-edit]").forEach(el=> el.addEventListener("click", ()=>{
+    if(expandedQuestionIdx !== null){ alert("Save or cancel the question you're currently editing first."); return; }
     const i = +el.dataset.qEdit;
     questionSnapshot = JSON.parse(JSON.stringify(d.quiz[i]));
     expandedQuestionIdx = i; renderEditor();
