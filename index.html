@@ -65,7 +65,7 @@
   .card h2{ margin:0 0 4px; font-size:20px; } .card .k-label{ font-family:var(--mono); font-size:11px; color:var(--text-faint); letter-spacing:.1em; text-transform:uppercase; margin-bottom:14px; }
   .card .body p{ color:#C7CFE0; font-size:14.5px; line-height:1.75; margin:0 0 14px; }
   .card .body ul{ margin:0 0 14px; padding-left:20px; color:#C7CFE0; font-size:14.5px; line-height:1.8; } .card .body li{ margin-bottom:4px; } .card .body strong{ color:var(--text); }
-  .card .body img{ max-width:100%; border-radius:8px; margin:10px 0; display:block; border:1px solid var(--stroke); }
+  .card .body img{ max-width:100%; border-radius:8px; margin:10px 0; display:block; }
   .light-table{ display:grid; grid-template-columns:auto 1fr; gap:10px 16px; margin:16px 0 18px; font-size:13.5px; }
   .light-table .lt-led{ display:flex; align-items:center; gap:8px; font-family:var(--mono); color:var(--text-dim); } .light-table .lt-desc{ color:#C7CFE0; }
   .callout{ border-left:3px solid var(--amber); background:var(--amber-dim); border-radius:0 8px 8px 0; padding:12px 16px; font-size:13.5px; color:#F3DCB0; margin:16px 0; }
@@ -144,8 +144,8 @@
   .top-nav-btn.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
   .two-col-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
   @media (max-width:640px){ .two-col-grid{ grid-template-columns:1fr; } }
-  .ref-layout{ display:flex; gap:22px; align-items:flex-start; }
-  .ref-sidebar{ width:230px; flex:none; }
+  .ref-layout{ display:flex; gap:16px; align-items:flex-start; }
+  .ref-sidebar{ width:180px; flex:none; }
   .ref-content{ flex:1; min-width:0; }
   .ref-sidebar-list{ display:flex; flex-direction:column; gap:2px; }
   .ref-row{ display:flex; align-items:center; justify-content:space-between; gap:6px; padding:9px 10px; border-radius:8px; cursor:pointer; font-size:13px; color:var(--text-dim); position:relative; transition:background .12s; }
@@ -204,9 +204,15 @@
   html.theme-light .rte-body{ background:#fff; }
   .rte-body:focus{ outline:none; border-color:var(--cyan); }
   .rte-body p{ margin:0 0 10px; } .rte-body ul,.rte-body ol{ margin:0 0 10px; padding-left:22px; }
-  .rte-img-wrap{ display:inline-block; overflow:hidden; max-width:100%; border:1px solid var(--stroke); vertical-align:bottom; width:280px; height:190px; margin:6px 4px; }
+  .rte-img-wrap{ display:inline-block; overflow:hidden; max-width:100%; vertical-align:bottom; width:280px; height:190px; margin:6px 4px; border-radius:8px; }
   .rte-body .rte-img-wrap{ resize:both; cursor:grab; }
   .rte-img-wrap img{ width:100%; height:100%; display:block; object-fit:contain; pointer-events:none; }
+  .card .body .rte-img-wrap img, .chat-bubble-body .rte-img-wrap img, .sub-card .rte-img-wrap img{ pointer-events:auto; cursor:zoom-in; }
+
+  .lightbox-overlay{ position:fixed; inset:0; background:#050810e6; display:flex; align-items:center; justify-content:center; z-index:400; cursor:zoom-out; padding:40px; }
+  .lightbox-img{ max-width:90vw; max-height:90vh; object-fit:contain; border-radius:8px; cursor:default; box-shadow:0 20px 60px #000000aa; }
+  .lightbox-close{ position:absolute; top:22px; right:26px; background:none; border:1px solid #ffffff55; color:#fff; font-size:20px; width:40px; height:40px; border-radius:50%; cursor:pointer; }
+  .lightbox-close:hover{ background:#ffffff22; }
 
   .thread-card{}
   .chat-scroll{ max-height:320px; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:6px 2px; }
@@ -991,9 +997,11 @@ function openAnnouncementModal(){
   document.getElementById("an-send").addEventListener("click", async ()=>{
     const body = document.getElementById(editorId).innerHTML.trim();
     if(!body || body === "<br>") { closeModal(); return; }
-    const { error } = await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement", body });
-    if(error){ alert("Couldn't send announcement: " + error.message); return; }
+    const { data, error } = await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement", body }).select().single();
+    if(error){ alert("Couldn't send announcement: " + error.message); console.error("Announcement insert failed:", error); return; }
+    console.log("Announcement saved to database:", data);
     closeModal();
+    alert("Announcement sent to everyone.");
     await loadAllNotifications(); render();
   });
 }
@@ -1116,6 +1124,8 @@ function richEditorHtml(id, initialHtml){
       <div class="rte-sep"></div>
       <button type="button" data-cmd="image" title="Insert image">🖼</button>
       <input type="file" accept="image/*" style="display:none" id="${id}-file">
+      <div class="rte-sep"></div>
+      <button type="button" data-cmd="clearFormat" title="Clear formatting">Tx</button>
     </div>
     <div class="rte-body" id="${id}" contenteditable="true">${initialHtml || ""}</div>
   `;
@@ -1130,6 +1140,12 @@ function wireRichEditor(id){
       editorEl.focus();
       const cmd = btn.getAttribute("data-cmd");
       if(cmd === "image"){ document.getElementById(`${id}-file`).click(); return; }
+      if(cmd === "clearFormat"){
+        document.execCommand("removeFormat", false, null);
+        document.execCommand("fontSize", false, "3");
+        document.execCommand("foreColor", false, "inherit");
+        return;
+      }
       document.execCommand(cmd, false, null);
     });
   });
@@ -1155,6 +1171,23 @@ function wireRichEditor(id){
     }
   });
 }
+function openImageLightbox(src){
+  const wrap = document.createElement("div");
+  wrap.className = "lightbox-overlay";
+  wrap.innerHTML = `<button class="lightbox-close" title="Close">✕</button><img src="${src}" class="lightbox-img">`;
+  document.body.appendChild(wrap);
+  const close = ()=> wrap.remove();
+  wrap.addEventListener("click", (e)=>{ if(e.target===wrap || e.target.classList.contains("lightbox-close")) close(); });
+  const onKey = (e)=>{ if(e.key==="Escape"){ close(); document.removeEventListener("keydown", onKey); } };
+  document.addEventListener("keydown", onKey);
+}
+document.addEventListener("click", (e)=>{
+  const img = e.target.closest(".rte-img-wrap img");
+  if(!img) return;
+  if(img.closest('[contenteditable="true"]')) return;
+  openImageLightbox(img.getAttribute("src"));
+});
+
 function insertResizableImage(editorEl, dataUrl){
   editorEl.focus();
   document.execCommand("insertHTML", false, `<span class="rte-img-wrap" contenteditable="false" draggable="true"><img src="${dataUrl}"></span>&nbsp;`);
