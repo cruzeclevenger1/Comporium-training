@@ -176,6 +176,27 @@
   .admin-menu-panel button{ text-align:left; background:none; border:none; color:var(--text-dim); font-family:var(--mono); font-size:12px; padding:9px 10px; border-radius:6px; cursor:pointer; }
   .admin-menu-panel button:hover{ background:#1c2740; color:var(--text); }
   html.theme-light .admin-menu-panel button:hover{ background:#eef1f8; }
+
+  .overlay{ position:fixed; inset:0; background:#050810cc; backdrop-filter:blur(3px); display:flex; align-items:center; justify-content:center; z-index:200; padding:20px; }
+  .modal{ background:var(--panel); border:1px solid var(--stroke); border-radius:14px; padding:26px; width:100%; max-width:440px; max-height:85vh; overflow-y:auto; }
+  .modal.wide{ max-width:640px; }
+  .modal h3{ margin:0 0 6px; font-size:17px; } .modal p.sub{ color:var(--text-dim); font-size:13px; margin:0 0 18px; }
+  .modal .modal-actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:16px; }
+  .modal-error{ color:var(--red); font-size:12.5px; font-family:var(--mono); margin:-8px 0 12px; }
+
+  .rte-toolbar{ display:flex; gap:4px; flex-wrap:wrap; align-items:center; padding:6px; border:1px solid var(--stroke); border-bottom:none; border-radius:8px 8px 0 0; background:#0e1626; }
+  html.theme-light .rte-toolbar{ background:#eef1f8; }
+  .rte-toolbar button{ min-width:30px; height:30px; border-radius:6px; border:1px solid transparent; background:none; color:var(--text-dim); cursor:pointer; font-size:13px; }
+  .rte-toolbar button:hover{ background:#1c2740; color:var(--text); } html.theme-light .rte-toolbar button:hover{ background:#dde5f4; }
+  .rte-toolbar select{ height:30px; border-radius:6px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); font-family:var(--mono); font-size:11px; }
+  html.theme-light .rte-toolbar select{ background:#fff; }
+  .rte-toolbar .rte-sep{ width:1px; height:20px; background:var(--stroke); margin:0 4px; }
+  .rte-body{ border:1px solid var(--stroke); border-radius:0 0 8px 8px; padding:14px; min-height:140px; background:#0e1626; color:var(--text); font-size:14px; line-height:1.7; overflow-y:auto; }
+  html.theme-light .rte-body{ background:#fff; }
+  .rte-body:focus{ outline:none; border-color:var(--cyan); }
+  .rte-body p{ margin:0 0 10px; } .rte-body ul,.rte-body ol{ margin:0 0 10px; padding-left:22px; }
+  .rte-img-wrap{ display:inline-block; resize:both; overflow:hidden; max-width:100%; border:1px solid var(--stroke); vertical-align:bottom; width:280px; height:190px; margin:6px 4px; cursor:grab; }
+  .rte-img-wrap img{ width:100%; height:100%; display:block; object-fit:contain; pointer-events:none; }
   .theme-switch button.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
 </style>
 </head>
@@ -402,7 +423,7 @@ function renderShell(inner){
   const toggleEdit = document.getElementById("toggle-edit-mode");
   if(toggleEdit) toggleEdit.addEventListener("click", ()=>{ editMode = !editMode; render(); });
   const openAnnounce = document.getElementById("open-announce");
-  if(openAnnounce) openAnnounce.addEventListener("click", composeAnnouncement);
+  if(openAnnounce) openAnnounce.addEventListener("click", openAnnouncementModal);
   const goTeamMenu = document.getElementById("go-team-menu");
   if(goTeamMenu) goTeamMenu.addEventListener("click", openTeamProgress);
   const goInboxMenu = document.getElementById("go-inbox-menu");
@@ -482,7 +503,7 @@ function renderLesson(){
     <div class="card"><div class="k-label">${escapeHtml(lesson.label)}</div><h2>${escapeHtml(lesson.title)}</h2><div class="body">${lesson.body}</div>
       <div class="nav-buttons"><button class="btn" id="prev-lesson" ${currentLessonIdx===0?'disabled':''}>← Previous</button>
       ${isLast? `<button class="btn primary" id="to-quiz-btn">Start module quiz →</button>` : `<button class="btn primary" id="next-lesson">Next lesson →</button>`}</div>
-      <div class="nav-buttons" style="margin-top:8px;"><div style="display:flex;gap:10px;"><button class="mini-btn" id="comment-lesson">💬 Comment</button><button class="mini-btn" id="highlight-lesson">✨ Highlight for admins</button></div><div></div></div>
+      <div class="nav-buttons" style="margin-top:8px;"><button class="mini-btn" id="comment-lesson">💬 Comment</button><div></div></div>
     </div>`);
   root.querySelectorAll(".lesson-tab[data-idx]").forEach(el=> el.addEventListener("click", ()=>{ currentLessonIdx=parseInt(el.getAttribute("data-idx")); render(); }));
   document.getElementById("go-quiz").addEventListener("click", startQuiz);
@@ -490,8 +511,7 @@ function renderLesson(){
   const next=document.getElementById("next-lesson"); if(next) next.addEventListener("click", ()=>{ currentLessonIdx++; render(); });
   const toQuiz=document.getElementById("to-quiz-btn"); if(toQuiz) toQuiz.addEventListener("click", startQuiz);
   const editMod=document.getElementById("edit-mod"); if(editMod) editMod.addEventListener("click", ()=>openEditor(m.id));
-  document.getElementById("comment-lesson").addEventListener("click", ()=> sendToAdmins("comment", `${m.title} — ${lesson.title}`));
-  document.getElementById("highlight-lesson").addEventListener("click", ()=> sendToAdmins("highlight", `${m.title} — ${lesson.title}`));
+  document.getElementById("comment-lesson").addEventListener("click", ()=> openFeedbackModal("comment", `${m.title} — ${lesson.title}`));
 }
 
 function startQuiz(){ const m=modById(currentModId); quizAnswers=new Array(m.quiz.length).fill(null); quizRevealed=new Array(m.quiz.length).fill(false); quizIdx=0; view="quiz"; render(); }
@@ -515,7 +535,7 @@ function renderQuiz(){
   document.getElementById("quiz-prev").addEventListener("click", ()=>{ if(quizIdx>0){ quizIdx--; render(); } });
   document.getElementById("quiz-next").addEventListener("click", ()=>{ if(!revealed){ quizRevealed[quizIdx]=true; render(); } else if(isLast){ finishQuiz(); } else { quizIdx++; render(); } });
   const editModQ=document.getElementById("edit-mod-q"); if(editModQ) editModQ.addEventListener("click", ()=>openEditor(m.id));
-  document.getElementById("flag-question").addEventListener("click", ()=> sendToAdmins("flag", `${m.title} — Q${quizIdx+1}: ${q.q}`));
+  document.getElementById("flag-question").addEventListener("click", ()=> openFeedbackModal("flag", `${m.title} — Q${quizIdx+1}: ${q.q}`));
 }
 
 async function finishQuiz(){
@@ -597,16 +617,8 @@ function renderTeam(){
     await supabase.from("profiles").update({ role: el.value }).eq("id", id);
     await openTeamProgress();
   }));
-  root.querySelectorAll("[data-reset-pw]").forEach(el=> el.addEventListener("click", async ()=>{
-    const id = el.getAttribute("data-reset-pw"); const name = el.getAttribute("data-reset-name");
-    const newPw = prompt(`New password for ${name} (at least 6 characters):`);
-    if(!newPw) return;
-    if(newPw.length < 6){ alert("Password must be at least 6 characters."); return; }
-    el.textContent = "Saving…"; el.disabled = true;
-    const { data, error } = await supabase.functions.invoke("admin-reset-password", { body: { userId: id, newPassword: newPw } });
-    if(error || (data && data.error)){ alert("Couldn't reset password: " + (data && data.error ? data.error : error.message)); }
-    else { alert(`Password updated for ${name}.`); }
-    el.textContent = "Reset password"; el.disabled = false;
+  root.querySelectorAll("[data-reset-pw]").forEach(el=> el.addEventListener("click", ()=>{
+    openPasswordResetModal(el.getAttribute("data-reset-pw"), el.getAttribute("data-reset-name"));
   }));
   root.querySelectorAll("[data-view-attempt]").forEach(el=> el.addEventListener("click", async ()=>{
     const [userId, moduleId] = el.getAttribute("data-view-attempt").split(":");
@@ -662,13 +674,13 @@ function bellBadgeCount(){ return NOTIF_REPLIES.filter(r=>!r.is_read).length + N
 function renderNotifPanel(){
   const announceHtml = NOTIF_ANNOUNCEMENTS.length ? NOTIF_ANNOUNCEMENTS.map(a=>`
     <div class="notif-item">
-      <div class="notif-item-body">${escapeHtml(a.body)}</div>
+      <div class="notif-item-body">${a.body}</div>
       <div class="notif-item-meta">${escapeHtml(a.sender_name)} · ${new Date(a.created_at).toLocaleDateString()}</div>
     </div>`).join("") : `<p class="notif-empty">No announcements yet.</p>`;
 
   const repliesHtml = NOTIF_REPLIES.length ? NOTIF_REPLIES.map(r=>`
     <div class="notif-item ${!r.is_read?'unread':''}">
-      <div class="notif-item-body">${escapeHtml(r.body)}</div>
+      <div class="notif-item-body">${r.body}</div>
       <div class="notif-item-meta">Re: ${escapeHtml(r.context||'your feedback')} · ${new Date(r.created_at).toLocaleDateString()}</div>
       <button class="mini-btn" data-dismiss-notif="${r.id}">Dismiss</button>
     </div>`).join("") : `<p class="notif-empty">Nothing yet.</p>`;
@@ -693,20 +705,68 @@ async function toggleNotifPanel(){
   render();
 }
 
-async function sendToAdmins(type, context){
-  const prompts = { flag:"What's wrong with this question?", highlight:"What would you like to highlight for admins?", comment:"Your comment for admins:" };
-  const text = prompt(prompts[type] || "Your message:");
-  if(!text || !text.trim()) return;
-  await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"admins", type, body:text.trim(), context });
-  alert("Sent to admins — thanks!");
+function openFeedbackModal(type, context){
+  const editorId = "feedback-rte";
+  const heading = type==="flag" ? "Flag this question" : "Send a comment to admins";
+  openModal(`
+    <h3>${heading}</h3>
+    <p class="sub">${escapeHtml(context)}</p>
+    ${richEditorHtml(editorId, "")}
+    <div class="modal-actions"><button class="btn" id="fb-cancel">Cancel</button><button class="btn primary" id="fb-send">Send</button></div>
+  `, true);
+  wireRichEditor(editorId);
+  document.getElementById(editorId).focus();
+  document.getElementById("fb-cancel").addEventListener("click", closeModal);
+  document.getElementById("fb-send").addEventListener("click", async ()=>{
+    const body = document.getElementById(editorId).innerHTML.trim();
+    if(!body || body === "<br>") { closeModal(); return; }
+    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"admins", type, body, context });
+    closeModal();
+    alert("Sent to admins — thanks!");
+  });
 }
 
-async function composeAnnouncement(){
-  const text = prompt("Announcement to send to everyone:");
-  if(!text || !text.trim()) return;
-  await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement", body:text.trim() });
-  alert("Announcement sent to everyone.");
-  await loadNotifications(); render();
+function openAnnouncementModal(){
+  const editorId = "announce-rte";
+  openModal(`
+    <h3>Announcement to everyone</h3>
+    <p class="sub">Every logged-in user will see this in their notifications.</p>
+    ${richEditorHtml(editorId, "")}
+    <div class="modal-actions"><button class="btn" id="an-cancel">Cancel</button><button class="btn primary" id="an-send">Send to everyone</button></div>
+  `, true);
+  wireRichEditor(editorId);
+  document.getElementById(editorId).focus();
+  document.getElementById("an-cancel").addEventListener("click", closeModal);
+  document.getElementById("an-send").addEventListener("click", async ()=>{
+    const body = document.getElementById(editorId).innerHTML.trim();
+    if(!body || body === "<br>") { closeModal(); return; }
+    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement", body });
+    closeModal();
+    await loadNotifications(); render();
+  });
+}
+
+function openPasswordResetModal(userId, name){
+  openModal(`
+    <h3>Reset password</h3>
+    <p class="sub">Set a new password for ${escapeHtml(name)}. They won't be shown their old one.</p>
+    <div class="modal-error" id="pw-modal-error" style="display:none;"></div>
+    <div class="field"><label>New password</label><input type="password" id="pw-modal-1" placeholder="At least 6 characters"></div>
+    <div class="field"><label>Confirm new password</label><input type="password" id="pw-modal-2"></div>
+    <div class="modal-actions"><button class="btn" id="pw-modal-cancel">Cancel</button><button class="btn primary" id="pw-modal-save">Save</button></div>
+  `);
+  document.getElementById("pw-modal-cancel").addEventListener("click", closeModal);
+  document.getElementById("pw-modal-save").addEventListener("click", async ()=>{
+    const pw1 = document.getElementById("pw-modal-1").value;
+    const pw2 = document.getElementById("pw-modal-2").value;
+    const err = document.getElementById("pw-modal-error");
+    if(pw1.length < 6){ err.textContent = "Password must be at least 6 characters."; err.style.display="block"; return; }
+    if(pw1 !== pw2){ err.textContent = "Passwords don't match."; err.style.display="block"; return; }
+    const { data, error } = await supabase.functions.invoke("admin-reset-password", { body: { userId, newPassword: pw1 } });
+    if(error || (data && data.error)){ err.textContent = "Couldn't reset password: " + (data && data.error ? data.error : error.message); err.style.display="block"; return; }
+    closeModal();
+    alert(`Password updated for ${name}.`);
+  });
 }
 
 async function openInbox(){
@@ -727,25 +787,26 @@ function renderInbox(){
         <button class="mini-btn danger" data-discard-inbox="${m.id}">Discard</button>
       </div>
       ${m.context ? `<div style="font-size:12px;color:var(--text-faint);margin-bottom:6px;">${escapeHtml(m.context)}</div>` : ""}
-      <div style="font-size:14px;margin-bottom:10px;color:var(--text);">${escapeHtml(m.body)}</div>
-      <div class="field"><label>Reply</label><textarea id="reply-${m.id}" style="min-height:60px;" placeholder="Type a reply..."></textarea></div>
-      <button class="mini-btn" data-send-reply="${m.id}">Send reply</button>
+      <div style="font-size:14px;margin-bottom:12px;color:var(--text);">${m.body}</div>
+      <div class="field"><label>Reply</label>${richEditorHtml(`reply-rte-${m.id}`, "")}</div>
+      <button class="mini-btn" data-send-reply="${m.id}" style="margin-top:8px;">Send reply</button>
     </div>
   `).join("") || `<p style="color:var(--text-dim);font-size:14px;">Inbox is empty — nothing flagged or commented right now.</p>`;
 
   renderShell(`<div class="card"><div class="k-label">ADMIN INBOX</div><h2 style="margin-bottom:16px;">Flagged questions &amp; comments</h2>${rows}</div>`);
 
+  INBOX_ITEMS.forEach(m=> wireRichEditor(`reply-rte-${m.id}`));
   root.querySelectorAll("[data-discard-inbox]").forEach(el=> el.addEventListener("click", async ()=>{
     if(confirm("Discard this item?")){ await supabase.from("messages").delete().eq("id", el.getAttribute("data-discard-inbox")); await openInbox(); }
   }));
   root.querySelectorAll("[data-send-reply]").forEach(el=> el.addEventListener("click", async ()=>{
     const id = el.getAttribute("data-send-reply");
     const original = INBOX_ITEMS.find(m=>m.id===id);
-    const text = document.getElementById(`reply-${id}`).value.trim();
-    if(!text) return;
-    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: original.sender_id, audience:"user", type:"reply", body:text, context: original.context, thread_id: id });
+    const body = document.getElementById(`reply-rte-${id}`).innerHTML.trim();
+    if(!body || body === "<br>") return;
+    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: original.sender_id, audience:"user", type:"reply", body, context: original.context, thread_id: id });
     alert("Reply sent.");
-    document.getElementById(`reply-${id}`).value = "";
+    document.getElementById(`reply-rte-${id}`).innerHTML = "";
   }));
 }
 document.addEventListener("click", (e)=>{
@@ -763,6 +824,109 @@ function blankQuestion(){ return { q:"New question", opts:["Option A","Option B"
 function slugify(s){ const base=(s||"").toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,''); let id=base||("module-"+Date.now()); let i=2;
   while(MODULES.some(m=>m.id===id && m.id!==editingExistingId)){ id=base+"-"+i; i++; } return id; }
 
+/* ============================================================
+   GENERIC MODAL SYSTEM
+   ============================================================ */
+function openModal(innerHtml, wide){
+  closeModal();
+  const wrap = document.createElement("div");
+  wrap.className = "overlay"; wrap.id = "app-modal-overlay";
+  wrap.innerHTML = `<div class="modal ${wide?'wide':''}">${innerHtml}</div>`;
+  document.body.appendChild(wrap);
+  wrap.addEventListener("mousedown", (e)=>{ if(e.target===wrap) closeModal(); });
+  return wrap;
+}
+function closeModal(){ const el = document.getElementById("app-modal-overlay"); if(el) el.remove(); }
+
+/* ============================================================
+   RICH TEXT EDITOR (used for reference pages, lesson bodies,
+   announcements, comments/flags, and admin replies)
+   ============================================================ */
+function richEditorHtml(id, initialHtml){
+  return `
+    <div class="rte-toolbar" data-rte="${id}">
+      <button type="button" data-cmd="bold" title="Bold"><b>B</b></button>
+      <button type="button" data-cmd="italic" title="Italic"><i>I</i></button>
+      <button type="button" data-cmd="underline" title="Underline"><u>U</u></button>
+      <div class="rte-sep"></div>
+      <select data-cmd="fontSize" title="Text size">
+        <option value="2">Small</option>
+        <option value="3" selected>Normal</option>
+        <option value="5">Large</option>
+        <option value="7">Huge</option>
+      </select>
+      <div class="rte-sep"></div>
+      <button type="button" data-cmd="insertUnorderedList" title="Bullet list">• List</button>
+      <button type="button" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
+      <div class="rte-sep"></div>
+      <button type="button" data-cmd="image" title="Insert image">🖼</button>
+      <input type="file" accept="image/*" style="display:none" id="${id}-file">
+    </div>
+    <div class="rte-body" id="${id}" contenteditable="true">${initialHtml || ""}</div>
+  `;
+}
+function wireRichEditor(id){
+  const toolbar = document.querySelector(`.rte-toolbar[data-rte="${id}"]`);
+  const editorEl = document.getElementById(id);
+  if(!toolbar || !editorEl) return;
+  toolbar.querySelectorAll("button[data-cmd]").forEach(btn=>{
+    btn.addEventListener("mousedown", (e)=>e.preventDefault()); // keep focus/selection in the editor
+    btn.addEventListener("click", async ()=>{
+      editorEl.focus();
+      const cmd = btn.getAttribute("data-cmd");
+      if(cmd === "image"){ document.getElementById(`${id}-file`).click(); return; }
+      document.execCommand(cmd, false, null);
+    });
+  });
+  const sizeSelect = toolbar.querySelector('select[data-cmd="fontSize"]');
+  if(sizeSelect) sizeSelect.addEventListener("change", ()=>{ editorEl.focus(); document.execCommand("fontSize", false, sizeSelect.value); });
+  const fileInput = document.getElementById(`${id}-file`);
+  fileInput.addEventListener("change", async ()=>{
+    const file = fileInput.files[0]; if(!file) return;
+    const dataUrl = await compressImageFile(file);
+    insertResizableImage(editorEl, dataUrl);
+    fileInput.value = "";
+  });
+  editorEl.addEventListener("paste", async (e)=>{
+    const items = (e.clipboardData || window.clipboardData).items;
+    for(const item of items){
+      if(item.type && item.type.startsWith("image/")){
+        e.preventDefault();
+        const file = item.getAsFile();
+        const dataUrl = await compressImageFile(file);
+        insertResizableImage(editorEl, dataUrl);
+        return;
+      }
+    }
+  });
+}
+function insertResizableImage(editorEl, dataUrl){
+  editorEl.focus();
+  document.execCommand("insertHTML", false, `<span class="rte-img-wrap" contenteditable="false" draggable="true"><img src="${dataUrl}"></span>&nbsp;`);
+}
+function compressImageFile(file, maxDim, quality){
+  maxDim = maxDim || 900; quality = quality || 0.82;
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = (e)=>{
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = ()=>{
+        let w = img.width, h = img.height;
+        if(w > h && w > maxDim){ h = Math.round(h*maxDim/w); w = maxDim; }
+        else if(h >= w && h > maxDim){ w = Math.round(w*maxDim/h); h = maxDim; }
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function openEditor(id){
   if(id){ editingExistingId=id; draftModule=JSON.parse(JSON.stringify(modById(id))); }
   else { editingExistingId=null; draftModule=blankModule(); }
@@ -778,7 +942,7 @@ function renderEditor(){
       <button class="mini-btn danger" data-lesson-del="${i}">Delete</button></div></div>
       <div class="field"><label>Label</label><input type="text" data-lesson-label="${i}" value="${escapeHtml(l.label)}"></div>
       <div class="field"><label>Title</label><input type="text" data-lesson-title="${i}" value="${escapeHtml(l.title)}"></div>
-      <div class="field"><label>Body (HTML)</label><textarea data-lesson-body="${i}" style="min-height:150px;">${escapeHtml(l.body)}</textarea><div class="hint">Supports basic tags: &lt;p&gt; &lt;strong&gt; &lt;ul&gt;&lt;li&gt;.</div></div>
+      <div class="field"><label>Body</label>${richEditorHtml(`lesson-rte-${i}`, l.body)}<div class="hint">Paste an image directly, or use the 🖼 button. Drag an image's corner to resize it.</div></div>
     </div>`).join("");
 
   const quizHtml = d.quiz.map((q,i)=>{
@@ -812,7 +976,11 @@ function wireEditorEvents(){
   document.getElementById("mod-short").addEventListener("input", e=>{ d.short=e.target.value; });
   root.querySelectorAll("[data-lesson-label]").forEach(el=> el.addEventListener("input", e=>{ d.lessons[+el.dataset.lessonLabel].label=e.target.value; }));
   root.querySelectorAll("[data-lesson-title]").forEach(el=> el.addEventListener("input", e=>{ d.lessons[+el.dataset.lessonTitle].title=e.target.value; }));
-  root.querySelectorAll("[data-lesson-body]").forEach(el=> el.addEventListener("input", e=>{ d.lessons[+el.dataset.lessonBody].body=e.target.value; }));
+  d.lessons.forEach((l,i)=>{
+    wireRichEditor(`lesson-rte-${i}`);
+    const rteEl = document.getElementById(`lesson-rte-${i}`);
+    if(rteEl) rteEl.addEventListener("input", ()=>{ d.lessons[i].body = rteEl.innerHTML; });
+  });
   root.querySelectorAll("[data-lesson-up]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.lessonUp; [d.lessons[i-1],d.lessons[i]]=[d.lessons[i],d.lessons[i-1]]; renderEditor(); }));
   root.querySelectorAll("[data-lesson-down]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.lessonDown; [d.lessons[i+1],d.lessons[i]]=[d.lessons[i],d.lessons[i+1]]; renderEditor(); }));
   root.querySelectorAll("[data-lesson-del]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.lessonDel; if(confirm("Delete this lesson?")){ d.lessons.splice(i,1); renderEditor(); } }));
@@ -959,6 +1127,9 @@ function renderHome(){
 /* ============================================================
    REFERENCE GUIDE (OneNote-style, admin editable)
    ============================================================ */
+let refCollapsed = new Set();
+let dragRefId = null;
+
 async function loadReference(){
   const { data } = await supabase.from("reference_pages").select("*").order("sort_order");
   REFERENCE_PAGES = data || [];
@@ -979,21 +1150,23 @@ function renderReference(){
 
   function sidebarRow(p, isChild){
     const active = p.id===currentRefId;
-    const siblings = isChild ? childPages(p.parent_id) : tops;
-    const idx = siblings.findIndex(s=>s.id===p.id);
+    const kids = isChild ? [] : childPages(p.id);
+    const collapsed = refCollapsed.has(p.id);
+    const chevron = (!isChild && kids.length) ? `<button class="mini-btn" data-ref-toggle="${p.id}" style="padding:2px 5px;">${collapsed?'▸':'▾'}</button>` : `<span style="width:20px;display:inline-block;"></span>`;
     const tools = editOn ? `
       <span class="ref-row-tools">
-        <button class="mini-btn" data-ref-up="${p.id}" ${idx===0?'disabled':''}>↑</button>
-        <button class="mini-btn" data-ref-down="${p.id}" ${idx===siblings.length-1?'disabled':''}>↓</button>
         ${!isChild ? `<button class="mini-btn" data-ref-addsub="${p.id}">+ Sub</button>` : ""}
         <button class="mini-btn danger" data-ref-del="${p.id}">✕</button>
       </span>` : "";
-    return `<div class="ref-row ${active?'active':''} ${isChild?'child':''}" data-ref-select="${p.id}"><span class="ref-row-title">${escapeHtml(p.title)}</span>${tools}</div>`;
+    return `<div class="ref-row ${active?'active':''} ${isChild?'child':''}" draggable="${editOn}" data-ref-select="${p.id}" data-ref-drag="${p.id}" data-ref-parent="${p.parent_id||''}">
+      ${!isChild ? chevron : ""}<span class="ref-row-title">${escapeHtml(p.title)}</span>${tools}
+    </div>`;
   }
 
   const sidebarHtml = tops.map(p=>{
     const kids = childPages(p.id);
-    return sidebarRow(p,false) + kids.map(k=>sidebarRow(k,true)).join("");
+    const collapsed = refCollapsed.has(p.id);
+    return sidebarRow(p,false) + (!collapsed ? kids.map(k=>sidebarRow(k,true)).join("") : "");
   }).join("") || `<p style="color:var(--text-faint);font-size:12.5px;padding:10px;">No pages yet.</p>`;
 
   const addTopBtn = editOn ? `<button class="dashed-btn" id="add-ref-page" style="margin-top:10px;">+ Add page</button>` : "";
@@ -1009,7 +1182,7 @@ function renderReference(){
       <div class="card">
         <div class="k-label">EDITING PAGE</div>
         <div class="field"><label>Page title</label><input type="text" id="ref-title" value="${escapeHtml(refDraft.title)}"></div>
-        <div class="field"><label>Body (HTML)</label><textarea id="ref-body" style="min-height:280px;">${escapeHtml(refDraft.body)}</textarea><div class="hint">Supports basic tags: &lt;p&gt; &lt;strong&gt; &lt;ul&gt;&lt;li&gt;.</div></div>
+        <div class="field"><label>Body</label>${richEditorHtml("ref-body-rte", refDraft.body)}<div class="hint">Paste an image directly, or use the 🖼 button. Drag the corner of an image to resize it.</div></div>
         <div class="nav-buttons">
           <div style="display:flex;gap:10px;"><button class="btn" id="ref-cancel">Cancel</button><button class="btn danger" id="ref-delete">Delete page</button></div>
           <button class="btn primary" id="ref-save">Save page</button>
@@ -1033,22 +1206,34 @@ function renderReference(){
     </div>
   `);
 
-  root.querySelectorAll("[data-ref-select]").forEach(el=> el.addEventListener("click", ()=>{ currentRefId = el.getAttribute("data-ref-select"); refEditing=false; render(); }));
+  if(refEditing) wireRichEditor("ref-body-rte");
+
+  root.querySelectorAll("[data-ref-select]").forEach(el=> el.addEventListener("click", (e)=>{
+    if(e.target.closest("[data-ref-toggle]")||e.target.closest("[data-ref-addsub]")||e.target.closest("[data-ref-del]")) return;
+    currentRefId = el.getAttribute("data-ref-select"); refEditing=false; render();
+  }));
+  root.querySelectorAll("[data-ref-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    const id = el.getAttribute("data-ref-toggle");
+    if(refCollapsed.has(id)) refCollapsed.delete(id); else refCollapsed.add(id);
+    render();
+  }));
 
   const addPageBtn = document.getElementById("add-ref-page");
   if(addPageBtn) addPageBtn.addEventListener("click", async ()=>{
     const { data, error } = await supabase.from("reference_pages").insert({ title:"New page", body:"<p>Write here.</p>", parent_id:null, sort_order: tops.length }).select().single();
     if(!error){ await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
   });
-  root.querySelectorAll("[data-ref-addsub]").forEach(el=> el.addEventListener("click", async ()=>{
+  root.querySelectorAll("[data-ref-addsub]").forEach(el=> el.addEventListener("click", async (e)=>{
+    e.stopPropagation();
     const parentId = el.getAttribute("data-ref-addsub");
     const kids = childPages(parentId);
+    refCollapsed.delete(parentId);
     const { data, error } = await supabase.from("reference_pages").insert({ title:"New subsection", body:"<p>Write here.</p>", parent_id:parentId, sort_order: kids.length }).select().single();
     if(!error){ await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
   }));
-  root.querySelectorAll("[data-ref-up]").forEach(el=> el.addEventListener("click", async ()=>{ await moveRefPage(el.getAttribute("data-ref-up"), -1); }));
-  root.querySelectorAll("[data-ref-down]").forEach(el=> el.addEventListener("click", async ()=>{ await moveRefPage(el.getAttribute("data-ref-down"), 1); }));
-  root.querySelectorAll("[data-ref-del]").forEach(el=> el.addEventListener("click", async ()=>{
+  root.querySelectorAll("[data-ref-del]").forEach(el=> el.addEventListener("click", async (e)=>{
+    e.stopPropagation();
     const id = el.getAttribute("data-ref-del");
     const target = REFERENCE_PAGES.find(p=>p.id===id);
     const hasKids = childPages(id).length>0;
@@ -1059,6 +1244,21 @@ function renderReference(){
     }
   }));
 
+  if(editOn){
+    root.querySelectorAll("[data-ref-drag]").forEach(el=>{
+      el.addEventListener("dragstart", (e)=>{ dragRefId = el.getAttribute("data-ref-drag"); e.dataTransfer.effectAllowed = "move"; el.style.opacity = "0.4"; });
+      el.addEventListener("dragend", ()=>{ el.style.opacity = ""; });
+      el.addEventListener("dragover", (e)=>{ e.preventDefault(); });
+      el.addEventListener("drop", async (e)=>{
+        e.preventDefault();
+        const targetId = el.getAttribute("data-ref-drag");
+        if(!dragRefId || dragRefId===targetId) return;
+        await reorderRefDrop(dragRefId, targetId);
+        dragRefId = null;
+      });
+    });
+  }
+
   const editBtn = document.getElementById("ref-edit");
   if(editBtn) editBtn.addEventListener("click", ()=>{ refDraft = { title:page.title, body:page.body }; refEditing = true; render(); });
   const cancelBtn = document.getElementById("ref-cancel");
@@ -1066,7 +1266,7 @@ function renderReference(){
   const saveBtn = document.getElementById("ref-save");
   if(saveBtn) saveBtn.addEventListener("click", async ()=>{
     const title = document.getElementById("ref-title").value.trim() || "Untitled page";
-    const body = document.getElementById("ref-body").value;
+    const body = document.getElementById("ref-body-rte").innerHTML;
     await supabase.from("reference_pages").update({ title, body }).eq("id", page.id);
     refEditing = false; await loadReference(); render();
   });
@@ -1079,15 +1279,21 @@ function renderReference(){
   });
 }
 
-async function moveRefPage(id, direction){
-  const p = REFERENCE_PAGES.find(x=>x.id===id);
-  const siblings = (p.parent_id ? childPages(p.parent_id) : topLevelPages());
-  const idx = siblings.findIndex(s=>s.id===id);
-  const swapIdx = idx + direction;
-  if(swapIdx < 0 || swapIdx >= siblings.length) return;
-  const other = siblings[swapIdx];
-  await supabase.from("reference_pages").update({ sort_order: other.sort_order }).eq("id", p.id);
-  await supabase.from("reference_pages").update({ sort_order: p.sort_order }).eq("id", other.id);
+async function reorderRefDrop(draggedId, targetId){
+  const dragged = REFERENCE_PAGES.find(p=>p.id===draggedId);
+  const target = REFERENCE_PAGES.find(p=>p.id===targetId);
+  if(!dragged || !target) return;
+  if((dragged.parent_id||null) !== (target.parent_id||null)) return; // only reorder within the same level
+  const siblings = (dragged.parent_id ? childPages(dragged.parent_id) : topLevelPages());
+  const fromIdx = siblings.findIndex(s=>s.id===draggedId);
+  const toIdx = siblings.findIndex(s=>s.id===targetId);
+  if(fromIdx===-1 || toIdx===-1) return;
+  const reordered = siblings.slice();
+  reordered.splice(fromIdx,1);
+  reordered.splice(toIdx,0,dragged);
+  for(let i=0;i<reordered.length;i++){
+    if(reordered[i].sort_order !== i){ await supabase.from("reference_pages").update({ sort_order:i }).eq("id", reordered[i].id); }
+  }
   await loadReference(); render();
 }
 
