@@ -908,6 +908,8 @@ function renderShell(inner){
   const crumb = document.getElementById("crumb-home"); if(crumb) crumb.addEventListener("click", ()=>{ view=crumbTarget; render(); });
   document.getElementById("nav-home").addEventListener("click", ()=>{ view="home"; render(); });
   document.getElementById("nav-modules").addEventListener("click", ()=>{
+    if(view === "dashboard") return; // already on the list — do nothing
+    if(["lesson","quiz","results"].includes(view)){ view = "dashboard"; render(); return; } // inside a module — back to the list
     if(lastModuleContext && modById(lastModuleContext.modId)){
       currentModId = lastModuleContext.modId;
       currentLessonIdx = lastModuleContext.lessonIdx;
@@ -1161,6 +1163,7 @@ function renderResults(){
 let teamExpandedRows = new Set();
 let TEAMS_LIST = [];
 let teamRosterFilter = "";
+let pendingRoleChanges = {}; // userId -> newRole, staged until explicitly saved
 let teamSearchQuery = "";
 let teamModuleFilter = "";
 
@@ -1262,9 +1265,17 @@ function renderTeam(){
   const rows = filteredRows.map(r=>{
     const isSelf = r.id===profile.id;
     const expanded = teamExpandedRows.has(r.id);
+    const pendingRole = pendingRoleChanges[r.id];
     const roleSelect = isSelf
       ? `<span class="role-tag ${r.role==='admin'?'admin':''}">${r.role.toUpperCase()} (YOU)</span>`
-      : `<select class="mini-btn" data-role-select="${r.id}"><option value="agent" ${r.role==='agent'?'selected':''}>User</option><option value="editor" ${r.role==='editor'?'selected':''}>Editor</option><option value="admin" ${r.role==='admin'?'selected':''}>Admin</option></select>`;
+      : `<div style="display:flex;align-items:center;gap:6px;">
+          <select class="mini-btn" data-role-select="${r.id}">
+            <option value="agent" ${(pendingRole||r.role)==='agent'?'selected':''}>User</option>
+            <option value="editor" ${(pendingRole||r.role)==='editor'?'selected':''}>Editor</option>
+            <option value="admin" ${(pendingRole||r.role)==='admin'?'selected':''}>Admin</option>
+          </select>
+          ${(pendingRole && pendingRole!==r.role) ? `<button class="mini-btn" data-role-save="${r.id}" style="color:var(--green);border-color:var(--green-dim);">Save</button>` : ""}
+        </div>`;
     const resetBtn = !isSelf ? `<button class="mini-btn" data-reset-pw="${r.id}" data-reset-name="${escapeHtml(r.name)}">Reset password</button>` : "";
     const deleteUserBtn = !isSelf ? `<button class="mini-btn danger" data-delete-user="${r.id}" data-delete-name="${escapeHtml(r.name)}">Delete user</button>` : "";
 
@@ -1364,9 +1375,20 @@ function renderTeam(){
     }, 250);
   });
 
-  root.querySelectorAll("[data-role-select]").forEach(el=> el.addEventListener("change", async ()=>{
+  root.querySelectorAll("[data-role-select]").forEach(el=> el.addEventListener("change", (e)=>{
     const id = el.getAttribute("data-role-select");
-    await supabase.from("profiles").update({ role: el.value }).eq("id", id);
+    if(e.target.value === teamRows.find(r=>r.id===id)?.role) delete pendingRoleChanges[id];
+    else pendingRoleChanges[id] = e.target.value;
+    renderTeam();
+  }));
+  root.querySelectorAll("[data-role-save]").forEach(el=> el.addEventListener("click", async (e)=>{
+    e.stopPropagation();
+    const id = el.getAttribute("data-role-save");
+    const newRole = pendingRoleChanges[id];
+    if(!newRole) return;
+    const { error } = await supabase.from("profiles").update({ role: newRole }).eq("id", id);
+    if(error){ alert("Couldn't save role: " + error.message); return; }
+    delete pendingRoleChanges[id];
     await openTeamProgress();
   }));
   root.querySelectorAll("[data-reset-pw]").forEach(el=> el.addEventListener("click", (e)=>{
@@ -1378,7 +1400,7 @@ function renderTeam(){
     openDeleteUserModal(el.getAttribute("data-delete-user"), el.getAttribute("data-delete-name"));
   }));
   root.querySelectorAll("[data-team-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
-    if(e.target.closest("[data-role-select]")||e.target.closest("[data-reset-pw]")||e.target.closest("[data-delete-user]")) return;
+    if(e.target.closest("[data-role-select]")||e.target.closest("[data-role-save]")||e.target.closest("[data-reset-pw]")||e.target.closest("[data-delete-user]")) return;
     const id = el.getAttribute("data-team-toggle");
     if(teamExpandedRows.has(id)) teamExpandedRows.delete(id); else teamExpandedRows.add(id);
     render();
@@ -2304,18 +2326,28 @@ function attachImageResizeHandles(editorEl){
       const handle = document.createElement("span");
       handle.className = "rte-resize-handle";
       handle.setAttribute("contenteditable", "false");
+      handle.setAttribute("draggable", "false");
       wrap.appendChild(handle);
     }
     if(!wrap.querySelector(".rte-img-delete")){
       const delBtn = document.createElement("span");
       delBtn.className = "rte-img-delete";
       delBtn.setAttribute("contenteditable", "false");
+      delBtn.setAttribute("draggable", "false");
       delBtn.title = "Delete image";
       delBtn.textContent = "✕";
       wrap.appendChild(delBtn);
     }
   });
 }
+// The wrapper itself is draggable="true" (so the picture can be dragged to a new
+// spot in the text), but that same setting can hijack a mousedown-drag gesture
+// that started on the resize handle or delete button, turning it into a native
+// drag instead of our custom resize logic — which is what made resizing feel
+// inconsistent. Block native drag from ever starting on those two controls.
+document.addEventListener("dragstart", (e)=>{
+  if(e.target.closest(".rte-resize-handle") || e.target.closest(".rte-img-delete")) e.preventDefault();
+});
 document.addEventListener("click", (e)=>{
   const delBtn = e.target.closest(".rte-img-delete");
   if(!delBtn) return;
@@ -2337,12 +2369,32 @@ document.addEventListener("mousedown", (e)=>{
 });
 document.addEventListener("mousemove", (e)=>{
   if(!_imgResizeDrag) return;
+  e.preventDefault();
   const { img, startX, startY, startW, startH } = _imgResizeDrag;
   const w = Math.max(80, startW + (e.clientX - startX));
   const h = Math.max(60, startH + (e.clientY - startY));
   setImageSize(img, w, h);
 });
 document.addEventListener("mouseup", ()=>{ _imgResizeDrag = null; });
+// Touch support (tablets, touchscreen laptops) — same logic, different events.
+document.addEventListener("touchstart", (e)=>{
+  const handle = e.target.closest(".rte-resize-handle");
+  if(!handle) return;
+  const wrap = handle.parentElement;
+  const img = wrap.querySelector("img");
+  if(!img) return;
+  const t = e.touches[0];
+  _imgResizeDrag = { img, startX:t.clientX, startY:t.clientY, startW:img.offsetWidth, startH:img.offsetHeight };
+}, { passive:true });
+document.addEventListener("touchmove", (e)=>{
+  if(!_imgResizeDrag) return;
+  const t = e.touches[0];
+  const { img, startX, startY, startW, startH } = _imgResizeDrag;
+  const w = Math.max(80, startW + (t.clientX - startX));
+  const h = Math.max(60, startH + (t.clientY - startY));
+  setImageSize(img, w, h);
+}, { passive:true });
+document.addEventListener("touchend", ()=>{ _imgResizeDrag = null; });
 function normalizePastedImages(editorEl){
   const rawImgs = Array.from(editorEl.querySelectorAll("img")).filter(img =>
     !img.closest(".rte-img-wrap") && !img.classList.contains("brand-mark") && !img.closest("header.top")
