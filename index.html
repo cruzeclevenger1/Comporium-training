@@ -1297,6 +1297,9 @@ function openTeamManageModal(teamId){
 }
 
 function renderTeam(){
+  if(teamsSectionOpen.quizzes && !QUIZ_PROGRESS_ROWS && teamRows.length){
+    loadQuizProgressData().then(()=> render());
+  }
   const teamsHtml = TEAMS_LIST.length ? TEAMS_LIST.map(t=>`
     <button class="mini-btn" data-manage-team="${t.id}" style="margin:0 6px 6px 0;">${escapeHtml(t.name)} · ${t.memberIds.length}</button>
   `).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No teams yet.</p>`;
@@ -1754,8 +1757,10 @@ async function showStandaloneQuizAttemptDetail(userId, quizId){
       const { error } = await supabase.from("standalone_quiz_attempts").update({ answers: updatedAnswers, graded: true }).eq("quiz_id", quizId).eq("user_id", userId);
       if(error){ alert("Couldn't save grading: " + error.message); return; }
       logEdit("graded", "standalone_quiz_attempt", `${quiz?quiz.title:'quiz'} — ${person?person.name:'submission'}`);
-      QUIZ_PROGRESS_ROWS = null; // force a fresh load next time Quiz Progress is opened
-      await showStandaloneQuizAttemptDetail(userId, quizId);
+      showToast("Grading saved.");
+      await loadQuizProgressData(); // refresh the roster's pill, not just this detail panel
+      render();
+      await showStandaloneQuizAttemptDetail(userId, quizId); // re-show the detail panel, now reflecting the graded state
     });
   }
 }
@@ -2116,7 +2121,8 @@ function wireQuizBuilderEvents(){
     d.sent = true;
     logEdit("sent", "standalone_quiz", d.title);
     showToast("Quiz sent.");
-    renderQuizBuilder();
+    await loadStandaloneQuizzes();
+    view = "quizzes"; render();
     // Notify whoever it was sent to (best-effort — never let this block the UI from updating).
     (async ()=>{
       const recipientRole = d.audienceType==="everyone" ? null : d.audienceType==="team" ? "team" : "specific";
