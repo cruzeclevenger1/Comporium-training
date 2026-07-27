@@ -221,6 +221,8 @@
   .rte-img-wrap{ display:inline-block; position:relative; overflow:hidden; max-width:100%; vertical-align:bottom; margin:6px 4px; border-radius:8px; }
   .rte-body .rte-img-wrap{ cursor:grab; }
   .rte-resize-handle{ position:absolute; right:2px; bottom:2px; width:14px; height:14px; cursor:nwse-resize; background:linear-gradient(135deg, transparent 50%, var(--cyan) 50%); border-radius:0 0 4px 0; opacity:0.9; z-index:1; }
+  .rte-img-delete{ position:absolute; top:3px; right:3px; width:18px; height:18px; border-radius:50%; background:#c0392bdd; color:#fff; font-size:11px; line-height:18px; text-align:center; cursor:pointer; z-index:2; display:none; }
+  .rte-body .rte-img-wrap:hover .rte-img-delete{ display:block; }
   .rte-img-wrap img{ display:block; object-fit:cover; pointer-events:none; max-width:100%; }
   .card .body .rte-img-wrap img, .chat-bubble-body .rte-img-wrap img, .sub-card .rte-img-wrap img{ pointer-events:auto; cursor:zoom-in; }
 
@@ -322,6 +324,7 @@ let authInfo = "";
 
 let currentModId = null;
 let currentLessonIdx = 0;
+let lastModuleContext = null; // { view, modId, lessonIdx } — lets the Training Modules nav tab resume where the person left off
 let quizAnswers = []; let quizRevealed = []; let quizIdx = 0;
 
 let draftModule = null; let editingExistingId = null;
@@ -407,6 +410,24 @@ document.addEventListener("click", (e)=>{
   e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
   openUltEditModal(el.getAttribute("data-ult-key"));
 }, true);
+
+// Enter submits the nearest primary action from any single-line text input —
+// textareas and contenteditable bodies are untouched, since Enter there means
+// "new line," not "submit."
+const ENTER_SUBMIT_SKIP_TYPES = ["checkbox","radio","button","submit","file","range","color"];
+document.addEventListener("keydown", (e)=>{
+  if(e.key !== "Enter" || e.shiftKey) return;
+  const el = e.target;
+  if(!el || el.tagName !== "INPUT") return;
+  if(ENTER_SUBMIT_SKIP_TYPES.includes((el.type||"text").toLowerCase())) return;
+  if(el.hasAttribute("data-no-enter-submit")) return;
+  const container = el.closest(".modal, .card, .auth-wrap") || document;
+  const primaryBtn = container.querySelector(".btn.primary, #auth-submit");
+  if(primaryBtn && !primaryBtn.disabled){
+    e.preventDefault();
+    primaryBtn.click();
+  }
+});
 function modById(id){ return MODULES.find(m=>m.id===id); }
 function pct(s){ return s && s.total ? Math.round((s.best/s.total)*100) : 0; }
 function overallPct(m){
@@ -431,7 +452,8 @@ async function markLessonViewed(m, lessonId){
 }
 let editMode = false;
 function isAdmin(){ if(guestMode) return guestViewingAsAdmin; return profile && profile.role === "admin"; }
-function canEdit(){ return isAdmin() && editMode; }
+function isEditor(){ if(guestMode) return false; return profile && profile.role === "editor"; }
+function canEdit(){ return (isAdmin() || isEditor()) && editMode; }
 
 /* ============================================================
    DATA LOADING
@@ -869,7 +891,7 @@ function renderShell(inner){
               <button id="open-announce">📣 Make Announcement</button>
               <button id="open-guest-editor">👀 Edit Guest Preview</button>
             </div>
-          </div>` : ""}
+          </div>` : isEditor() ? `<button class="pill-btn" id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>` : ""}
         <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
       </div>
     </header>
@@ -885,7 +907,16 @@ function renderShell(inner){
   `;
   const crumb = document.getElementById("crumb-home"); if(crumb) crumb.addEventListener("click", ()=>{ view=crumbTarget; render(); });
   document.getElementById("nav-home").addEventListener("click", ()=>{ view="home"; render(); });
-  document.getElementById("nav-modules").addEventListener("click", ()=>{ view="dashboard"; render(); });
+  document.getElementById("nav-modules").addEventListener("click", ()=>{
+    if(lastModuleContext && modById(lastModuleContext.modId)){
+      currentModId = lastModuleContext.modId;
+      currentLessonIdx = lastModuleContext.lessonIdx;
+      view = lastModuleContext.view;
+    } else {
+      view = "dashboard";
+    }
+    render();
+  });
   document.getElementById("nav-reference").addEventListener("click", openReference);
   document.getElementById("nav-notes").addEventListener("click", openNotes);
   document.getElementById("open-settings").addEventListener("click", ()=>{ view="settings"; render(); });
@@ -904,6 +935,11 @@ function renderShell(inner){
   if(goTeamBtn) goTeamBtn.addEventListener("click", openTeamProgress);
   const guestViewToggle = document.getElementById("guest-view-toggle");
   if(guestViewToggle) guestViewToggle.addEventListener("click", ()=>{ guestViewingAsAdmin = !guestViewingAsAdmin; view="home"; render(); });
+  // Every single page render — however it was reached, including internal calls
+  // that bypass the top-level render() router entirely — passes through here.
+  // That makes this the one guaranteed place to catch and fix any raw/oversized
+  // images, rather than relying on callers to remember to trigger it themselves.
+  normalizePastedImages(root);
 }
 
 /* ============================================================
@@ -1038,6 +1074,7 @@ function renderDashboard(){
    ============================================================ */
 function renderLesson(){
   const m = modById(currentModId); if(!m){ view="dashboard"; render(); return; }
+  lastModuleContext = { view:"lesson", modId: currentModId, lessonIdx: currentLessonIdx };
   const lesson = m.lessons[currentLessonIdx];
   if(lesson.id) markLessonViewed(m, lesson.id);
   const tabs = m.lessons.map((l,i)=>`<button class="lesson-tab ${i===currentLessonIdx?'active':''}" data-idx="${i}">${i+1}. ${escapeHtml(l.title)}</button>`).join("");
@@ -1063,6 +1100,7 @@ function startQuiz(){ const m=modById(currentModId); quizAnswers=new Array(m.qui
 
 function renderQuiz(){
   const m = modById(currentModId); if(!m||!m.quiz.length){ view="lesson"; render(); return; }
+  lastModuleContext = { view:"quiz", modId: currentModId, lessonIdx: currentLessonIdx };
   const q = m.quiz[quizIdx]; const revealed = quizRevealed[quizIdx]; const selected = quizAnswers[quizIdx];
   const opts = q.opts.map((opt,i)=>{ let cls="opt"; if(revealed){ cls+=" disabled"; if(i===q.correct) cls+=" correct"; else if(i===selected) cls+=" wrong"; } else if(i===selected){ cls+=" selected"; }
     return `<div class="${cls}" data-idx="${i}"><div class="dot"></div><span class="txt">${escapeHtml(opt)}</span></div>`; }).join("");
@@ -1104,6 +1142,7 @@ async function finishQuiz(){
 
 function renderResults(){
   const m = modById(currentModId); const s = progressMap[m.id]; const p = pct(s);
+  lastModuleContext = { view:"results", modId: currentModId, lessonIdx: currentLessonIdx };
   const leds = Array.from({length:5}).map((_,i)=>{ const lit = i < Math.round((s.lastScore/s.total)*5); const color = p===100?"on-green":p>=60?"on-amber":"on-red"; return `<span class="led ${lit?color:''}"></span>`; }).join("");
   const verdict = p===100?"Fully registered. This module is locked in.":p>=60?"Mostly holding — worth a second pass before it's live-call ready.":"Signal's not there yet. Revisit the lessons and retake when ready.";
   renderShell(`
@@ -1225,7 +1264,7 @@ function renderTeam(){
     const expanded = teamExpandedRows.has(r.id);
     const roleSelect = isSelf
       ? `<span class="role-tag ${r.role==='admin'?'admin':''}">${r.role.toUpperCase()} (YOU)</span>`
-      : `<select class="mini-btn" data-role-select="${r.id}"><option value="agent" ${r.role==='agent'?'selected':''}>User</option><option value="admin" ${r.role==='admin'?'selected':''}>Admin</option></select>`;
+      : `<select class="mini-btn" data-role-select="${r.id}"><option value="agent" ${r.role==='agent'?'selected':''}>User</option><option value="editor" ${r.role==='editor'?'selected':''}>Editor</option><option value="admin" ${r.role==='admin'?'selected':''}>Admin</option></select>`;
     const resetBtn = !isSelf ? `<button class="mini-btn" data-reset-pw="${r.id}" data-reset-name="${escapeHtml(r.name)}">Reset password</button>` : "";
     const deleteUserBtn = !isSelf ? `<button class="mini-btn danger" data-delete-user="${r.id}" data-delete-name="${escapeHtml(r.name)}">Delete user</button>` : "";
 
@@ -1292,7 +1331,7 @@ function renderTeam(){
         <h2 style="margin:0;">Progress</h2>
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
           <button class="btn" id="go-analyze-btn">📊 Analyze</button>
-          <input type="text" id="team-search" placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" style="width:180px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
+          <input type="text" id="team-search" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" style="width:180px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
           <select id="team-filter" style="width:auto;">
             <option value="">All teams</option>
             ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
@@ -1636,7 +1675,19 @@ function renderNotifications(){
       <div style="font-size:14px;color:var(--text);">${a.body}</div>
     </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">No announcements yet.</p>`;
 
-  const unclaimedHtml = NOTIF_UNCLAIMED.map(m=>`
+  const unclaimedHtml = NOTIF_UNCLAIMED.map(m=>{
+    if(m.type === "admin_request"){
+      return `
+        <div class="sub-card">
+          <div class="sub-card-head"><span class="tag">🔑 ADMIN REQUEST · ${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</span></div>
+          <div style="font-size:14px;margin-bottom:12px;color:var(--text);">${m.body}</div>
+          <div style="display:flex;gap:10px;">
+            <button class="btn primary" data-admreq-accept="${m.id}" data-admreq-user="${m.sender_id}" data-admreq-name="${escapeHtml(m.sender_name)}">Accept</button>
+            <button class="btn danger" data-admreq-deny="${m.id}" data-admreq-user="${m.sender_id}" data-admreq-name="${escapeHtml(m.sender_name)}">Deny</button>
+          </div>
+        </div>`;
+    }
+    return `
     <div class="sub-card">
       <div class="sub-card-head"><span class="tag">${typeLabel[m.type]||m.type} · ${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</span>
         <button class="mini-btn danger" data-discard-thread="${m.id}">Discard</button></div>
@@ -1644,7 +1695,8 @@ function renderNotifications(){
       <div style="font-size:14px;margin-bottom:12px;color:var(--text);">${m.body}</div>
       <div class="field"><label>Reply</label>${richEditorHtml(`thread-rte-${m.id}`, "")}</div>
       <button class="mini-btn" data-send-thread="${m.id}" style="margin-top:8px;">Send</button>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 
   renderShell(`
     <div class="card">
@@ -1686,6 +1738,26 @@ function renderNotifications(){
   }));
   root.querySelectorAll("[data-send-thread]").forEach(el=> el.addEventListener("click", async ()=>{
     await sendThreadMessage(el.getAttribute("data-send-thread"));
+  }));
+  root.querySelectorAll("[data-admreq-accept]").forEach(el=> el.addEventListener("click", async ()=>{
+    const msgId = el.getAttribute("data-admreq-accept");
+    const userId = el.getAttribute("data-admreq-user");
+    const name = el.getAttribute("data-admreq-name");
+    if(!confirm(`Make ${name} an admin?`)) return;
+    const { error: roleErr } = await supabase.from("profiles").update({ role:"admin" }).eq("id", userId);
+    if(roleErr){ alert("Couldn't update their role: " + roleErr.message); return; }
+    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: userId, audience:"user", type:"reply", claimed_by: session.user.id, body:`<p>Your admin request was approved by ${escapeHtml(profile.name)}. Log out and back in (or refresh) to see your new access.</p>` });
+    await supabase.from("messages").delete().eq("id", msgId);
+    await refreshMessagingView();
+  }));
+  root.querySelectorAll("[data-admreq-deny]").forEach(el=> el.addEventListener("click", async ()=>{
+    const msgId = el.getAttribute("data-admreq-deny");
+    const userId = el.getAttribute("data-admreq-user");
+    const name = el.getAttribute("data-admreq-name");
+    if(!confirm(`Deny ${name}'s admin request?`)) return;
+    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: userId, audience:"user", type:"reply", claimed_by: session.user.id, body:`<p>Your admin request was reviewed by ${escapeHtml(profile.name)} and wasn't approved at this time.</p>` });
+    await supabase.from("messages").delete().eq("id", msgId);
+    await refreshMessagingView();
   }));
 }
 
@@ -2234,8 +2306,25 @@ function attachImageResizeHandles(editorEl){
       handle.setAttribute("contenteditable", "false");
       wrap.appendChild(handle);
     }
+    if(!wrap.querySelector(".rte-img-delete")){
+      const delBtn = document.createElement("span");
+      delBtn.className = "rte-img-delete";
+      delBtn.setAttribute("contenteditable", "false");
+      delBtn.title = "Delete image";
+      delBtn.textContent = "✕";
+      wrap.appendChild(delBtn);
+    }
   });
 }
+document.addEventListener("click", (e)=>{
+  const delBtn = e.target.closest(".rte-img-delete");
+  if(!delBtn) return;
+  e.preventDefault(); e.stopPropagation();
+  const wrap = delBtn.parentElement;
+  const editorEl = wrap.closest(".rte-body");
+  wrap.remove();
+  if(editorEl) editorEl.dispatchEvent(new Event("input", { bubbles:true }));
+});
 let _imgResizeDrag = null;
 document.addEventListener("mousedown", (e)=>{
   const handle = e.target.closest(".rte-resize-handle");
@@ -2569,7 +2658,7 @@ function wireEditorEvents(){
     currentModId = id; currentLessonIdx = 0;
     view = MODULES.find(m=>m.id===id).lessons.length ? "lesson" : "dashboard";
     render();
-    if(wasNewModule) openNewModuleNotifyModal(d.title);
+    if(wasNewModule && isAdmin()) openNewModuleNotifyModal(d.title);
   });
 }
 
@@ -2771,11 +2860,36 @@ function renderSettings(){
         </div>
       </div>
 
+      ${(!isAdmin() && !guestMode) ? `
+      <div class="editor-section">
+        <div class="editor-section-head"><h3>Admin access</h3></div>
+        <p style="color:var(--text-dim);font-size:13px;margin:0 0 12px;">If you need admin access — for content editing, team management, etc. — you can request it. Any admin can approve or deny it from their Notifications.</p>
+        <button class="btn" id="request-admin-btn">Request admin access</button>
+        <div id="admin-req-status" class="info-msg" style="margin:8px 0 0;min-height:16px;"></div>
+      </div>` : ""}
+
       <div class="nav-buttons"><button class="btn" id="back-dash-settings">← Back to dashboard</button><div></div></div>
     </div>
   `);
 
   document.getElementById("back-dash-settings").addEventListener("click", ()=>{ view="home"; render(); });
+
+  const reqAdminBtn = document.getElementById("request-admin-btn");
+  if(reqAdminBtn) reqAdminBtn.addEventListener("click", async ()=>{
+    const status = document.getElementById("admin-req-status");
+    reqAdminBtn.disabled = true;
+    const { data: existing } = await supabase.from("messages").select("id").eq("sender_id", session.user.id).eq("type","admin_request").is("thread_id", null);
+    if(existing && existing.length){
+      status.textContent = "You already have a pending request — an admin will review it soon.";
+      status.style.color = "var(--amber)";
+      reqAdminBtn.disabled = false;
+      return;
+    }
+    const { error } = await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"admins", type:"admin_request", body:`<p>${escapeHtml(profile.name)} is requesting admin access.</p>` });
+    if(error){ status.textContent = "Couldn't send request: " + error.message; status.style.color = "var(--red)"; reqAdminBtn.disabled = false; return; }
+    status.textContent = "Request sent — an admin will review it soon.";
+    status.style.color = "var(--green)";
+  });
 
   document.getElementById("save-name").addEventListener("click", async ()=>{
     const newName = document.getElementById("set-name").value.trim();
@@ -3245,10 +3359,6 @@ function render(){
   else if(view==="chat") renderChat();
   else if(view==="notes") renderNotes();
   else if(view==="guest-editor") renderGuestEditor();
-  // Catch any raw <img> tags left over from before this fix existed (or from
-  // any other source) so every picture gets resize/click-to-enlarge, not just
-  // newly pasted ones — this only touches the live DOM, no save needed.
-  normalizePastedImages(root);
 }
 
 /* ============================================================
