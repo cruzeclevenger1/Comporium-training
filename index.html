@@ -447,7 +447,8 @@ function overallPct(m){
   const totalLessons = m.lessons.length || 1;
   const viewedCount = s && s.lessonsViewed ? s.lessonsViewed.length : 0;
   const lessonFraction = Math.min(viewedCount / totalLessons, 1);
-  const quizFraction = s && m.quiz.length ? (s.best||0) / m.quiz.length : 0;
+  if(!m.quiz.length) return Math.round(lessonFraction * 100);
+  const quizFraction = s ? (s.best||0) / m.quiz.length : 0;
   return Math.round((lessonFraction*0.5 + quizFraction*0.5) * 100);
 }
 async function markLessonViewed(m, lessonId){
@@ -967,6 +968,13 @@ function resumeLessonIdx(m){
 }
 function moduleStatus(id){
   const s = progressMap[id];
+  const m = modById(id);
+  if(m && !m.quiz.length){
+    const viewedCount = s && s.lessonsViewed ? s.lessonsViewed.length : 0;
+    if(m.lessons.length && viewedCount >= m.lessons.length) return "mastered";
+    if(viewedCount > 0) return "reading";
+    return "new";
+  }
   if(!s) return "new";
   if(s.total > 0 && s.best === s.total) return "mastered";
   if(!s.attempts) return "reading";
@@ -999,7 +1007,7 @@ function renderDashboard(){
     const status = moduleStatus(m.id); const s = progressMap[m.id];
     const pillHtml = status==="mastered" ? `<span class="status-pill done">Mastered</span>`
       : status==="attempted" ? `<span class="status-pill progress">${s.best}/${s.total} correct</span>`
-      : status==="reading" ? `<span class="status-pill progress">Quiz not started</span>`
+      : status==="reading" ? `<span class="status-pill progress">${m.quiz.length ? "Quiz not started" : "In progress"}</span>`
       : `<span class="status-pill">Not started</span>`;
     const on = status!=="new"; const mastered = status==="mastered";
     const leds = `<span class="led ${on?'on-green':''}"></span><span class="led ${on?(mastered?'on-green':'on-amber blink'):''}"></span><span class="led ${mastered?'on-green':''}"></span>`;
@@ -1094,18 +1102,21 @@ function renderLesson(){
   const tabs = m.lessons.map((l,i)=>`<button class="lesson-tab ${i===currentLessonIdx?'active':''}" data-idx="${i}">${i+1}. ${escapeHtml(l.title)}</button>`).join("");
   const isLast = currentLessonIdx === m.lessons.length-1;
   const editBtn = canEdit() ? `<button class="lesson-tab" id="edit-mod" style="border-color:var(--amber);color:var(--amber);">✎ Edit module</button>` : "";
+  const hasQuiz = m.quiz.length > 0;
+  const quizTab = hasQuiz ? `<button class="lesson-tab quiz" id="go-quiz">TAKE QUIZ →</button>` : "";
   renderShell(`
-    <div class="lesson-nav">${tabs}${editBtn}<button class="lesson-tab quiz" id="go-quiz">TAKE QUIZ →</button></div>
+    <div class="lesson-nav">${tabs}${editBtn}${quizTab}</div>
     <div class="card"><div class="k-label">${escapeHtml(lesson.label)}</div><h2>${escapeHtml(lesson.title)}</h2><div class="body">${lesson.body}</div>
       <div class="nav-buttons"><button class="btn" id="prev-lesson" ${currentLessonIdx===0?'disabled':''}>← Previous</button>
-      ${isLast? `<button class="btn primary" id="to-quiz-btn">Start module quiz →</button>` : `<button class="btn primary" id="next-lesson">Next lesson →</button>`}</div>
+      ${isLast ? (hasQuiz ? `<button class="btn primary" id="to-quiz-btn">Start module quiz →</button>` : `<button class="btn primary" id="back-to-modules-btn">Back to Training Modules →</button>`) : `<button class="btn primary" id="next-lesson">Next lesson →</button>`}</div>
       <div class="nav-buttons" style="margin-top:8px;"><button class="mini-btn" id="comment-lesson">💬 Comment</button><div></div></div>
     </div>`);
   root.querySelectorAll(".lesson-tab[data-idx]").forEach(el=> el.addEventListener("click", ()=>{ currentLessonIdx=parseInt(el.getAttribute("data-idx")); render(); }));
-  document.getElementById("go-quiz").addEventListener("click", startQuiz);
+  const goQuiz = document.getElementById("go-quiz"); if(goQuiz) goQuiz.addEventListener("click", startQuiz);
   const prev=document.getElementById("prev-lesson"); if(prev) prev.addEventListener("click", ()=>{ if(currentLessonIdx>0){currentLessonIdx--; render();} });
   const next=document.getElementById("next-lesson"); if(next) next.addEventListener("click", ()=>{ currentLessonIdx++; render(); });
   const toQuiz=document.getElementById("to-quiz-btn"); if(toQuiz) toQuiz.addEventListener("click", startQuiz);
+  const backToModules=document.getElementById("back-to-modules-btn"); if(backToModules) backToModules.addEventListener("click", ()=>{ view="dashboard"; render(); });
   const editMod=document.getElementById("edit-mod"); if(editMod) editMod.addEventListener("click", ()=>openEditor(m.id));
   document.getElementById("comment-lesson").addEventListener("click", ()=> openFeedbackModal("comment", `${m.title} — ${lesson.title}`));
 }
@@ -1200,8 +1211,12 @@ async function openTeamProgress(){
       const totalLessons = m.lessons.length || 1;
       const viewedCount = r && r.lessons_viewed ? r.lessons_viewed.length : 0;
       const lessonFraction = Math.min(viewedCount/totalLessons, 1);
-      const quizFraction = r && m.quiz.length ? (r.best_score||0)/m.quiz.length : 0;
-      perModule[m.id] = Math.round((lessonFraction*0.5 + quizFraction*0.5) * 100);
+      if(!m.quiz.length){
+        perModule[m.id] = Math.round(lessonFraction * 100);
+      } else {
+        const quizFraction = r ? (r.best_score||0)/m.quiz.length : 0;
+        perModule[m.id] = Math.round((lessonFraction*0.5 + quizFraction*0.5) * 100);
+      }
       perModuleRaw[m.id] = { best: r ? (r.best_score||0) : 0, total: m.quiz.length, attempts: r ? (r.attempts||0) : 0 };
     });
     const values = Object.values(perModule);
@@ -1266,7 +1281,13 @@ function renderTeam(){
     <button class="mini-btn" data-manage-team="${t.id}" style="margin:0 6px 6px 0;">${escapeHtml(t.name)} · ${t.memberIds.length}</button>
   `).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No teams yet.</p>`;
 
-  let filteredRows = teamRosterFilter ? teamRows.filter(r=> r.teamIds.includes(teamRosterFilter)) : teamRows;
+  let filteredRows = teamRows;
+  if(teamRosterFilter.startsWith("role:")){
+    const role = teamRosterFilter.slice(5);
+    filteredRows = teamRows.filter(r=> r.role === role);
+  } else if(teamRosterFilter){
+    filteredRows = teamRows.filter(r=> r.teamIds.includes(teamRosterFilter));
+  }
   if(teamSearchQuery.trim()){
     const q = teamSearchQuery.trim().toLowerCase();
     filteredRows = filteredRows.filter(r=> r.name.toLowerCase().includes(q));
@@ -1307,7 +1328,7 @@ function renderTeam(){
             <span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${pct}%</span>
           </div>
         </td>`;
-      thirdCell = `<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${raw.attempts ? `${raw.best}/${raw.total} correct` : "no attempts yet"}</td>`;
+      thirdCell = `<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${!focusModule.quiz.length ? "No quiz for this module" : (raw.attempts ? `${raw.best}/${raw.total} correct` : "no attempts yet")}</td>`;
     } else {
       progressCell = `<td style="min-width:160px;">
           <div style="display:flex;align-items:center;gap:8px;">
@@ -1357,6 +1378,9 @@ function renderTeam(){
           <input type="text" id="team-search" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" style="width:180px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
           <select id="team-filter" style="width:auto;">
             <option value="">All teams</option>
+            <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
+            <option value="role:editor" ${teamRosterFilter==='role:editor'?'selected':''}>Editors</option>
+            <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
             ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
           </select>
           <select id="module-filter" style="width:auto;">
@@ -1431,9 +1455,13 @@ async function showAttemptDetail(userId, moduleId){
   const m = modById(moduleId);
 
   let a;
+  if(!m || !m.quiz.length){
+    holder.innerHTML = `<div class="card"><p style="color:var(--text-dim);font-size:13.5px;">There is not a quiz for this module.</p></div>`;
+    return;
+  }
   if(guestMode){
     const raw = person ? person.perModuleRaw[moduleId] : null;
-    if(!raw || !raw.attempts || !m || !m.quiz.length){
+    if(!raw || !raw.attempts){
       holder.innerHTML = `<div class="card"><p style="color:var(--text-dim);font-size:13.5px;">${escapeHtml(person?person.name:'This person')} hasn't taken the ${escapeHtml(m?m.title:'')} quiz yet.</p></div>`;
       return;
     }
@@ -1496,14 +1524,18 @@ async function openAnalyze(){
   ANALYZE_MODULE_STATS = MODULES.map(m=>{
     const progRows = (allProgress||[]).filter(p=>p.module_id===m.id);
     const totalLessons = m.lessons.length || 1;
+    const hasQuiz = m.quiz.length > 0;
     const completions = progRows.map(p=>{
       const viewedCount = p.lessons_viewed ? p.lessons_viewed.length : 0;
       const lessonFraction = Math.min(viewedCount/totalLessons, 1);
-      const quizFraction = m.quiz.length ? (p.best_score||0)/m.quiz.length : 0;
+      if(!hasQuiz) return lessonFraction * 100;
+      const quizFraction = (p.best_score||0)/m.quiz.length;
       return (lessonFraction*0.5 + quizFraction*0.5) * 100;
     });
     const avgCompletion = completions.length ? Math.round(completions.reduce((a,b)=>a+b,0)/completions.length) : 0;
-    const masteredCount = progRows.filter(p=> m.quiz.length>0 && p.best_score===m.quiz.length).length;
+    const masteredCount = hasQuiz
+      ? progRows.filter(p=> p.best_score===m.quiz.length).length
+      : progRows.filter(p=> (p.lessons_viewed?p.lessons_viewed.length:0) >= m.lessons.length).length;
     const startedCount = progRows.length;
     return { id:m.id, title:m.title, avgCompletion, masteredCount, startedCount };
   });
