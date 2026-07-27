@@ -247,6 +247,9 @@
   .guest-banner{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; background:var(--amber-dim); border:1px solid var(--amber); border-radius:10px; padding:10px 16px; margin-bottom:16px; font-size:13px; color:var(--amber); }
   .feedback-fab{ position:fixed; bottom:24px; right:24px; z-index:400; background:var(--panel); border:1px solid var(--stroke); color:var(--text); padding:12px 18px; border-radius:30px; font-family:var(--sans); font-size:13.5px; cursor:pointer; box-shadow:0 8px 24px #000000aa; transition:border-color .15s, color .15s; }
   .feedback-fab:hover{ border-color:var(--cyan); color:var(--cyan); }
+  .update-banner{ position:fixed; top:0; left:0; right:0; z-index:600; background:var(--cyan); color:#04141a; font-family:var(--sans); font-size:13.5px; font-weight:600; padding:10px 16px; display:flex; align-items:center; justify-content:center; gap:16px; box-shadow:0 4px 16px #00000055; flex-wrap:wrap; }
+  .update-banner button{ background:#04141a; color:var(--cyan); border:none; border-radius:6px; padding:6px 14px; font-size:12.5px; font-weight:700; cursor:pointer; font-family:var(--sans); }
+  .update-banner button:hover{ opacity:0.85; }
   .ult-edit-text{ cursor:pointer; border-bottom:1px dashed var(--amber); }
   .ult-edit-text:hover{ background:var(--amber-dim); }
   .lightbox-close:hover{ background:#ffffff22; }
@@ -277,6 +280,10 @@
 /* ============================================================
    FILL THESE IN — Supabase project settings → API
    ============================================================ */
+// Bumped every time this file is delivered — powers the "an update is
+// available" banner, which polls this same file and compares versions.
+const BUILD_VERSION = "2026-07-27T00:00Z-r1";
+
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
 
@@ -3289,6 +3296,31 @@ function promptModal(title, placeholder, defaultValue){
 /* ============================================================
    ANONYMOUS FEEDBACK
    ============================================================ */
+/* ============================================================
+   UPDATE BANNER — polls this same file periodically; if its
+   embedded BUILD_VERSION has changed, someone shipped a new
+   version, so prompt this open tab to refresh.
+   ============================================================ */
+function showUpdateBanner(){
+  if(document.getElementById("update-banner")) return; // already showing
+  const bar = document.createElement("div");
+  bar.id = "update-banner";
+  bar.className = "update-banner";
+  bar.innerHTML = `<span>🔄 An update has been made. Refresh your tab to see the newest changes.</span><button id="update-banner-refresh">Refresh now</button>`;
+  document.body.prepend(bar);
+  document.getElementById("update-banner-refresh").addEventListener("click", ()=> window.location.reload());
+}
+async function checkForNewVersion(){
+  try{
+    const res = await fetch(window.location.pathname + "?_v=" + Date.now(), { cache: "no-store" });
+    if(!res.ok) return;
+    const html = await res.text();
+    const match = html.match(/const BUILD_VERSION = "([^"]+)"/);
+    if(match && match[1] && match[1] !== BUILD_VERSION) showUpdateBanner();
+  }catch(e){ /* network hiccup — just try again next interval */ }
+}
+setInterval(checkForNewVersion, 3 * 60 * 1000); // every 3 minutes
+
 function ensureFeedbackButton(){
   if(document.getElementById("feedback-fab")) return;
   const btn = document.createElement("button");
