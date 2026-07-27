@@ -207,13 +207,21 @@
   .modal .modal-actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:16px; }
   .modal-error{ color:var(--red); font-size:12.5px; font-family:var(--mono); margin:-8px 0 12px; }
 
-  .rte-toolbar{ display:flex; gap:4px; flex-wrap:wrap; align-items:center; padding:6px; border:1px solid var(--stroke); border-bottom:none; border-radius:8px 8px 0 0; background:#0e1626; }
+  .rte-toolbar{ display:flex; gap:3px; flex-wrap:wrap; align-items:center; padding:7px 8px; border:1px solid var(--stroke); border-bottom:none; border-radius:10px 10px 0 0; background:#0e1626; }
   html.theme-light .rte-toolbar{ background:#eef1f8; }
-  .rte-toolbar button{ min-width:30px; height:30px; border-radius:6px; border:1px solid transparent; background:none; color:var(--text-dim); cursor:pointer; font-size:13px; }
+  .rte-toolbar button{ min-width:30px; height:30px; padding:0 8px; border-radius:6px; border:1px solid transparent; background:none; color:var(--text-dim); cursor:pointer; font-size:13px; transition:background .1s ease; }
   .rte-toolbar button:hover{ background:#1c2740; color:var(--text); } html.theme-light .rte-toolbar button:hover{ background:#dde5f4; }
-  .rte-toolbar select{ height:30px; border-radius:6px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); font-family:var(--mono); font-size:11px; }
-  html.theme-light .rte-toolbar select{ background:#fff; }
-  .rte-toolbar .rte-sep{ width:1px; height:20px; background:var(--stroke); margin:0 4px; }
+  .rte-toolbar button.active{ background:var(--cyan-dim); color:var(--cyan); border-color:var(--cyan); }
+  .rte-toolbar select{ height:30px; padding:0 22px 0 8px; border-radius:6px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); font-family:var(--mono); font-size:11px; cursor:pointer; appearance:none; -webkit-appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238A96AD'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 8px center; }
+  html.theme-light .rte-toolbar select{ background-color:#fff; }
+  .rte-toolbar .rte-sep{ width:1px; height:20px; background:var(--stroke); margin:0 3px; flex-shrink:0; }
+  .rte-color-swatch{ position:relative; display:flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:6px; cursor:pointer; color:var(--text-dim); font-size:13px; font-weight:600; border:1px solid transparent; }
+  .rte-color-swatch:hover{ background:#1c2740; color:var(--text); } html.theme-light .rte-color-swatch:hover{ background:#dde5f4; }
+  .rte-color-swatch .swatch-bar{ position:absolute; left:6px; right:6px; bottom:4px; height:3px; border-radius:2px; }
+  .rte-color-swatch input[type="color"]{ position:absolute; inset:0; opacity:0; cursor:pointer; border:none; padding:0; width:100%; height:100%; }
+  .rte-body blockquote{ border-left:3px solid var(--cyan); margin:8px 0; padding:4px 0 4px 14px; color:var(--text-dim); font-style:italic; }
+  .rte-body a{ color:var(--cyan); text-decoration:underline; }
+  .rte-body h2{ font-size:19px; margin:14px 0 8px; color:var(--text); } .rte-body h3{ font-size:15px; margin:12px 0 6px; color:var(--text); }
   .rte-body{ border:1px solid var(--stroke); border-radius:0 0 8px 8px; padding:14px; min-height:140px; background:#0e1626; color:var(--text); font-size:14px; line-height:1.7; overflow-y:auto; overflow-x:auto; resize:vertical; }
   html.theme-light .rte-body{ background:#fff; }
   .rte-body:focus{ outline:none; border-color:var(--cyan); }
@@ -2187,10 +2195,14 @@ function closeModal(){ const el = document.getElementById("app-modal-overlay"); 
 function richEditorHtml(id, initialHtml){
   return `
     <div class="rte-toolbar" data-rte="${id}">
-      <button type="button" data-cmd="bold" title="Bold"><b>B</b></button>
-      <button type="button" data-cmd="italic" title="Italic"><i>I</i></button>
-      <button type="button" data-cmd="underline" title="Underline"><u>U</u></button>
+      <button type="button" data-cmd="undo" title="Undo">↺</button>
+      <button type="button" data-cmd="redo" title="Redo">↻</button>
       <div class="rte-sep"></div>
+      <select data-cmd="formatBlock" title="Paragraph style">
+        <option value="P" selected>Paragraph</option>
+        <option value="H2">Heading</option>
+        <option value="H3">Subheading</option>
+      </select>
       <select data-cmd="fontSize" title="Text size">
         <option value="2">Small</option>
         <option value="3" selected>Normal</option>
@@ -2198,9 +2210,24 @@ function richEditorHtml(id, initialHtml){
         <option value="7">Huge</option>
       </select>
       <div class="rte-sep"></div>
+      <button type="button" data-cmd="bold" title="Bold"><b>B</b></button>
+      <button type="button" data-cmd="italic" title="Italic"><i>I</i></button>
+      <button type="button" data-cmd="underline" title="Underline"><u>U</u></button>
+      <button type="button" data-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
+      <div class="rte-sep"></div>
+      <label class="rte-color-swatch" title="Text color">A<input type="color" data-cmd="foreColor" value="#e8ecf5"><span class="swatch-bar" style="background:#e8ecf5;"></span></label>
+      <label class="rte-color-swatch" title="Highlight color">🖊<input type="color" data-cmd="hiliteColor" value="#fff59d"><span class="swatch-bar" style="background:#fff59d;"></span></label>
+      <div class="rte-sep"></div>
+      <button type="button" data-cmd="justifyLeft" title="Align left">⟸</button>
+      <button type="button" data-cmd="justifyCenter" title="Align center">≡</button>
+      <button type="button" data-cmd="justifyRight" title="Align right">⟹</button>
+      <div class="rte-sep"></div>
       <button type="button" data-cmd="insertUnorderedList" title="Bullet list">• List</button>
       <button type="button" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
+      <button type="button" data-cmd="blockquote" title="Quote block">❝</button>
       <div class="rte-sep"></div>
+      <button type="button" data-cmd="link" title="Insert link">🔗</button>
+      <button type="button" data-cmd="unlink" title="Remove link">Unlink</button>
       <button type="button" data-cmd="image" title="Insert image">🖼</button>
       <input type="file" accept="image/*" style="display:none" id="${id}-file">
       <div class="rte-sep"></div>
@@ -2213,6 +2240,7 @@ function clearFormatting(editorEl){
   editorEl.focus();
   // Handles native bold/italic/underline/execCommand-applied styles.
   document.execCommand("removeFormat", false, null);
+  document.execCommand("unlink", false, null);
   // Pasted content (Word, Google Docs, other browser tabs, etc.) often carries
   // inline style/color attributes that removeFormat doesn't touch — strip those directly.
   editorEl.querySelectorAll("*").forEach(el=>{
@@ -2225,12 +2253,45 @@ function clearFormatting(editorEl){
     while(f.firstChild) f.parentNode.insertBefore(f.firstChild, f);
     f.parentNode.removeChild(f);
   });
+  // removeFormat only touches inline formatting — flatten headings/quotes back
+  // to plain paragraphs too, same as "clear formatting" in a normal editor.
+  editorEl.querySelectorAll("h1,h2,h3,h4,blockquote").forEach(el=>{
+    const p = document.createElement("p");
+    while(el.firstChild) p.appendChild(el.firstChild);
+    el.parentNode.replaceChild(p, el);
+  });
 }
 
 function wireRichEditor(id){
   const toolbar = document.querySelector(`.rte-toolbar[data-rte="${id}"]`);
   const editorEl = document.getElementById(id);
   if(!toolbar || !editorEl) return;
+
+  let savedRange = null;
+  const saveCurrentRange = ()=>{
+    const sel = window.getSelection();
+    if(sel.rangeCount>0 && editorEl.contains(sel.anchorNode)) savedRange = sel.getRangeAt(0).cloneRange();
+  };
+  const restoreRange = ()=>{
+    if(!savedRange) return;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(savedRange);
+  };
+  const TOGGLE_CMDS = ["bold","italic","underline","strikeThrough","insertUnorderedList","insertOrderedList","justifyLeft","justifyCenter","justifyRight"];
+  const updateToolbarState = ()=>{
+    TOGGLE_CMDS.forEach(cmd=>{
+      const btn = toolbar.querySelector(`button[data-cmd="${cmd}"]`);
+      if(!btn) return;
+      try{ btn.classList.toggle("active", document.queryCommandState(cmd)); }catch(e){}
+    });
+    const quoteBtn = toolbar.querySelector('button[data-cmd="blockquote"]');
+    if(quoteBtn){ try{ quoteBtn.classList.toggle("active", document.queryCommandValue("formatBlock").toLowerCase()==="blockquote"); }catch(e){} }
+  };
+  editorEl.addEventListener("mouseup", ()=>{ saveCurrentRange(); updateToolbarState(); });
+  editorEl.addEventListener("keyup", ()=>{ saveCurrentRange(); updateToolbarState(); });
+  editorEl.addEventListener("focus", updateToolbarState);
+
   toolbar.querySelectorAll("button[data-cmd]").forEach(btn=>{
     btn.addEventListener("mousedown", (e)=>e.preventDefault()); // keep focus/selection in the editor
     btn.addEventListener("click", async ()=>{
@@ -2238,11 +2299,37 @@ function wireRichEditor(id){
       const cmd = btn.getAttribute("data-cmd");
       if(cmd === "image"){ document.getElementById(`${id}-file`).click(); return; }
       if(cmd === "clearFormat"){ clearFormatting(editorEl); return; }
+      if(cmd === "link"){
+        const url = prompt("Link URL (include https://)");
+        if(url) document.execCommand("createLink", false, url);
+        updateToolbarState();
+        return;
+      }
+      if(cmd === "unlink"){ document.execCommand("unlink", false, null); return; }
+      if(cmd === "blockquote"){
+        const isQuote = document.queryCommandValue("formatBlock").toLowerCase() === "blockquote";
+        document.execCommand("formatBlock", false, isQuote ? "P" : "BLOCKQUOTE");
+        updateToolbarState();
+        return;
+      }
       document.execCommand(cmd, false, null);
+      updateToolbarState();
     });
   });
   const sizeSelect = toolbar.querySelector('select[data-cmd="fontSize"]');
   if(sizeSelect) sizeSelect.addEventListener("change", ()=>{ editorEl.focus(); document.execCommand("fontSize", false, sizeSelect.value); });
+  const blockSelect = toolbar.querySelector('select[data-cmd="formatBlock"]');
+  if(blockSelect) blockSelect.addEventListener("change", ()=>{ editorEl.focus(); document.execCommand("formatBlock", false, blockSelect.value); blockSelect.value = "P"; });
+  toolbar.querySelectorAll('input[type="color"][data-cmd]').forEach(colorInput=>{
+    colorInput.addEventListener("mousedown", (e)=>{ e.stopPropagation(); saveCurrentRange(); });
+    colorInput.addEventListener("input", ()=>{
+      editorEl.focus();
+      restoreRange();
+      document.execCommand(colorInput.getAttribute("data-cmd"), false, colorInput.value);
+      const bar = colorInput.parentElement.querySelector(".swatch-bar");
+      if(bar) bar.style.background = colorInput.value;
+    });
+  });
   const fileInput = document.getElementById(`${id}-file`);
   fileInput.addEventListener("change", async ()=>{
     const file = fileInput.files[0]; if(!file) return;
