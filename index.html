@@ -1770,6 +1770,12 @@ async function showStandaloneQuizAttemptDetail(userId, quizId, holderId, personN
       if(error){ alert("Couldn't save grading: " + error.message); return; }
       if(!updatedRows || !updatedRows.length){ alert("Grading didn't save — the database silently rejected this update (likely a permissions rule). Nothing changed. Please tell your admin/developer this happened."); return; }
       logEdit("graded", "standalone_quiz_attempt", `${quiz?quiz.title:'quiz'} — ${personName||'submission'}`);
+      const correctCount = updatedAnswers.filter((a,i)=> attempt.answers[i]?.type==="long_answer" && a.is_correct===true).length;
+      await Promise.resolve(supabase.from("messages").insert({
+        sender_id: session.user.id, sender_name: profile.name, recipient_id: userId,
+        audience:"user", type:"reply", claimed_by: session.user.id,
+        body: `<p>Your quiz "<strong>${escapeHtml(quiz?quiz.title:'the quiz')}</strong>" has been graded — ${correctCount}/${longAnswerCount} long-answer question${longAnswerCount===1?'':'s'} correct.</p>`
+      })).catch(()=>{});
       showToast("Grading saved.");
       QUIZ_PROGRESS_ROWS = null;
       if(view === "quiz-sent-detail" && quizSentDetailQuiz){
@@ -1796,7 +1802,21 @@ function renderQuizzesList(){
   const sentQuizzes = canManageQuizzes ? QUIZZES : [];
 
   function quizCard(q, forManagement){
-    const tag = !q.sent ? `<span class="status-pill">Draft</span>` : (forManagement ? `<span class="status-pill done">Sent</span>` : (q.myAttempt ? `<span class="status-pill done">Completed</span>` : `<span class="status-pill">Not started</span>`));
+    let tag;
+    if(!q.sent){ tag = `<span class="status-pill">Draft</span>`; }
+    else if(forManagement){ tag = `<span class="status-pill done">Sent</span>`; }
+    else if(q.myAttempt){
+      if(q.myAttempt.graded){
+        const longAnswerAnswers = (q.myAttempt.answers||[]).filter(a=>a.type==="long_answer");
+        const longAnswerCorrect = longAnswerAnswers.filter(a=>a.is_correct===true).length;
+        const totalQ = (q.myAttempt.mc_total||0) + longAnswerAnswers.length;
+        const totalCorrect = (q.myAttempt.mc_score||0) + longAnswerCorrect;
+        tag = totalQ ? `<span class="status-pill done">${totalCorrect}/${totalQ} correct</span>` : `<span class="status-pill done">Completed</span>`;
+      } else {
+        tag = `<span class="status-pill progress">Awaiting grading</span>`;
+      }
+    }
+    else { tag = `<span class="status-pill">Not started</span>`; }
     return `<div class="mod-card" data-quiz-open="${q.id}" data-quiz-manage="${forManagement?'1':'0'}">
       <div class="row-top"><div><h3>${escapeHtml(q.title)}</h3><p class="sub">${q.questions.length} question${q.questions.length===1?'':'s'} · from ${escapeHtml(q.createdByName||'an admin')}</p></div></div>
       <div class="meta"><span>${tag}</span></div>
@@ -4346,7 +4366,7 @@ function renderHome(){
   document.getElementById("go-modules-card").addEventListener("click", ()=>{ view="dashboard"; render(); });
   document.getElementById("go-reference-card").addEventListener("click", openReference);
   document.getElementById("go-notes-card").addEventListener("click", openNotes);
-  document.getElementById("go-quizzes-card").addEventListener("click", ()=>{ view="quizzes"; render(); });
+  document.getElementById("go-quizzes-card").addEventListener("click", async ()=>{ await loadStandaloneQuizzes(); view="quizzes"; render(); });
 }
 
 /* ============================================================
