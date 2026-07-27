@@ -466,7 +466,10 @@ async function markLessonViewed(m, lessonId){
 let editMode = false;
 function isAdmin(){ if(guestMode) return guestViewingAsAdmin; return profile && profile.role === "admin"; }
 function isEditor(){ if(guestMode) return false; return profile && profile.role === "editor"; }
-function canEdit(){ return (isAdmin() || isEditor()) && editMode; }
+function canEditContent(){ if(guestMode) return guestViewingAsAdmin; return isAdmin() || (profile && profile.perm_edit_content); }
+function canCreateQuizzes(){ if(guestMode) return guestViewingAsAdmin; return isAdmin() || (profile && profile.perm_create_quizzes); }
+function canManagePeople(){ if(guestMode) return guestViewingAsAdmin; return isAdmin() || (profile && profile.perm_manage_people); }
+function canEdit(){ return canEditContent() && editMode; }
 
 /* ============================================================
    DATA LOADING
@@ -890,7 +893,7 @@ function renderShell(inner){
         <div class="brand-text"><div class="name">${T('brand.name','COMPORIUM TRAINING MODULES')}</div></div>
       </div>
       <div class="top-right">
-        ${isAdmin() ? `<button class="pill-btn" id="go-team-btn">Teams</button>` : ""}
+        ${(isAdmin() || canManagePeople() || canCreateQuizzes()) ? `<button class="pill-btn" id="go-team-btn">Teams</button>` : ""}
         <div class="bell-wrap">
           <button class="gear-btn" id="notif-bell" title="Notifications">🔔${notifBadgeCount()>0?`<span class="notif-dot"></span>`:''}</button>
         </div>
@@ -906,7 +909,7 @@ function renderShell(inner){
               <button id="open-announce">📣 Make Announcement</button>
               <button id="open-guest-editor">👀 Edit Guest Preview</button>
             </div>
-          </div>` : isEditor() ? `<button class="pill-btn" id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>` : ""}
+          </div>` : (canEditContent() && !isAdmin()) ? `<button class="pill-btn" id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>` : ""}
         <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
       </div>
     </header>
@@ -1189,7 +1192,21 @@ function renderResults(){
 let teamExpandedRows = new Set();
 let TEAMS_LIST = [];
 let teamRosterFilter = "";
-let pendingRoleChanges = {}; // userId -> newRole, staged until explicitly saved
+let pendingRoleChanges = {}; // userId -> { role, perms:{editContent,createQuizzes,managePeople} }, staged until explicitly saved
+let permissionsPanelOpen = new Set(); // userIds with the Permissions checklist expanded
+
+const ROLE_PRESETS = {
+  admin:  { editContent:true,  createQuizzes:true,  managePeople:true },
+  editor: { editContent:true,  createQuizzes:false, managePeople:false },
+  agent:  { editContent:false, createQuizzes:false, managePeople:false }
+};
+function computeDisplayRole(perms){
+  for(const roleName of ["admin","editor","agent"]){
+    const preset = ROLE_PRESETS[roleName];
+    if(preset.editContent===perms.editContent && preset.createQuizzes===perms.createQuizzes && preset.managePeople===perms.managePeople) return roleName;
+  }
+  return "custom";
+}
 let teamSearchQuery = "";
 let teamModuleFilter = "";
 let teamsSectionOpen = { teams:false, people:false, modules:false, quizzes:false };
@@ -1251,7 +1268,8 @@ async function openTeamProgress(){
     const overall = values.length ? Math.round(values.reduce((a,b)=>a+b,0)/values.length) : 0;
     const mastered = values.filter(v=>v===100).length;
     const teamIds = (memberships||[]).filter(m=>m.user_id===p.id).map(m=>m.team_id);
-    return { id:p.id, name:p.name, role:p.role, perModule, perModuleRaw, overall, mastered, teamIds };
+    return { id:p.id, name:p.name, role:p.role, perModule, perModuleRaw, overall, mastered, teamIds,
+      permEditContent: !!p.perm_edit_content, permCreateQuizzes: !!p.perm_create_quizzes, permManagePeople: !!p.perm_manage_people };
   });
   view = "team"; render();
 }
@@ -1326,20 +1344,37 @@ function renderTeam(){
   // ---- People rows ----
   const peopleRows = filteredRows.map(r=>{
     const isSelf = r.id===profile.id;
-    const pendingRole = pendingRoleChanges[r.id];
-    const roleSelect = isSelf
+    const pending = pendingRoleChanges[r.id];
+    const storedPerms = { editContent:r.permEditContent, createQuizzes:r.permCreateQuizzes, managePeople:r.permManagePeople };
+    const currentPerms = pending ? pending.perms : storedPerms;
+    const displayRole = computeDisplayRole(currentPerms);
+    const panelOpen = permissionsPanelOpen.has(r.id);
+    const isDirty = !!pending && (pending.role !== r.role || pending.perms.editContent !== r.permEditContent || pending.perms.createQuizzes !== r.permCreateQuizzes || pending.perms.managePeople !== r.permManagePeople);
+
+    const roleCell = isSelf
       ? `<span class="role-tag ${r.role==='admin'?'admin':''}">${r.role.toUpperCase()} (YOU)</span>`
-      : `<div style="display:flex;align-items:center;gap:6px;">
+      : `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <select class="mini-btn" data-role-select="${r.id}">
-            <option value="agent" ${(pendingRole||r.role)==='agent'?'selected':''}>User</option>
-            <option value="editor" ${(pendingRole||r.role)==='editor'?'selected':''}>Editor</option>
-            <option value="admin" ${(pendingRole||r.role)==='admin'?'selected':''}>Admin</option>
+            <option value="agent" ${displayRole==='agent'?'selected':''}>User</option>
+            <option value="editor" ${displayRole==='editor'?'selected':''}>Editor</option>
+            <option value="admin" ${displayRole==='admin'?'selected':''}>Admin</option>
+            <option value="custom" ${displayRole==='custom'?'selected':''}>Custom</option>
           </select>
-          ${(pendingRole && pendingRole!==r.role) ? `<button class="mini-btn" data-role-save="${r.id}" style="color:var(--green);border-color:var(--green-dim);">Save</button>` : ""}
+          <button class="mini-btn" data-perm-toggle="${r.id}">Permissions ${panelOpen?'▾':'▸'}</button>
+          ${isDirty ? `<button class="mini-btn" data-role-save="${r.id}" style="color:var(--green);border-color:var(--green-dim);">Save</button>` : ""}
         </div>`;
     const resetBtn = !isSelf ? `<button class="mini-btn" data-reset-pw="${r.id}" data-reset-name="${escapeHtml(r.name)}">Reset password</button>` : "";
     const deleteUserBtn = !isSelf ? `<button class="mini-btn danger" data-delete-user="${r.id}" data-delete-name="${escapeHtml(r.name)}">Delete user</button>` : "";
-    return `<tr><td>${escapeHtml(r.name)}</td><td>${roleSelect}</td><td>${resetBtn}</td><td>${deleteUserBtn}</td></tr>`;
+    const mainRow = `<tr><td>${escapeHtml(r.name)}</td><td>${roleCell}</td><td>${resetBtn}</td><td>${deleteUserBtn}</td></tr>`;
+    const panelRow = (!isSelf && panelOpen) ? `
+      <tr class="team-row-detail"><td colspan="4">
+        <div style="padding:10px 4px 16px;display:flex;flex-direction:column;gap:8px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:editContent" ${currentPerms.editContent?'checked':''}> Can edit modules, lessons and module quizzes</label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:createQuizzes" ${currentPerms.createQuizzes?'checked':''}> Can create quizzes</label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:managePeople" ${currentPerms.managePeople?'checked':''}> Can edit users and teams</label>
+        </div>
+      </td></tr>` : "";
+    return mainRow + panelRow;
   }).join("");
 
   // ---- Module progress rows ----
@@ -1428,6 +1463,7 @@ function renderTeam(){
   }
 
   renderShell(`
+    ${canManagePeople() ? `
     <div class="card">
       ${sectionHeader('teams', 'Teams', TEAMS_LIST.length)}
       ${teamsSectionOpen.teams ? `
@@ -1456,8 +1492,9 @@ function renderTeam(){
           </div>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th><th></th><th></th></tr></thead><tbody>${peopleRows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
         </div>` : ""}
-    </div>
+    </div>` : ""}
 
+    ${canManagePeople() ? `
     <div class="card" style="margin-top:16px;">
       ${sectionHeader('modules', 'Module Progress')}
       ${teamsSectionOpen.modules ? `
@@ -1480,8 +1517,9 @@ function renderTeam(){
           <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">${focusModule ? `Showing progress on <strong style="color:var(--text);">${escapeHtml(focusModule.title)}</strong> only.` : "Click a person to see their module-by-module breakdown."} Click a module pill to see missed questions on their latest attempt.</p>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>${focusModule ? escapeHtml(focusModule.title) : "Overall"}</th><th>${focusModule ? "Score" : "Mastered"}</th><th></th></tr></thead><tbody>${moduleRows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
         </div>` : ""}
-    </div>
+    </div>` : ""}
 
+    ${(canManagePeople() || canCreateQuizzes()) ? `
     <div class="card" style="margin-top:16px;">
       ${sectionHeader('quizzes', 'Quiz Progress')}
       ${teamsSectionOpen.quizzes ? `
@@ -1500,7 +1538,7 @@ function renderTeam(){
           <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Percent of sent quizzes each person has completed. Click a completed quiz to see their answers.</p>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Completion</th><th></th><th></th></tr></thead><tbody>${quizRowsHtml}</tbody></table></div>
         </div>` : ""}
-    </div>
+    </div>` : ""}
 
     <div id="attempt-detail" style="margin-top:16px;"></div>
     <div id="quiz-attempt-detail" style="margin-top:16px;"></div>
@@ -1541,17 +1579,47 @@ function renderTeam(){
 
   root.querySelectorAll("[data-role-select]").forEach(el=> el.addEventListener("change", (e)=>{
     const id = el.getAttribute("data-role-select");
-    if(e.target.value === teamRows.find(r=>r.id===id)?.role) delete pendingRoleChanges[id];
-    else pendingRoleChanges[id] = e.target.value;
+    const row = teamRows.find(r=>r.id===id);
+    const newRole = e.target.value;
+    if(newRole === "custom"){
+      permissionsPanelOpen.add(id);
+      if(!pendingRoleChanges[id]){
+        pendingRoleChanges[id] = { role: row.role, perms: { editContent:row.permEditContent, createQuizzes:row.permCreateQuizzes, managePeople:row.permManagePeople } };
+      }
+    } else {
+      pendingRoleChanges[id] = { role: newRole, perms: { ...ROLE_PRESETS[newRole] } };
+    }
+    renderTeam();
+  }));
+  root.querySelectorAll("[data-perm-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    const id = el.getAttribute("data-perm-toggle");
+    if(permissionsPanelOpen.has(id)) permissionsPanelOpen.delete(id); else permissionsPanelOpen.add(id);
+    render();
+  }));
+  root.querySelectorAll("[data-perm-check]").forEach(el=> el.addEventListener("change", (e)=>{
+    const [id, key] = el.getAttribute("data-perm-check").split(":");
+    const row = teamRows.find(r=>r.id===id);
+    if(!pendingRoleChanges[id]){
+      pendingRoleChanges[id] = { role: row.role, perms: { editContent:row.permEditContent, createQuizzes:row.permCreateQuizzes, managePeople:row.permManagePeople } };
+    }
+    pendingRoleChanges[id].perms[key] = e.target.checked;
+    const newDisplayRole = computeDisplayRole(pendingRoleChanges[id].perms);
+    pendingRoleChanges[id].role = newDisplayRole === "custom" ? "agent" : newDisplayRole;
     renderTeam();
   }));
   root.querySelectorAll("[data-role-save]").forEach(el=> el.addEventListener("click", async (e)=>{
     e.stopPropagation();
     const id = el.getAttribute("data-role-save");
-    const newRole = pendingRoleChanges[id];
-    if(!newRole) return;
-    const { error } = await supabase.from("profiles").update({ role: newRole }).eq("id", id);
-    if(error){ alert("Couldn't save role: " + error.message); return; }
+    const pending = pendingRoleChanges[id];
+    if(!pending) return;
+    const { error } = await supabase.from("profiles").update({
+      role: pending.role,
+      perm_edit_content: pending.perms.editContent,
+      perm_create_quizzes: pending.perms.createQuizzes,
+      perm_manage_people: pending.perms.managePeople
+    }).eq("id", id);
+    if(error){ alert("Couldn't save: " + error.message); return; }
     delete pendingRoleChanges[id];
     await openTeamProgress();
   }));
@@ -1675,8 +1743,8 @@ async function showStandaloneQuizAttemptDetail(userId, quizId){
    QUIZZES — list, take, results, and admin builder
    ============================================================ */
 function renderQuizzesList(){
-  const isAdminUser = isAdmin();
-  const visible = QUIZZES.filter(q=> isAdminUser || q.sent);
+  const canManageQuizzes = canCreateQuizzes();
+  const visible = QUIZZES.filter(q=> canManageQuizzes || q.sent);
   const cards = visible.map(q=>{
     const completed = !!q.myAttempt;
     const tag = !q.sent ? `<span class="status-pill">Draft</span>` : (completed ? `<span class="status-pill done">Completed</span>` : `<span class="status-pill">Not started</span>`);
@@ -1685,7 +1753,7 @@ function renderQuizzesList(){
       <div class="meta"><span>${tag}</span></div>
     </div>`;
   }).join("");
-  const addBtn = isAdminUser ? `<button class="dashed-btn" id="add-quiz" style="margin-top:14px;">+ New quiz</button>` : "";
+  const addBtn = canManageQuizzes ? `<button class="dashed-btn" id="add-quiz" style="margin-top:14px;">+ New quiz</button>` : "";
   renderShell(`
     <section class="hero">
       <div class="eyebrow">${T('quizzes.eyebrow','Quizzes')}</div>
@@ -1698,7 +1766,7 @@ function renderQuizzesList(){
   root.querySelectorAll("[data-quiz-open]").forEach(el=> el.addEventListener("click", async ()=>{
     const id = el.getAttribute("data-quiz-open");
     const q = QUIZZES.find(x=>x.id===id);
-    if(isAdminUser && q.createdBy === session.user.id){ await openQuizBuilder(id); return; }
+    if(canManageQuizzes && q.createdBy === session.user.id){ await openQuizBuilder(id); return; }
     currentQuizId = id;
     if(q.myAttempt){ view = "quiz-result-standalone"; render(); }
     else { quizTakeAnswers = {}; view = "quiz-take"; render(); }
