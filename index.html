@@ -2100,12 +2100,19 @@ function wireQuizBuilderEvents(){
     if(d.audienceType==="team" && !d.teamId){ alert("Pick a team first."); return; }
     if(d.audienceType==="specific" && !d.specificIds.length){ alert("Pick at least one person first."); return; }
     sendBtn.disabled = true; sendBtn.textContent = "Sending…";
+
+    // Recipient list first, and checked for real errors — this is what actually
+    // determines who can see the quiz, so it must never fail silently.
+    if(d.audienceType==="specific"){
+      const { error: delErr } = await Promise.resolve(supabase.from("standalone_quiz_recipients").delete().eq("quiz_id", d.id));
+      if(delErr){ alert("Couldn't set up recipients: " + delErr.message); sendBtn.disabled = false; sendBtn.textContent = "Send quiz →"; return; }
+      const { error: recErr } = await Promise.resolve(supabase.from("standalone_quiz_recipients").insert(d.specificIds.map(uid=>({ quiz_id:d.id, user_id:uid }))));
+      if(recErr){ alert("Couldn't send to the people you picked: " + recErr.message); sendBtn.disabled = false; sendBtn.textContent = "Send quiz →"; return; }
+    }
+
     const { error } = await supabase.from("standalone_quizzes").update({ audience_type:d.audienceType, team_id: d.audienceType==="team"?d.teamId:null, sent:true }).eq("id", d.id);
     if(error){ alert("Couldn't send: " + error.message); sendBtn.disabled = false; sendBtn.textContent = "Send quiz →"; return; }
-    if(d.audienceType==="specific"){
-      await Promise.resolve(supabase.from("standalone_quiz_recipients").delete().eq("quiz_id", d.id)).catch(()=>{});
-      await Promise.resolve(supabase.from("standalone_quiz_recipients").insert(d.specificIds.map(uid=>({ quiz_id:d.id, user_id:uid })))).catch(()=>{});
-    }
+
     d.sent = true;
     logEdit("sent", "standalone_quiz", d.title);
     showToast("Quiz sent.");
