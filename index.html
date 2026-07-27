@@ -840,7 +840,7 @@ async function logout(){
    ============================================================ */
 function renderShell(inner){
   const inModulesFlow = ["lesson","quiz","results","editor"].includes(view);
-  const inQuizFlow = ["quiz-take","quiz-result-standalone","quiz-builder"].includes(view);
+  const inQuizFlow = ["quiz-take","quiz-result-standalone","quiz-builder","quiz-sent-detail"].includes(view);
   const crumbLabel = inModulesFlow ? "TRAINING MODULES" : inQuizFlow ? "QUIZZES" : ((view==="analyze"||view==="quiz-analyze") ? "TEAMS" : "HOME");
   const crumbTarget = inModulesFlow ? "dashboard" : inQuizFlow ? "quizzes" : ((view==="analyze"||view==="quiz-analyze") ? "team" : "home");
   const section = view==="home" ? "home" : ["dashboard","lesson","quiz","results","editor"].includes(view) ? "modules" : view==="reference" ? "reference" : view==="notes" ? "notes" : null;
@@ -883,7 +883,7 @@ function renderShell(inner){
         <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
       </div>
     </header>
-    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes"||view==="guest-features") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':view==='quiz-analyze'?'QUIZ ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='edit-log'?'EDIT LOG':''))}`}</nav>`}
+    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes"||view==="guest-features") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':view==='quiz-analyze'?'QUIZ ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='quiz-sent-detail'?'SENT QUIZ':view==='edit-log'?'EDIT LOG':''))}`}</nav>`}
     <div class="top-nav">
       <button class="top-nav-btn ${section==='home'?'active':''}" id="nav-home">${T('nav.dashboard','Dashboard')}</button>
       <button class="top-nav-btn ${section==='modules'?'active':''}" id="nav-modules">${T('nav.modules','Training Modules')}</button>
@@ -1692,10 +1692,13 @@ async function showAttemptDetail(userId, moduleId){
 
 let pendingGrades = {};
 let chatPendingGrades = {}; // rootId -> { answerIdx: boolean } for inline grading in Chat
-async function showStandaloneQuizAttemptDetail(userId, quizId){
-  const holder = document.getElementById("quiz-attempt-detail");
+async function showStandaloneQuizAttemptDetail(userId, quizId, holderId, personNameOverride){
+  holderId = holderId || "quiz-attempt-detail";
+  const holder = document.getElementById(holderId);
+  if(!holder) return;
   holder.innerHTML = `<div class="card"><p style="color:var(--text-faint);font-family:var(--mono);font-size:12px;">Loading answers…</p></div>`;
   const person = teamRows.find(r=>r.id===userId);
+  const personName = personNameOverride || (person ? person.name : '');
   const { data: quiz } = await supabase.from("standalone_quizzes").select("*").eq("id", quizId).single();
   const { data: attempt } = await supabase.from("standalone_quiz_attempts").select("*").eq("user_id", userId).eq("quiz_id", quizId).single();
   if(!attempt){
@@ -1728,7 +1731,7 @@ async function showStandaloneQuizAttemptDetail(userId, quizId){
   }).join("");
   holder.innerHTML = `
     <div class="card">
-      <div class="k-label">QUIZ SUBMISSION · ${escapeHtml(person?person.name:'')} · ${escapeHtml(quiz?quiz.title:'')}</div>
+      <div class="k-label">QUIZ SUBMISSION · ${escapeHtml(personName)} · ${escapeHtml(quiz?quiz.title:'')}</div>
       ${attempt.mc_total ? `<h2 style="margin-bottom:16px;">${attempt.mc_score}/${attempt.mc_total} correct</h2>` : `<h2 style="margin-bottom:16px;">Submitted</h2>`}
       ${needsGrading ? `<p style="color:var(--amber);font-size:13px;margin-bottom:16px;">⚠ This submission has long-answer questions that need grading before it's finalized.</p>` : ""}
       ${rows || `<p style="color:var(--text-faint);font-size:13px;">No answers recorded.</p>`}
@@ -1757,11 +1760,18 @@ async function showStandaloneQuizAttemptDetail(userId, quizId){
       const { data: updatedRows, error } = await supabase.from("standalone_quiz_attempts").update({ answers: updatedAnswers, graded: true }).eq("quiz_id", quizId).eq("user_id", userId).select();
       if(error){ alert("Couldn't save grading: " + error.message); return; }
       if(!updatedRows || !updatedRows.length){ alert("Grading didn't save — the database silently rejected this update (likely a permissions rule). Nothing changed. Please tell your admin/developer this happened."); return; }
-      logEdit("graded", "standalone_quiz_attempt", `${quiz?quiz.title:'quiz'} — ${person?person.name:'submission'}`);
+      logEdit("graded", "standalone_quiz_attempt", `${quiz?quiz.title:'quiz'} — ${personName||'submission'}`);
       showToast("Grading saved.");
-      await loadQuizProgressData(); // refresh the roster's pill, not just this detail panel
-      render();
-      await showStandaloneQuizAttemptDetail(userId, quizId); // re-show the detail panel, now reflecting the graded state
+      QUIZ_PROGRESS_ROWS = null;
+      if(view === "quiz-sent-detail" && quizSentDetailQuiz){
+        await refreshQuizSentDetailRoster();
+        render();
+        await showStandaloneQuizAttemptDetail(userId, quizId, `sent-detail-answers-${userId}`, personName);
+      } else {
+        await loadQuizProgressData();
+        render();
+        await showStandaloneQuizAttemptDetail(userId, quizId, holderId, personName);
+      }
     });
   }
 }
@@ -1771,13 +1781,14 @@ async function showStandaloneQuizAttemptDetail(userId, quizId){
    ============================================================ */
 function renderQuizzesList(){
   const canManageQuizzes = canCreateQuizzes();
-  const visible = QUIZZES.filter(q=> canManageQuizzes || q.sent);
-  const pending = visible.filter(q=> !q.myAttempt);
-  const completed = visible.filter(q=> !!q.myAttempt);
+  const myQuizzes = QUIZZES.filter(q=> q.isRecipient);
+  const pending = myQuizzes.filter(q=> !q.myAttempt);
+  const completed = myQuizzes.filter(q=> !!q.myAttempt);
+  const sentQuizzes = canManageQuizzes ? QUIZZES : [];
 
-  function quizCard(q){
-    const tag = !q.sent ? `<span class="status-pill">Draft</span>` : (q.myAttempt ? `<span class="status-pill done">Completed</span>` : `<span class="status-pill">Not started</span>`);
-    return `<div class="mod-card" data-quiz-open="${q.id}">
+  function quizCard(q, forManagement){
+    const tag = !q.sent ? `<span class="status-pill">Draft</span>` : (forManagement ? `<span class="status-pill done">Sent</span>` : (q.myAttempt ? `<span class="status-pill done">Completed</span>` : `<span class="status-pill">Not started</span>`));
+    return `<div class="mod-card" data-quiz-open="${q.id}" data-quiz-manage="${forManagement?'1':'0'}">
       <div class="row-top"><div><h3>${escapeHtml(q.title)}</h3><p class="sub">${q.questions.length} question${q.questions.length===1?'':'s'} · from ${escapeHtml(q.createdByName||'an admin')}</p></div></div>
       <div class="meta"><span>${tag}</span></div>
     </div>`;
@@ -1800,12 +1811,17 @@ function renderQuizzesList(){
     </section>
     <div class="card">
       ${sectionHeader('pending', 'New / Not completed', pending.length)}
-      ${quizListSectionOpen.pending ? `<div class="grid" style="margin-top:14px;">${pending.map(quizCard).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here.</p>'}</div>` : ""}
+      ${quizListSectionOpen.pending ? `<div class="grid" style="margin-top:14px;">${pending.map(q=>quizCard(q,false)).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here.</p>'}</div>` : ""}
     </div>
     <div class="card" style="margin-top:16px;">
       ${sectionHeader('completed', 'Completed', completed.length)}
-      ${quizListSectionOpen.completed ? `<div class="grid" style="margin-top:14px;">${completed.map(quizCard).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here yet.</p>'}</div>` : ""}
+      ${quizListSectionOpen.completed ? `<div class="grid" style="margin-top:14px;">${completed.map(q=>quizCard(q,false)).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here yet.</p>'}</div>` : ""}
     </div>
+    ${canManageQuizzes ? `
+    <div class="card" style="margin-top:16px;">
+      ${sectionHeader('sent', 'Sent Quizzes', sentQuizzes.length)}
+      ${quizListSectionOpen.sent ? `<p style="color:var(--text-dim);font-size:13.5px;margin:14px 0;">Every quiz you've created or sent. Click a sent quiz to see who's completed it and grade long-answer responses. Click a draft to keep editing it.</p><div class="grid">${sentQuizzes.map(q=>quizCard(q,true)).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here yet.</p>'}</div>` : ""}
+    </div>` : ""}
     ${addBtn}
   `);
   root.querySelectorAll("[data-quiz-section-toggle]").forEach(el=> el.addEventListener("click", ()=>{
@@ -1815,14 +1831,91 @@ function renderQuizzesList(){
   }));
   root.querySelectorAll("[data-quiz-open]").forEach(el=> el.addEventListener("click", async ()=>{
     const id = el.getAttribute("data-quiz-open");
+    const forManagement = el.getAttribute("data-quiz-manage") === "1";
     const q = QUIZZES.find(x=>x.id===id);
-    if(canManageQuizzes && editMode){ await openQuizBuilder(id); return; }
+    if(forManagement){
+      if(!q.sent){ await openQuizBuilder(id); return; } // draft — keep editing
+      await openQuizSentDetail(id); return; // sent — view progress & grade
+    }
     currentQuizId = id;
     if(q.myAttempt){ view = "quiz-result-standalone"; render(); }
     else { quizTakeAnswers = {}; view = "quiz-take"; render(); }
   }));
   const addBtn2 = document.getElementById("add-quiz");
   if(addBtn2) addBtn2.addEventListener("click", createNewStandaloneQuiz);
+}
+
+let quizSentDetailQuiz = null;
+let quizSentDetailRoster = [];
+let quizSentDetailExpandedId = null;
+
+async function openQuizSentDetail(quizId){
+  const { data: quiz } = await supabase.from("standalone_quizzes").select("*").eq("id", quizId).single();
+  if(!quiz){ alert("Couldn't load that quiz."); return; }
+  const { data: questions } = await supabase.from("standalone_quiz_questions").select("*").eq("quiz_id", quizId).order("sort_order");
+  quizSentDetailQuiz = { ...quiz, questions: (questions||[]).map(qq=>({ id:qq.id, type:qq.question_type, question:qq.question, options:qq.options||[], correct:qq.correct_index, explain:qq.explanation||"" })) };
+  quizSentDetailExpandedId = null;
+  await refreshQuizSentDetailRoster();
+  view = "quiz-sent-detail"; render();
+}
+
+async function refreshQuizSentDetailRoster(){
+  const quiz = quizSentDetailQuiz;
+  if(!quiz) return;
+  const { data: attempts } = await supabase.from("standalone_quiz_attempts").select("*").eq("quiz_id", quiz.id);
+  const { data: allProfiles } = await supabase.from("profiles").select("id,name,role");
+  let eligibleIds = [];
+  if(quiz.audience_type === "everyone"){
+    eligibleIds = (allProfiles||[]).map(p=>p.id);
+  } else if(quiz.audience_type === "team"){
+    const { data: members } = await supabase.from("team_members").select("user_id").eq("team_id", quiz.team_id);
+    eligibleIds = (members||[]).map(m=>m.user_id);
+  } else {
+    const { data: recipients } = await supabase.from("standalone_quiz_recipients").select("user_id").eq("quiz_id", quiz.id);
+    eligibleIds = (recipients||[]).map(r=>r.user_id);
+  }
+  quizSentDetailRoster = eligibleIds.map(uid=>{
+    const person = (allProfiles||[]).find(p=>p.id===uid);
+    const attempt = (attempts||[]).find(a=>a.user_id===uid);
+    return { id:uid, name: person?person.name:'Unknown', completed: !!attempt, needsGrading: !!attempt && !attempt.graded };
+  }).sort((a,b)=> a.name.localeCompare(b.name));
+}
+
+function renderQuizSentDetail(){
+  const quiz = quizSentDetailQuiz;
+  if(!quiz){ view="quizzes"; render(); return; }
+  const completedCount = quizSentDetailRoster.filter(r=>r.completed).length;
+  const rows = quizSentDetailRoster.map(r=>{
+    const expanded = quizSentDetailExpandedId === r.id;
+    const pillCls = r.needsGrading ? 'progress' : r.completed ? 'done' : '';
+    const pillLabel = r.needsGrading ? 'Needs grading' : r.completed ? 'Completed' : 'Not completed';
+    const mainRow = `<tr class="team-row-main" data-sent-detail-toggle="${r.id}" style="cursor:${r.completed?'pointer':'default'};">
+      <td>${escapeHtml(r.name)}</td>
+      <td><span class="status-pill ${pillCls}">${pillLabel}</span></td>
+      <td style="text-align:center;color:var(--text-faint);">${r.completed?(expanded?'▾':'▸'):''}</td>
+    </tr>`;
+    const detailRow = (expanded && r.completed) ? `<tr class="team-row-detail"><td colspan="3"><div id="sent-detail-answers-${r.id}" style="padding:10px 4px 16px;"></div></td></tr>` : "";
+    return mainRow + detailRow;
+  }).join("");
+
+  renderShell(`
+    <div class="card">
+      <div class="k-label">SENT QUIZ</div>
+      <h2 style="margin-bottom:4px;">${escapeHtml(quiz.title)}</h2>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">${completedCount}/${quizSentDetailRoster.length} completed. Click a completed person to see their answers and grade any long-answer responses.</p>
+      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="3" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one is eligible for this quiz yet.</td></tr>`}</tbody></table></div>
+      <div class="nav-buttons"><button class="btn" id="sent-detail-back">← Back to Quizzes</button><div></div></div>
+    </div>
+  `);
+  document.getElementById("sent-detail-back").addEventListener("click", ()=>{ view="quizzes"; render(); });
+  root.querySelectorAll("[data-sent-detail-toggle]").forEach(el=> el.addEventListener("click", async ()=>{
+    const uid = el.getAttribute("data-sent-detail-toggle");
+    const r = quizSentDetailRoster.find(x=>x.id===uid);
+    if(!r || !r.completed) return;
+    quizSentDetailExpandedId = (quizSentDetailExpandedId === uid) ? null : uid;
+    render();
+    if(quizSentDetailExpandedId === uid) await showStandaloneQuizAttemptDetail(uid, quiz.id, `sent-detail-answers-${uid}`, r.name);
+  }));
 }
 
 async function createNewStandaloneQuiz(){
@@ -2153,7 +2246,7 @@ let ANALYZE_TOTALS = { totalPeople:0, notStarted:0, totalAttempts:0, totalFlags:
    Separate from Training Module quizzes entirely.
    ============================================================ */
 let QUIZZES = [];
-let quizListSectionOpen = { pending:true, completed:false };
+let quizListSectionOpen = { pending:true, completed:false, sent:false };
 let currentQuizId = null;
 let quizTakeAnswers = {};
 let quizBuilderDraft = null;
@@ -2164,12 +2257,29 @@ async function loadStandaloneQuizzes(){
   const { data: quizzes } = await supabase.from("standalone_quizzes").select("*").order("created_at", { ascending:false });
   const { data: questions } = await supabase.from("standalone_quiz_questions").select("*").order("sort_order");
   const { data: myAttempts } = await supabase.from("standalone_quiz_attempts").select("*").eq("user_id", session.user.id);
-  QUIZZES = (quizzes||[]).map(q=>({
-    id:q.id, title:q.title, createdBy:q.created_by, createdByName:q.created_by_name,
-    audienceType:q.audience_type, teamId:q.team_id, sent:q.sent, createdAt:q.created_at,
-    questions:(questions||[]).filter(qq=>qq.quiz_id===q.id).map(qq=>({ id:qq.id, type:qq.question_type, question:qq.question, options:qq.options||[], correct:qq.correct_index, explain:qq.explanation||"" })),
-    myAttempt: (myAttempts||[]).find(a=>a.quiz_id===q.id) || null
-  }));
+  const { data: myTeamMemberships } = await supabase.from("team_members").select("team_id").eq("user_id", session.user.id);
+  const { data: myRecipientRows } = await supabase.from("standalone_quiz_recipients").select("quiz_id").eq("user_id", session.user.id);
+  const myTeamIds = new Set((myTeamMemberships||[]).map(m=>m.team_id));
+  const myRecipientQuizIds = new Set((myRecipientRows||[]).map(r=>r.quiz_id));
+
+  QUIZZES = (quizzes||[]).map(q=>{
+    // Broad visibility (via RLS) lets any quiz-manager see every quiz, for
+    // management purposes. That's NOT the same as "this quiz is actually
+    // meant for me to take" — compute that separately and explicitly.
+    let isRecipient = false;
+    if(q.sent){
+      if(q.audience_type === "everyone") isRecipient = true;
+      else if(q.audience_type === "team") isRecipient = myTeamIds.has(q.team_id);
+      else if(q.audience_type === "specific") isRecipient = myRecipientQuizIds.has(q.id);
+    }
+    return {
+      id:q.id, title:q.title, createdBy:q.created_by, createdByName:q.created_by_name,
+      audienceType:q.audience_type, teamId:q.team_id, sent:q.sent, createdAt:q.created_at,
+      questions:(questions||[]).filter(qq=>qq.quiz_id===q.id).map(qq=>({ id:qq.id, type:qq.question_type, question:qq.question, options:qq.options||[], correct:qq.correct_index, explain:qq.explanation||"" })),
+      myAttempt: (myAttempts||[]).find(a=>a.quiz_id===q.id) || null,
+      isRecipient
+    };
+  });
 }
 
 /* ============================================================
@@ -4665,6 +4775,7 @@ function render(){
   else if(view==="quiz-builder") renderQuizBuilder();
   else if(view==="quiz-analyze") renderQuizAnalyze();
   else if(view==="edit-log") renderEditLog();
+  else if(view==="quiz-sent-detail") renderQuizSentDetail();
 }
 
 /* ============================================================
