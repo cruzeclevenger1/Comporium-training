@@ -282,7 +282,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r1";
+const BUILD_VERSION = "2026-07-27T00:00Z-r2";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1874,7 +1874,7 @@ function renderQuizzesList(){
       await openQuizSentDetail(id); return; // sent — view progress & grade
     }
     currentQuizId = id;
-    if(q.myAttempt){ view = "quiz-result-standalone"; render(); }
+    if(q.myAttempt){ await loadStandaloneQuizzes(); view = "quiz-result-standalone"; render(); }
     else { quizTakeAnswers = {}; view = "quiz-take"; render(); }
   }));
   const addBtn2 = document.getElementById("add-quiz");
@@ -2038,9 +2038,17 @@ function renderQuizResultStandalone(){
   const q = QUIZZES.find(x=>x.id===currentQuizId);
   if(!q || !q.myAttempt){ view="quizzes"; render(); return; }
   const a = q.myAttempt;
+  const longAnswerAnswers = (a.answers||[]).filter(ans=>ans.type==="long_answer");
+  const longAnswerCorrect = longAnswerAnswers.filter(ans=>ans.is_correct===true).length;
+  const totalQ = (a.mc_total||0) + longAnswerAnswers.length;
+  const totalCorrect = (a.mc_score||0) + longAnswerCorrect;
+
   const rows = (a.answers||[]).map(ans=>{
     if(ans.type === "long_answer"){
-      return `<div class="sub-card"><div style="font-size:14px;margin-bottom:6px;color:var(--text);"><strong>${escapeHtml(ans.question)}</strong></div><div style="font-size:13px;color:var(--text-dim);white-space:pre-wrap;">${escapeHtml(ans.answer || '(no answer)')}</div></div>`;
+      const gradeTag = !a.graded
+        ? `<span class="tag" style="margin-left:6px;color:var(--amber);border-color:var(--amber-dim);">AWAITING GRADING</span>`
+        : (ans.is_correct ? `<span class="tag" style="margin-left:6px;color:var(--green);border-color:var(--green-dim);">CORRECT</span>` : `<span class="tag" style="margin-left:6px;color:var(--red);border-color:var(--red-dim);">INCORRECT</span>`);
+      return `<div class="sub-card"><div style="font-size:14px;margin-bottom:6px;color:var(--text);"><strong>${escapeHtml(ans.question)}</strong> ${gradeTag}</div><div style="font-size:13px;color:var(--text-dim);white-space:pre-wrap;">${escapeHtml(ans.answer || '(no answer)')}</div></div>`;
     }
     const selectedText = ans.selected!=null ? ans.options[ans.selected] : "(no answer)";
     const correctText = ans.options[ans.correct];
@@ -2053,8 +2061,10 @@ function renderQuizResultStandalone(){
     <div class="card">
       <div class="k-label">QUIZ SUBMITTED</div>
       <h2 style="margin-bottom:6px;">${escapeHtml(q.title)}</h2>
-      ${a.mc_total ? `<p style="color:var(--text-dim);font-size:14px;margin-bottom:16px;">${a.mc_score}/${a.mc_total} correct</p>` : ""}
-      ${!a.graded ? `<p style="color:var(--amber);font-size:13px;margin-bottom:16px;">⏳ Your long-answer responses are waiting to be graded.</p>` : ""}
+      ${a.graded
+        ? `<p style="color:var(--text-dim);font-size:14px;margin-bottom:16px;">${totalCorrect}/${totalQ} correct</p>`
+        : (a.mc_total ? `<p style="color:var(--text-dim);font-size:14px;margin-bottom:16px;">${a.mc_score}/${a.mc_total} multiple choice correct so far</p>` : "")}
+      ${!a.graded ? `<p style="color:var(--amber);font-size:13px;margin-bottom:16px;">⏳ Your long-answer responses are waiting to be graded. Your final score will update once that's done.</p>` : ""}
       ${rows}
       <div class="nav-buttons"><div></div><button class="btn primary" id="back-to-quizzes">Back to Quizzes</button></div>
     </div>
