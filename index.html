@@ -245,6 +245,8 @@
   .lightbox-hint{ position:absolute; bottom:22px; left:50%; transform:translateX(-50%); color:#ffffff99; font-family:var(--mono); font-size:11px; letter-spacing:.03em; }
 
   .guest-banner{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; background:var(--amber-dim); border:1px solid var(--amber); border-radius:10px; padding:10px 16px; margin-bottom:16px; font-size:13px; color:var(--amber); }
+  .feedback-fab{ position:fixed; bottom:24px; right:24px; z-index:400; background:var(--panel); border:1px solid var(--stroke); color:var(--text); padding:12px 18px; border-radius:30px; font-family:var(--sans); font-size:13.5px; cursor:pointer; box-shadow:0 8px 24px #000000aa; transition:border-color .15s, color .15s; }
+  .feedback-fab:hover{ border-color:var(--cyan); color:var(--cyan); }
   .ult-edit-text{ cursor:pointer; border-bottom:1px dashed var(--amber); }
   .ult-edit-text:hover{ background:var(--amber-dim); }
   .lightbox-close:hover{ background:#ffffff22; }
@@ -569,6 +571,7 @@ function exitGuestMode(){
   MODULES = []; progressMap = {}; REFERENCE_PAGES = []; PERSONAL_NOTES = []; TEAMS_LIST = []; teamRows = [];
   NOTIF_ANNOUNCEMENTS = []; NOTIF_THREADS = []; NOTIF_UNCLAIMED = [];
   ANALYZE_MODULE_STATS = []; ANALYZE_MISSED_QUESTIONS = []; ANALYZE_TOTALS = { totalPeople:0, notStarted:0, totalAttempts:0, totalFlags:0 };
+  removeFeedbackButton();
   view = "auth"; authMode = "login"; render();
 }
 
@@ -750,6 +753,7 @@ async function afterLogin(){
   await loadStandaloneQuizzes();
   setupRealtime();
   view = "home"; render();
+  ensureFeedbackButton();
   await showUnseenAnnouncements();
 }
 
@@ -832,6 +836,7 @@ async function logout(){
   teardownRealtime();
   await supabase.auth.signOut();
   session = null; profile = null; MODULES = []; progressMap = {};
+  removeFeedbackButton();
   view = "auth"; authMode = "login"; render();
 }
 
@@ -878,6 +883,7 @@ function renderShell(inner){
               <button id="open-announce">📣 Make Announcement</button>
               <button id="open-guest-editor">👀 Edit Guest Preview</button>
               <button id="open-edit-log">📋 Edit Log</button>
+              <button id="open-view-feedback">🗣 View Feedback</button>
             </div>
           </div>` : (canEditContent() && !isAdmin()) ? `<button class="pill-btn" id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>` : ""}
         <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
@@ -923,6 +929,8 @@ function renderShell(inner){
   if(openGuestEditorBtn) openGuestEditorBtn.addEventListener("click", openGuestEditor);
   const openEditLogBtn = document.getElementById("open-edit-log");
   if(openEditLogBtn) openEditLogBtn.addEventListener("click", openEditLog);
+  const openViewFeedbackBtn = document.getElementById("open-view-feedback");
+  if(openViewFeedbackBtn) openViewFeedbackBtn.addEventListener("click", openViewFeedbackModal);
   const goTeamBtn = document.getElementById("go-team-btn");
   if(goTeamBtn) goTeamBtn.addEventListener("click", openTeamProgress);
   const guestViewToggle = document.getElementById("guest-view-toggle");
@@ -1500,6 +1508,8 @@ function renderTeam(){
         </div>` : ""}
     </div>` : ""}
 
+    <div id="attempt-detail" style="margin-top:16px;"></div>
+
     ${(canManagePeople() || canCreateQuizzes()) ? `
     <div class="card" style="margin-top:16px;">
       ${sectionHeader('quizzes', 'Quiz Progress')}
@@ -1521,7 +1531,6 @@ function renderTeam(){
         </div>` : ""}
     </div>` : ""}
 
-    <div id="attempt-detail" style="margin-top:16px;"></div>
     <div id="quiz-attempt-detail" style="margin-top:16px;"></div>
   `);
 
@@ -3255,6 +3264,59 @@ function promptModal(title, placeholder, defaultValue){
       if(e.target.id === "app-modal-overlay") finish(null);
     });
   });
+}
+
+/* ============================================================
+   ANONYMOUS FEEDBACK
+   ============================================================ */
+function ensureFeedbackButton(){
+  if(document.getElementById("feedback-fab")) return;
+  const btn = document.createElement("button");
+  btn.id = "feedback-fab";
+  btn.className = "feedback-fab";
+  btn.textContent = "💬 Feedback";
+  btn.title = "Send anonymous feedback";
+  btn.addEventListener("click", openFeedbackSubmitModal);
+  document.body.appendChild(btn);
+}
+function removeFeedbackButton(){
+  const btn = document.getElementById("feedback-fab");
+  if(btn) btn.remove();
+}
+function openFeedbackSubmitModal(){
+  openModal(`
+    <h3>Send feedback</h3>
+    <p class="sub">This is completely anonymous — nobody, including admins, can see who sent it. There's no name or account attached to it at all.</p>
+    <div class="field"><textarea id="feedback-input" placeholder="What's on your mind?" style="min-height:120px;"></textarea></div>
+    <div class="modal-actions"><button class="btn" id="feedback-cancel">Cancel</button><button class="btn primary" id="feedback-submit">Send</button></div>
+  `);
+  document.getElementById("feedback-cancel").addEventListener("click", closeModal);
+  document.getElementById("feedback-submit").addEventListener("click", async ()=>{
+    const text = document.getElementById("feedback-input").value.trim();
+    if(!text) return;
+    const btn = document.getElementById("feedback-submit");
+    btn.disabled = true; btn.textContent = "Sending…";
+    const { error } = await supabase.from("feedback").insert({ body: text });
+    if(error){ alert("Couldn't send feedback: " + error.message); btn.disabled = false; btn.textContent = "Send"; return; }
+    closeModal();
+    showToast("Thanks — sent anonymously.");
+  });
+}
+async function openViewFeedbackModal(){
+  const { data, error } = await supabase.from("feedback").select("*").order("created_at", { ascending:false });
+  if(error){ alert("Couldn't load feedback: " + error.message); return; }
+  const rows = (data||[]).map(f=>`
+    <div class="sub-card">
+      <div class="sub-card-head"><span class="tag">${new Date(f.created_at).toLocaleString()}</span></div>
+      <div style="font-size:14px;color:var(--text);white-space:pre-wrap;">${escapeHtml(f.body)}</div>
+    </div>`).join("");
+  openModal(`
+    <h3>Feedback</h3>
+    <p class="sub">Submitted anonymously — there's no way to trace any of these back to a person.</p>
+    <div style="max-height:420px;overflow-y:auto;">${rows || '<p style="color:var(--text-faint);font-size:13px;">No feedback yet.</p>'}</div>
+    <div class="modal-actions"><button class="btn primary" id="feedback-view-close">Close</button></div>
+  `, true);
+  document.getElementById("feedback-view-close").addEventListener("click", closeModal);
 }
 
 /* ============================================================
