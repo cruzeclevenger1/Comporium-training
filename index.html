@@ -2543,9 +2543,15 @@ function threadCardHtml(t){
             <button class="mini-btn chat-grade-choice" data-chat-grade-root="${t.root.id}" data-chat-grade-idx="${idx}" data-chat-grade-val="false">✕ Incorrect</button>
           </div>
         </div>` : '').join("")}
-      <button class="btn primary" data-chat-finalize-grade="${t.root.id}">Finalize grading</button>
-      <p style="color:var(--text-faint);font-size:11.5px;margin-top:8px;">Type feedback below and hit Send to tell them why — that's separate from grading and goes straight into this conversation.</p>
     </div>` : "";
+
+  const bottomHtml = needsGrading ? `
+      <div class="field" style="margin-top:10px;"><label style="font-size:11px;color:var(--text-faint);">Optional feedback to include with your response</label>${richEditorHtml(`thread-rte-${t.root.id}`, "")}</div>
+      <button class="btn primary" data-send-grading-response="${t.root.id}" style="margin-top:8px;">Send response</button>
+    ` : `
+      <div class="field" style="margin-top:10px;">${richEditorHtml(`thread-rte-${t.root.id}`, "")}</div>
+      <button class="mini-btn" data-send-thread="${t.root.id}" style="margin-top:8px;">Send</button>
+    `;
 
   return `
     <div class="sub-card thread-card">
@@ -2555,8 +2561,7 @@ function threadCardHtml(t){
       </div>
       <div class="chat-scroll">${bubbles}</div>
       ${gradingHtml}
-      <div class="field" style="margin-top:10px;">${richEditorHtml(`thread-rte-${t.root.id}`, "")}</div>
-      <button class="mini-btn" data-send-thread="${t.root.id}" style="margin-top:8px;">Send</button>
+      ${bottomHtml}
     </div>`;
 }
 
@@ -2702,21 +2707,41 @@ function renderChat(){
       b.style.fontWeight = isThis ? "700" : "400";
     });
   }));
-  root.querySelectorAll("[data-chat-finalize-grade]").forEach(btn=> btn.addEventListener("click", async ()=>{
-    const rootId = btn.getAttribute("data-chat-finalize-grade");
+  root.querySelectorAll("[data-send-grading-response]").forEach(btn=> btn.addEventListener("click", async ()=>{
+    const rootId = btn.getAttribute("data-send-grading-response");
     const t = NOTIF_THREADS.find(x=>x.root.id===rootId);
     if(!t || !t.relatedAttempt) return;
     const grades = chatPendingGrades[rootId] || {};
     const longAnswerIdxs = t.relatedAttempt.answers.map((a,i)=> a.type==="long_answer" ? i : null).filter(i=>i!=null);
     const allGraded = longAnswerIdxs.every(i=> grades[i] != null);
-    if(!allGraded){ alert("Grade every long-answer question before finalizing."); return; }
+    if(!allGraded){ alert("Mark every long-answer question Correct or Incorrect before sending a response."); return; }
+
+    btn.disabled = true; btn.textContent = "Sending…";
     const updatedAnswers = t.relatedAttempt.answers.map((a,i)=> a.type==="long_answer" ? { ...a, is_correct: grades[i] } : a);
-    const { error } = await supabase.from("standalone_quiz_attempts").update({ answers: updatedAnswers, graded: true }).eq("quiz_id", t.root.related_quiz_id).eq("user_id", t.root.related_quiz_user_id);
-    if(error){ alert("Couldn't save grading: " + error.message); return; }
-    logEdit("graded", "standalone_quiz_attempt", `${t.relatedQuizTitle} — ${t.root.sender_name}`);
+
+    const { error: gradeErr } = await supabase.from("standalone_quiz_attempts").update({ answers: updatedAnswers, graded: true }).eq("quiz_id", t.root.related_quiz_id).eq("user_id", t.root.related_quiz_user_id);
+    if(gradeErr){ alert("Couldn't save grading: " + gradeErr.message); btn.disabled = false; btn.textContent = "Send response"; return; }
+
+    const editorEl = document.getElementById(`thread-rte-${rootId}`);
+    const customFeedback = editorEl ? getCleanEditorHtml(editorEl).trim() : "";
+    const correctCount = longAnswerIdxs.filter(i=>grades[i]===true).length;
+    const summaryHtml = `<p>Your long-answer responses for "<strong>${escapeHtml(t.relatedQuizTitle||'the quiz')}</strong>" have been graded: ${correctCount}/${longAnswerIdxs.length} correct.</p>${(customFeedback && customFeedback!=="<br>") ? customFeedback : ""}`;
+
+    const { error: msgErr } = await supabase.from("messages").insert({
+      sender_id: session.user.id, sender_name: profile.name,
+      recipient_id: t.root.related_quiz_user_id, audience:"user", type:"reply",
+      claimed_by: session.user.id, body: summaryHtml
+    });
+    if(msgErr){ alert("Grading was saved, but the response couldn't be sent: " + msgErr.message); }
+
+    // Clear this submission out of the admin's conversations — its job is done.
+    await supabase.from("messages").delete().eq("thread_id", rootId);
+    await supabase.from("messages").delete().eq("id", rootId);
+
     delete chatPendingGrades[rootId];
-    showToast("Grading saved.");
-    QUIZ_PROGRESS_ROWS = null;
+    logEdit("graded", "standalone_quiz_attempt", `${t.relatedQuizTitle} — ${t.root.sender_name}`);
+    QUIZ_PROGRESS_ROWS = null; // Quiz Progress will reflect the new grade on next load
+    showToast("Response sent.");
     await refreshMessagingView();
   }));
 }
