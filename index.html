@@ -872,8 +872,8 @@ async function logout(){
 function renderShell(inner){
   const inModulesFlow = ["lesson","quiz","results","editor"].includes(view);
   const inQuizFlow = ["quiz-take","quiz-result-standalone","quiz-builder"].includes(view);
-  const crumbLabel = inModulesFlow ? "TRAINING MODULES" : inQuizFlow ? "QUIZZES" : (view==="analyze" ? "TEAMS" : "HOME");
-  const crumbTarget = inModulesFlow ? "dashboard" : inQuizFlow ? "quizzes" : (view==="analyze" ? "team" : "home");
+  const crumbLabel = inModulesFlow ? "TRAINING MODULES" : inQuizFlow ? "QUIZZES" : ((view==="analyze"||view==="quiz-analyze") ? "TEAMS" : "HOME");
+  const crumbTarget = inModulesFlow ? "dashboard" : inQuizFlow ? "quizzes" : ((view==="analyze"||view==="quiz-analyze") ? "team" : "home");
   const section = view==="home" ? "home" : ["dashboard","lesson","quiz","results","editor"].includes(view) ? "modules" : view==="reference" ? "reference" : view==="notes" ? "notes" : null;
 
   root.innerHTML = `
@@ -910,7 +910,7 @@ function renderShell(inner){
         <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
       </div>
     </header>
-    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':''))}`}</nav>`}
+    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':view==='quiz-analyze'?'QUIZ ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':''))}`}</nav>`}
     <div class="top-nav">
       <button class="top-nav-btn ${section==='home'?'active':''}" id="nav-home">${T('nav.dashboard','Dashboard')}</button>
       <button class="top-nav-btn ${section==='modules'?'active':''}" id="nav-modules">${T('nav.modules','Training Modules')}</button>
@@ -1003,6 +1003,7 @@ async function reorderModuleDrop(draggedId, targetId, pos){
 let dashboardFilterIncomplete = false;
 
 function renderDashboard(){
+  lastModuleContext = { view:"dashboard" };
   const editOn = canEdit();
   const visibleModules = dashboardFilterIncomplete ? MODULES.filter(m=> moduleStatus(m.id)!=="mastered") : MODULES;
   const cards = visibleModules.map(m=>{
@@ -1444,15 +1445,14 @@ function renderTeam(){
       ${teamsSectionOpen.people ? `
         <div style="margin-top:14px;">
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
-            <input type="text" id="team-search" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" style="width:180px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
-            <select id="team-filter" style="width:auto;">
+            <input type="text" id="team-search-people" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" style="width:180px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
+            <select id="team-filter-people" style="width:auto;">
               <option value="">All teams</option>
               <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
               <option value="role:editor" ${teamRosterFilter==='role:editor'?'selected':''}>Editors</option>
               <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
               ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
             </select>
-            <button class="btn" id="go-analyze-btn" style="margin-left:auto;">📊 Analyze</button>
           </div>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th><th></th><th></th></tr></thead><tbody>${peopleRows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
         </div>` : ""}
@@ -1463,10 +1463,19 @@ function renderTeam(){
       ${teamsSectionOpen.modules ? `
         <div style="margin-top:14px;">
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+            <input type="text" id="team-search-modules" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" style="width:180px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
+            <select id="team-filter-modules" style="width:auto;">
+              <option value="">All teams</option>
+              <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
+              <option value="role:editor" ${teamRosterFilter==='role:editor'?'selected':''}>Editors</option>
+              <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
+              ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
+            </select>
             <select id="module-filter" style="width:auto;">
               <option value="">All modules (overall)</option>
               ${MODULES.map(m=>`<option value="${m.id}" ${teamModuleFilter===m.id?'selected':''}>${escapeHtml(m.title)}</option>`).join("")}
             </select>
+            <button class="btn" id="go-analyze-btn" style="margin-left:auto;">📊 Analyze</button>
           </div>
           <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">${focusModule ? `Showing progress on <strong style="color:var(--text);">${escapeHtml(focusModule.title)}</strong> only.` : "Click a person to see their module-by-module breakdown."} Click a module pill to see missed questions on their latest attempt.</p>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>${focusModule ? escapeHtml(focusModule.title) : "Overall"}</th><th>${focusModule ? "Score" : "Mastered"}</th><th></th></tr></thead><tbody>${moduleRows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
@@ -1477,6 +1486,17 @@ function renderTeam(){
       ${sectionHeader('quizzes', 'Quiz Progress')}
       ${teamsSectionOpen.quizzes ? `
         <div style="margin-top:14px;">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+            <input type="text" id="team-search-quizzes" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" style="width:180px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
+            <select id="team-filter-quizzes" style="width:auto;">
+              <option value="">All teams</option>
+              <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
+              <option value="role:editor" ${teamRosterFilter==='role:editor'?'selected':''}>Editors</option>
+              <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
+              ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
+            </select>
+            <button class="btn" id="go-quiz-analyze-btn" style="margin-left:auto;">📊 Analyze</button>
+          </div>
           <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Percent of sent quizzes each person has completed. Click a completed quiz to see their answers.</p>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Completion</th><th></th><th></th></tr></thead><tbody>${quizRowsHtml}</tbody></table></div>
         </div>` : ""}
@@ -1497,23 +1517,27 @@ function renderTeam(){
   }));
 
   document.getElementById("go-analyze-btn")?.addEventListener("click", openAnalyze);
+  document.getElementById("go-quiz-analyze-btn")?.addEventListener("click", openQuizAnalyze);
   document.getElementById("new-team-btn")?.addEventListener("click", ()=> openTeamManageModal(null));
   root.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
-  document.getElementById("team-filter")?.addEventListener("change", (e)=>{ teamRosterFilter = e.target.value; render(); });
   document.getElementById("module-filter")?.addEventListener("change", (e)=>{ teamModuleFilter = e.target.value; render(); });
-  const teamSearchEl = document.getElementById("team-search");
-  if(teamSearchEl){
-    let teamSearchDebounce = null;
-    teamSearchEl.addEventListener("input", (e)=>{
-      teamSearchQuery = e.target.value;
-      clearTimeout(teamSearchDebounce);
-      teamSearchDebounce = setTimeout(()=>{
-        render();
-        const el = document.getElementById("team-search");
-        if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-      }, 250);
-    });
-  }
+
+  ["people","modules","quizzes"].forEach(suffix=>{
+    document.getElementById(`team-filter-${suffix}`)?.addEventListener("change", (e)=>{ teamRosterFilter = e.target.value; render(); });
+    const searchEl = document.getElementById(`team-search-${suffix}`);
+    if(searchEl){
+      let debounceTimer = null;
+      searchEl.addEventListener("input", (e)=>{
+        teamSearchQuery = e.target.value;
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(()=>{
+          render();
+          const el = document.getElementById(`team-search-${suffix}`);
+          if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+        }, 250);
+      });
+    }
+  });
 
   root.querySelectorAll("[data-role-select]").forEach(el=> el.addEventListener("change", (e)=>{
     const id = el.getAttribute("data-role-select");
@@ -2074,6 +2098,82 @@ function renderAnalyze(){
     <div class="card" style="margin-top:16px;">
       <h2 style="margin-bottom:4px;">Most commonly missed questions</h2>
       <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">Across every attempt, everyone. A high miss rate usually means the content needs a second look, not the reps.</p>
+      ${missedHtml}
+    </div>
+  `);
+}
+
+let QUIZ_ANALYZE_ROWS = [];
+let QUIZ_ANALYZE_MISSED = [];
+let QUIZ_ANALYZE_TOTALS = { totalQuizzes:0, totalPeople:0, avgCompletion:0, totalSubmissions:0 };
+
+async function openQuizAnalyze(){
+  if(!QUIZ_PROGRESS_ROWS) await loadQuizProgressData();
+  const { data: quizzes } = await supabase.from("standalone_quizzes").select("*").eq("sent", true);
+  const { data: questions } = await supabase.from("standalone_quiz_questions").select("*");
+  const { data: attempts } = await supabase.from("standalone_quiz_attempts").select("*");
+
+  const totalPeople = QUIZ_PROGRESS_ROWS.length;
+  const avgCompletion = totalPeople ? Math.round(QUIZ_PROGRESS_ROWS.reduce((a,r)=>a+r.pct,0)/totalPeople) : 0;
+
+  QUIZ_ANALYZE_ROWS = (quizzes||[]).map(q=>{
+    const qAttempts = (attempts||[]).filter(a=>a.quiz_id===q.id);
+    const eligibleCount = QUIZ_PROGRESS_ROWS.filter(r=> r.perQuiz.some(pq=>pq.quizId===q.id)).length;
+    return { id:q.id, title:q.title, submissions:qAttempts.length, eligibleCount };
+  });
+
+  const questionTally = {};
+  (attempts||[]).forEach(a=>{
+    (a.answers||[]).forEach(ans=>{
+      if(ans.type !== "multiple_choice") return;
+      const key = a.quiz_id + "::" + ans.question;
+      if(!questionTally[key]) questionTally[key] = { quizId:a.quiz_id, question:ans.question, total:0, missed:0 };
+      questionTally[key].total++;
+      if(!ans.is_correct) questionTally[key].missed++;
+    });
+  });
+  QUIZ_ANALYZE_MISSED = Object.values(questionTally)
+    .filter(q=>q.missed>0)
+    .map(q=>({ ...q, missRate: Math.round((q.missed/q.total)*100), quizTitle: (quizzes||[]).find(x=>x.id===q.quizId)?.title || "Unknown quiz" }))
+    .sort((a,b)=> b.missed - a.missed)
+    .slice(0, 10);
+
+  QUIZ_ANALYZE_TOTALS = { totalQuizzes: (quizzes||[]).length, totalPeople, avgCompletion, totalSubmissions: (attempts||[]).length };
+  view = "quiz-analyze"; render();
+}
+
+function renderQuizAnalyze(){
+  const quizRows = QUIZ_ANALYZE_ROWS.map(q=>`
+    <tr>
+      <td>${escapeHtml(q.title)}</td>
+      <td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${q.submissions}/${q.eligibleCount} completed</td>
+    </tr>`).join("");
+
+  const missedHtml = QUIZ_ANALYZE_MISSED.length ? QUIZ_ANALYZE_MISSED.map(q=>`
+    <div class="sub-card">
+      <div class="sub-card-head"><span class="tag">${escapeHtml(q.quizTitle)}</span><span style="font-family:var(--mono);font-size:11px;color:var(--red);">${q.missed} misses · ${q.missRate}% miss rate</span></div>
+      <div style="font-size:14px;color:var(--text);">${escapeHtml(q.question)}</div>
+    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">Not enough quiz submissions yet to show trends.</p>`;
+
+  renderShell(`
+    <div class="card">
+      <div class="k-label">ADMIN</div>
+      <h2 style="margin-bottom:4px;">Quiz Analyze</h2>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Trends across every standalone quiz that's been sent out.</p>
+      <div class="panel-row">
+        <div class="stat"><div class="num">${QUIZ_ANALYZE_TOTALS.totalQuizzes}</div><div class="lbl">QUIZZES SENT</div></div>
+        <div class="stat"><div class="num">${QUIZ_ANALYZE_TOTALS.avgCompletion}%</div><div class="lbl">AVG COMPLETION</div></div>
+        <div class="stat"><div class="num">${QUIZ_ANALYZE_TOTALS.totalSubmissions}</div><div class="lbl">TOTAL SUBMISSIONS</div></div>
+        <div class="stat"><div class="num">${QUIZ_ANALYZE_TOTALS.totalPeople}</div><div class="lbl">PEOPLE</div></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <h2 style="margin-bottom:14px;">Quiz completion</h2>
+      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Quiz</th><th>Completed</th></tr></thead><tbody>${quizRows || `<tr><td colspan="2" style="color:var(--text-faint);font-size:13px;">No quizzes sent yet.</td></tr>`}</tbody></table></div>
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <h2 style="margin-bottom:4px;">Most commonly missed questions</h2>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">Across every submission, everyone.</p>
       ${missedHtml}
     </div>
   `);
@@ -4162,6 +4262,7 @@ function render(){
   else if(view==="quiz-take") renderQuizTake();
   else if(view==="quiz-result-standalone") renderQuizResultStandalone();
   else if(view==="quiz-builder") renderQuizBuilder();
+  else if(view==="quiz-analyze") renderQuizAnalyze();
 }
 
 /* ============================================================
