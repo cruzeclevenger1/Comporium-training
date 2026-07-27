@@ -1754,8 +1754,9 @@ async function showStandaloneQuizAttemptDetail(userId, quizId){
         if(ans.type==="long_answer" && pendingGrades[idx]!=null) return { ...ans, is_correct: pendingGrades[idx] };
         return ans;
       });
-      const { error } = await supabase.from("standalone_quiz_attempts").update({ answers: updatedAnswers, graded: true }).eq("quiz_id", quizId).eq("user_id", userId);
+      const { data: updatedRows, error } = await supabase.from("standalone_quiz_attempts").update({ answers: updatedAnswers, graded: true }).eq("quiz_id", quizId).eq("user_id", userId).select();
       if(error){ alert("Couldn't save grading: " + error.message); return; }
+      if(!updatedRows || !updatedRows.length){ alert("Grading didn't save — the database silently rejected this update (likely a permissions rule). Nothing changed. Please tell your admin/developer this happened."); return; }
       logEdit("graded", "standalone_quiz_attempt", `${quiz?quiz.title:'quiz'} — ${person?person.name:'submission'}`);
       showToast("Grading saved.");
       await loadQuizProgressData(); // refresh the roster's pill, not just this detail panel
@@ -2732,8 +2733,9 @@ function renderChat(){
     btn.disabled = true; btn.textContent = "Sending…";
     const updatedAnswers = t.relatedAttempt.answers.map((a,i)=> a.type==="long_answer" ? { ...a, is_correct: grades[i] } : a);
 
-    const { error: gradeErr } = await supabase.from("standalone_quiz_attempts").update({ answers: updatedAnswers, graded: true }).eq("quiz_id", t.root.related_quiz_id).eq("user_id", t.root.related_quiz_user_id);
+    const { data: updatedRows, error: gradeErr } = await supabase.from("standalone_quiz_attempts").update({ answers: updatedAnswers, graded: true }).eq("quiz_id", t.root.related_quiz_id).eq("user_id", t.root.related_quiz_user_id).select();
     if(gradeErr){ alert("Couldn't save grading: " + gradeErr.message); btn.disabled = false; btn.textContent = "Send response"; return; }
+    if(!updatedRows || !updatedRows.length){ alert("Grading didn't save — the database silently rejected this update (likely a permissions rule). Nothing was sent. Please tell your admin/developer this happened."); btn.disabled = false; btn.textContent = "Send response"; return; }
 
     const editorEl = document.getElementById(`thread-rte-${rootId}`);
     const customFeedback = editorEl ? getCleanEditorHtml(editorEl).trim() : "";
