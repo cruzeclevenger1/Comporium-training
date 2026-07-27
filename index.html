@@ -1745,14 +1745,25 @@ async function showStandaloneQuizAttemptDetail(userId, quizId){
 function renderQuizzesList(){
   const canManageQuizzes = canCreateQuizzes();
   const visible = QUIZZES.filter(q=> canManageQuizzes || q.sent);
-  const cards = visible.map(q=>{
-    const completed = !!q.myAttempt;
-    const tag = !q.sent ? `<span class="status-pill">Draft</span>` : (completed ? `<span class="status-pill done">Completed</span>` : `<span class="status-pill">Not started</span>`);
+  const pending = visible.filter(q=> !q.myAttempt);
+  const completed = visible.filter(q=> !!q.myAttempt);
+
+  function quizCard(q){
+    const tag = !q.sent ? `<span class="status-pill">Draft</span>` : (q.myAttempt ? `<span class="status-pill done">Completed</span>` : `<span class="status-pill">Not started</span>`);
     return `<div class="mod-card" data-quiz-open="${q.id}">
       <div class="row-top"><div><h3>${escapeHtml(q.title)}</h3><p class="sub">${q.questions.length} question${q.questions.length===1?'':'s'} · from ${escapeHtml(q.createdByName||'an admin')}</p></div></div>
       <div class="meta"><span>${tag}</span></div>
     </div>`;
-  }).join("");
+  }
+
+  function sectionHeader(key, title, count){
+    const open = quizListSectionOpen[key];
+    return `<div class="collapsible-header" data-quiz-section-toggle="${key}" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+      <h2 style="margin:0;">${title} <span style="color:var(--text-faint);font-size:13px;font-weight:400;">(${count})</span></h2>
+      <span style="color:var(--text-faint);font-size:16px;">${open?'▾':'▸'}</span>
+    </div>`;
+  }
+
   const addBtn = canManageQuizzes ? `<button class="dashed-btn" id="add-quiz" style="margin-top:14px;">+ New quiz</button>` : "";
   renderShell(`
     <section class="hero">
@@ -1760,13 +1771,25 @@ function renderQuizzesList(){
       <h1>${T('quizzes.h1','Quick check-ins from your admins')}</h1>
       <p>${T('quizzes.p','These are separate from your Training Module quizzes — one-off quizzes sent out by admins.')}</p>
     </section>
-    <div class="grid">${cards || '<p style="color:var(--text-faint);font-size:13px;">No quizzes yet.</p>'}</div>
+    <div class="card">
+      ${sectionHeader('pending', 'New / Not completed', pending.length)}
+      ${quizListSectionOpen.pending ? `<div class="grid" style="margin-top:14px;">${pending.map(quizCard).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here.</p>'}</div>` : ""}
+    </div>
+    <div class="card" style="margin-top:16px;">
+      ${sectionHeader('completed', 'Completed', completed.length)}
+      ${quizListSectionOpen.completed ? `<div class="grid" style="margin-top:14px;">${completed.map(quizCard).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here yet.</p>'}</div>` : ""}
+    </div>
     ${addBtn}
   `);
+  root.querySelectorAll("[data-quiz-section-toggle]").forEach(el=> el.addEventListener("click", ()=>{
+    const key = el.getAttribute("data-quiz-section-toggle");
+    quizListSectionOpen[key] = !quizListSectionOpen[key];
+    render();
+  }));
   root.querySelectorAll("[data-quiz-open]").forEach(el=> el.addEventListener("click", async ()=>{
     const id = el.getAttribute("data-quiz-open");
     const q = QUIZZES.find(x=>x.id===id);
-    if(canManageQuizzes && q.createdBy === session.user.id){ await openQuizBuilder(id); return; }
+    if(canManageQuizzes){ await openQuizBuilder(id); return; }
     currentQuizId = id;
     if(q.myAttempt){ view = "quiz-result-standalone"; render(); }
     else { quizTakeAnswers = {}; view = "quiz-take"; render(); }
@@ -1832,13 +1855,23 @@ async function submitStandaloneQuiz(){
       if(text) longAnswerHtml += `<p><strong>${escapeHtml(qq.question)}</strong><br>${escapeHtml(text)}</p>`;
     }
   });
+  const submitBtn = document.getElementById("submit-standalone-quiz");
+  if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = "Submitting…"; }
   const { error } = await supabase.from("standalone_quiz_attempts").insert({ quiz_id:q.id, user_id:session.user.id, user_name:profile.name, answers, mc_score:mcScore, mc_total:mcTotal });
-  if(error){ alert("Couldn't submit: " + error.message); return; }
-  if(longAnswerHtml && q.createdBy){
-    await supabase.from("messages").insert({ sender_id:session.user.id, sender_name:profile.name, recipient_id:q.createdBy, audience:"user", type:"reply", claimed_by:q.createdBy, body:`<p>📝 ${escapeHtml(profile.name)} submitted long-answer responses for the quiz "${escapeHtml(q.title)}":</p>${longAnswerHtml}` });
+  if(error){
+    alert("Couldn't submit: " + error.message);
+    if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = "Submit Quiz"; }
+    return;
   }
-  await loadStandaloneQuizzes();
+  if(longAnswerHtml && q.createdBy){
+    await supabase.from("messages").insert({ sender_id:session.user.id, sender_name:profile.name, recipient_id:q.createdBy, audience:"user", type:"reply", claimed_by:q.createdBy, body:`<p>📝 ${escapeHtml(profile.name)} submitted long-answer responses for the quiz "${escapeHtml(q.title)}":</p>${longAnswerHtml}` }).catch(()=>{});
+  }
+  // Attach the just-submitted attempt immediately, in memory — the results
+  // page no longer depends on a fresh reload finding it, which was the
+  // cause of getting stuck on the submit screen.
+  q.myAttempt = { quiz_id:q.id, user_id:session.user.id, user_name:profile.name, answers, mc_score:mcScore, mc_total:mcTotal };
   view = "quiz-result-standalone"; render();
+  loadStandaloneQuizzes().catch(()=>{}); // refresh in the background, doesn't block the transition
 }
 
 function renderQuizResultStandalone(){
@@ -2075,6 +2108,7 @@ let ANALYZE_TOTALS = { totalPeople:0, notStarted:0, totalAttempts:0, totalFlags:
    Separate from Training Module quizzes entirely.
    ============================================================ */
 let QUIZZES = [];
+let quizListSectionOpen = { pending:true, completed:false };
 let currentQuizId = null;
 let quizTakeAnswers = {};
 let quizBuilderDraft = null;
