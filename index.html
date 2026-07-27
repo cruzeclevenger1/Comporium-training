@@ -1916,7 +1916,7 @@ async function submitStandaloneQuiz(){
     return;
   }
   if(hasLongAnswer && q.createdBy){
-    await supabase.from("messages").insert({ sender_id:session.user.id, sender_name:profile.name, recipient_id:q.createdBy, audience:"user", type:"reply", claimed_by:q.createdBy, body:`<p>📝 ${escapeHtml(profile.name)} submitted long-answer responses for the quiz "${escapeHtml(q.title)}" — this needs grading before it's finalized. Go to Teams → Quiz Progress to review and grade it:</p>${longAnswerHtml}` }).catch(()=>{});
+    await Promise.resolve(supabase.from("messages").insert({ sender_id:session.user.id, sender_name:profile.name, recipient_id:q.createdBy, audience:"user", type:"reply", claimed_by:q.createdBy, body:`<p>📝 ${escapeHtml(profile.name)} submitted long-answer responses for the quiz "${escapeHtml(q.title)}" — this needs grading before it's finalized. Go to Teams → Quiz Progress to review and grade it:</p>${longAnswerHtml}` })).catch(()=>{});
   }
   // Attach the just-submitted attempt immediately, in memory — the results
   // page no longer depends on a fresh reload finding it, which was the
@@ -2130,8 +2130,8 @@ function wireQuizBuilderEvents(){
     const { error } = await supabase.from("standalone_quizzes").update({ audience_type:d.audienceType, team_id: d.audienceType==="team"?d.teamId:null, sent:true }).eq("id", d.id);
     if(error){ alert("Couldn't send: " + error.message); sendBtn.disabled = false; sendBtn.textContent = "Send quiz →"; return; }
     if(d.audienceType==="specific"){
-      await supabase.from("standalone_quiz_recipients").delete().eq("quiz_id", d.id).catch(()=>{});
-      await supabase.from("standalone_quiz_recipients").insert(d.specificIds.map(uid=>({ quiz_id:d.id, user_id:uid }))).catch(()=>{});
+      await Promise.resolve(supabase.from("standalone_quiz_recipients").delete().eq("quiz_id", d.id)).catch(()=>{});
+      await Promise.resolve(supabase.from("standalone_quiz_recipients").insert(d.specificIds.map(uid=>({ quiz_id:d.id, user_id:uid })))).catch(()=>{});
     }
     d.sent = true;
     logEdit("sent", "standalone_quiz", d.title);
@@ -2140,14 +2140,14 @@ function wireQuizBuilderEvents(){
     // Notify whoever it was sent to (best-effort — never let this block the UI from updating).
     (async ()=>{
       const recipientRole = d.audienceType==="everyone" ? null : d.audienceType==="team" ? "team" : "specific";
-      const { data: annData } = await supabase.from("messages").insert({
+      const { data: annData } = await Promise.resolve(supabase.from("messages").insert({
         sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement",
         body: `<p>📝 New quiz available: <strong>${escapeHtml(d.title)}</strong>. Head to Quizzes to take it.</p>`,
         recipient_role: recipientRole,
         team_id: d.audienceType==="team" ? d.teamId : null
-      }).select().single().catch(()=>({ data:null }));
+      }).select().single()).catch(()=>({ data:null }));
       if(d.audienceType==="specific" && annData){
-        await supabase.from("announcement_recipients").insert(d.specificIds.map(uid=>({ message_id: annData.id, user_id: uid }))).catch(()=>{});
+        await Promise.resolve(supabase.from("announcement_recipients").insert(d.specificIds.map(uid=>({ message_id: annData.id, user_id: uid })))).catch(()=>{});
       }
       await loadStandaloneQuizzes().catch(()=>{});
     })();
