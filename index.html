@@ -220,6 +220,11 @@
   .rte-color-swatch .swatch-bar{ position:absolute; left:6px; right:6px; bottom:4px; height:3px; border-radius:2px; }
   .rte-color-swatch input[type="color"]{ position:absolute; inset:0; opacity:0; cursor:pointer; border:none; padding:0; width:100%; height:100%; }
   .rte-body blockquote{ border-left:3px solid var(--cyan); margin:8px 0; padding:4px 0 4px 14px; color:var(--text-dim); font-style:italic; }
+  .rte-img-wrap.rte-img-selected{ outline:2px solid var(--cyan); outline-offset:2px; }
+  .rte-img-wrap[data-align]{ display:block; width:fit-content; }
+  .rte-img-wrap[data-align="left"]{ margin:8px auto 8px 0; }
+  .rte-img-wrap[data-align="center"]{ margin:8px auto; }
+  .rte-img-wrap[data-align="right"]{ margin:8px 0 8px auto; }
   .rte-body a{ color:var(--cyan); text-decoration:underline; }
   .rte-body h2{ font-size:19px; margin:14px 0 8px; color:var(--text); } .rte-body h3{ font-size:15px; margin:12px 0 6px; color:var(--text); }
   .rte-body{ border:1px solid var(--stroke); border-radius:0 0 8px 8px; padding:14px; min-height:140px; background:#0e1626; color:var(--text); font-size:14px; line-height:1.7; overflow-y:auto; overflow-x:auto; resize:vertical; }
@@ -2283,11 +2288,17 @@ function wireRichEditor(id){
     TOGGLE_CMDS.forEach(cmd=>{
       const btn = toolbar.querySelector(`button[data-cmd="${cmd}"]`);
       if(!btn) return;
+      if(["justifyLeft","justifyCenter","justifyRight"].includes(cmd) && selectedImageWrap && editorEl.contains(selectedImageWrap)){
+        const align = cmd==="justifyLeft" ? "left" : cmd==="justifyCenter" ? "center" : "right";
+        btn.classList.toggle("active", selectedImageWrap.getAttribute("data-align")===align);
+        return;
+      }
       try{ btn.classList.toggle("active", document.queryCommandState(cmd)); }catch(e){}
     });
     const quoteBtn = toolbar.querySelector('button[data-cmd="blockquote"]');
     if(quoteBtn){ try{ quoteBtn.classList.toggle("active", document.queryCommandValue("formatBlock").toLowerCase()==="blockquote"); }catch(e){} }
   };
+  editorEl.addEventListener("click", updateToolbarState);
   editorEl.addEventListener("mouseup", ()=>{ saveCurrentRange(); updateToolbarState(); });
   editorEl.addEventListener("keyup", ()=>{ saveCurrentRange(); updateToolbarState(); });
   editorEl.addEventListener("focus", updateToolbarState);
@@ -2310,6 +2321,12 @@ function wireRichEditor(id){
         const isQuote = document.queryCommandValue("formatBlock").toLowerCase() === "blockquote";
         document.execCommand("formatBlock", false, isQuote ? "P" : "BLOCKQUOTE");
         updateToolbarState();
+        return;
+      }
+      if(["justifyLeft","justifyCenter","justifyRight"].includes(cmd) && selectedImageWrap && editorEl.contains(selectedImageWrap)){
+        const align = cmd==="justifyLeft" ? "left" : cmd==="justifyCenter" ? "center" : "right";
+        selectedImageWrap.setAttribute("data-align", align);
+        editorEl.dispatchEvent(new Event("input", { bubbles:true }));
         return;
       }
       document.execCommand(cmd, false, null);
@@ -2443,6 +2460,20 @@ document.addEventListener("click", (e)=>{
   const editorEl = wrap.closest(".rte-body");
   wrap.remove();
   if(editorEl) editorEl.dispatchEvent(new Event("input", { bubbles:true }));
+});
+let selectedImageWrap = null;
+document.addEventListener("click", (e)=>{
+  if(e.target.closest(".rte-img-delete") || e.target.closest(".rte-resize-handle")) return; // their own listeners handle these
+  const wrap = e.target.closest(".rte-body .rte-img-wrap");
+  if(wrap){
+    document.querySelectorAll(".rte-img-wrap.rte-img-selected").forEach(w=>{ if(w!==wrap) w.classList.remove("rte-img-selected"); });
+    wrap.classList.add("rte-img-selected");
+    selectedImageWrap = wrap;
+    return;
+  }
+  if(e.target.closest(".rte-toolbar")) return; // don't lose the selection while using the toolbar
+  document.querySelectorAll(".rte-img-wrap.rte-img-selected").forEach(w=> w.classList.remove("rte-img-selected"));
+  selectedImageWrap = null;
 });
 let _imgResizeDrag = null;
 document.addEventListener("mousedown", (e)=>{
