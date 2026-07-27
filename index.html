@@ -231,12 +231,13 @@
   html.theme-light .rte-body{ background:#fff; }
   .rte-body:focus{ outline:none; border-color:var(--cyan); }
   .rte-body p{ margin:0 0 10px; } .rte-body ul,.rte-body ol{ margin:0 0 10px; padding-left:22px; }
-  .rte-img-wrap{ display:inline-block; position:relative; overflow:hidden; max-width:100%; vertical-align:bottom; margin:6px 4px; border-radius:8px; }
+  .rte-img-wrap{ display:inline-block; position:relative; overflow:visible; max-width:100%; vertical-align:bottom; margin:6px 4px; }
   .rte-body .rte-img-wrap{ cursor:grab; }
-  .rte-resize-handle{ position:absolute; right:2px; bottom:2px; width:14px; height:14px; cursor:nwse-resize; background:linear-gradient(135deg, transparent 50%, var(--cyan) 50%); border-radius:0 0 4px 0; opacity:0.9; z-index:1; }
+  .rte-resize-handle{ position:absolute; right:-8px; bottom:-8px; width:22px; height:22px; cursor:nwse-resize; background:var(--cyan); border:2px solid var(--panel); border-radius:50%; opacity:0.95; z-index:2; box-shadow:0 2px 6px #000000aa; }
+  .rte-resize-handle:hover{ transform:scale(1.15); }
   .rte-img-delete{ position:absolute; top:3px; right:3px; width:18px; height:18px; border-radius:50%; background:#c0392bdd; color:#fff; font-size:11px; line-height:18px; text-align:center; cursor:pointer; z-index:2; display:none; }
   .rte-body .rte-img-wrap:hover .rte-img-delete{ display:block; }
-  .rte-img-wrap img{ display:block; object-fit:cover; pointer-events:none; max-width:100%; }
+  .rte-img-wrap img{ display:block; object-fit:cover; pointer-events:none; max-width:100%; border-radius:8px; }
   .card .body .rte-img-wrap img, .chat-bubble-body .rte-img-wrap img, .sub-card .rte-img-wrap img{ pointer-events:auto; cursor:zoom-in; }
 
   .lightbox-overlay{ position:fixed; inset:0; background:#050810e6; display:flex; align-items:center; justify-content:center; z-index:400; padding:40px; overflow:hidden; }
@@ -282,7 +283,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r2";
+const BUILD_VERSION = "2026-07-27T00:00Z-r3";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -3833,8 +3834,13 @@ function insertResizableImage(editorEl, dataUrl){
   };
   probe.src = dataUrl;
 }
-function compressImageFile(file, maxDim, quality){
-  maxDim = maxDim || 900; quality = quality || 0.82;
+function compressImageFile(file, maxDim){
+  // PNG instead of JPEG — lossy JPEG compression is genuinely bad for screenshots
+  // with sharp text edges (the classic "ringing" artifacts that blur text right
+  // where you need it sharpest). PNG is lossless, ideal for UI/text screenshots.
+  // Also raised the max dimension substantially so real screenshots aren't
+  // downscaled at all unless they're unusually large.
+  maxDim = maxDim || 1800;
   return new Promise((resolve, reject)=>{
     const reader = new FileReader();
     reader.onerror = reject;
@@ -3847,8 +3853,11 @@ function compressImageFile(file, maxDim, quality){
         else if(h >= w && h > maxDim){ w = Math.round(w*maxDim/h); h = maxDim; }
         const canvas = document.createElement("canvas");
         canvas.width = w; canvas.height = h;
-        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/jpeg", quality));
+        const ctx = canvas.getContext("2d");
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/png"));
       };
       img.src = e.target.result;
     };
