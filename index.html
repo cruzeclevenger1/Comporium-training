@@ -778,6 +778,7 @@ async function afterLogin(){
   await loadEverything();
   await loadUiTextOverrides();
   await loadAllNotifications();
+  await loadStandaloneQuizzes();
   setupRealtime();
   view = "home"; render();
   await showUnseenAnnouncements();
@@ -870,8 +871,9 @@ async function logout(){
    ============================================================ */
 function renderShell(inner){
   const inModulesFlow = ["lesson","quiz","results","editor"].includes(view);
-  const crumbLabel = inModulesFlow ? "TRAINING MODULES" : (view==="analyze" ? "TEAMS" : "HOME");
-  const crumbTarget = inModulesFlow ? "dashboard" : (view==="analyze" ? "team" : "home");
+  const inQuizFlow = ["quiz-take","quiz-result-standalone","quiz-builder"].includes(view);
+  const crumbLabel = inModulesFlow ? "TRAINING MODULES" : inQuizFlow ? "QUIZZES" : (view==="analyze" ? "TEAMS" : "HOME");
+  const crumbTarget = inModulesFlow ? "dashboard" : inQuizFlow ? "quizzes" : (view==="analyze" ? "team" : "home");
   const section = view==="home" ? "home" : ["dashboard","lesson","quiz","results","editor"].includes(view) ? "modules" : view==="reference" ? "reference" : view==="notes" ? "notes" : null;
 
   root.innerHTML = `
@@ -908,7 +910,7 @@ function renderShell(inner){
         <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
       </div>
     </header>
-    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml(currentModId && modById(currentModId) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':''))}`}</nav>`}
+    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':''))}`}</nav>`}
     <div class="top-nav">
       <button class="top-nav-btn ${section==='home'?'active':''}" id="nav-home">${T('nav.dashboard','Dashboard')}</button>
       <button class="top-nav-btn ${section==='modules'?'active':''}" id="nav-modules">${T('nav.modules','Training Modules')}</button>
@@ -1189,6 +1191,31 @@ let teamRosterFilter = "";
 let pendingRoleChanges = {}; // userId -> newRole, staged until explicitly saved
 let teamSearchQuery = "";
 let teamModuleFilter = "";
+let teamsSectionOpen = { teams:false, people:false, modules:false, quizzes:false };
+let QUIZ_PROGRESS_ROWS = null; // lazy-loaded the first time that section opens
+let quizProgressExpandedRows = new Set();
+
+async function loadQuizProgressData(){
+  const { data: quizzes } = await supabase.from("standalone_quizzes").select("*").eq("sent", true);
+  const { data: attempts } = await supabase.from("standalone_quiz_attempts").select("*");
+  const { data: recipients } = await supabase.from("standalone_quiz_recipients").select("*");
+  const { data: allTeamMembers } = await supabase.from("team_members").select("*");
+  QUIZ_PROGRESS_ROWS = teamRows.map(person=>{
+    const eligible = (quizzes||[]).filter(q=>{
+      if(q.audience_type==="everyone") return true;
+      if(q.audience_type==="team") return (allTeamMembers||[]).some(tm=>tm.team_id===q.team_id && tm.user_id===person.id);
+      if(q.audience_type==="specific") return (recipients||[]).some(r=>r.quiz_id===q.id && r.user_id===person.id);
+      return false;
+    });
+    const perQuiz = eligible.map(q=>{
+      const attempt = (attempts||[]).find(a=>a.quiz_id===q.id && a.user_id===person.id);
+      return { quizId:q.id, title:q.title, completed: !!attempt };
+    });
+    const completedCount = perQuiz.filter(x=>x.completed).length;
+    const pct = perQuiz.length ? Math.round((completedCount/perQuiz.length)*100) : 0;
+    return { id:person.id, name:person.name, role:person.role, perQuiz, completedCount, totalCount:perQuiz.length, pct };
+  });
+}
 
 async function openTeamProgress(){
   if(guestMode){ view = "team"; render(); return; }
@@ -1295,9 +1322,9 @@ function renderTeam(){
 
   const focusModule = teamModuleFilter ? modById(teamModuleFilter) : null;
 
-  const rows = filteredRows.map(r=>{
+  // ---- People rows ----
+  const peopleRows = filteredRows.map(r=>{
     const isSelf = r.id===profile.id;
-    const expanded = teamExpandedRows.has(r.id);
     const pendingRole = pendingRoleChanges[r.id];
     const roleSelect = isSelf
       ? `<span class="role-tag ${r.role==='admin'?'admin':''}">${r.role.toUpperCase()} (YOU)</span>`
@@ -1311,7 +1338,12 @@ function renderTeam(){
         </div>`;
     const resetBtn = !isSelf ? `<button class="mini-btn" data-reset-pw="${r.id}" data-reset-name="${escapeHtml(r.name)}">Reset password</button>` : "";
     const deleteUserBtn = !isSelf ? `<button class="mini-btn danger" data-delete-user="${r.id}" data-delete-name="${escapeHtml(r.name)}">Delete user</button>` : "";
+    return `<tr><td>${escapeHtml(r.name)}</td><td>${roleSelect}</td><td>${resetBtn}</td><td>${deleteUserBtn}</td></tr>`;
+  }).join("");
 
+  // ---- Module progress rows ----
+  const moduleRows = filteredRows.map(r=>{
+    const expanded = teamExpandedRows.has(r.id);
     const moduleGrid = MODULES.map(m=>{
       const pct = r.perModule[m.id];
       const cls = pct===100 ? "done" : pct>0 ? "progress" : "";
@@ -1342,74 +1374,146 @@ function renderTeam(){
     const mainRow = `
       <tr class="team-row-main" data-team-toggle="${r.id}" style="cursor:pointer;">
         <td>${escapeHtml(r.name)}</td>
-        <td>${roleSelect}</td>
         ${progressCell}
         ${thirdCell}
-        <td>${resetBtn}</td>
-        <td>${deleteUserBtn}</td>
         <td style="text-align:center;color:var(--text-faint);">${expanded?'▾':'▸'}</td>
       </tr>`;
-
     const detailRow = expanded ? `
-      <tr class="team-row-detail"><td colspan="7">
+      <tr class="team-row-detail"><td colspan="4">
         <div style="display:flex;flex-wrap:wrap;gap:8px;padding:6px 4px 14px;">
           ${moduleGrid || `<span style="color:var(--text-faint);font-size:12.5px;">No modules yet.</span>`}
         </div>
       </td></tr>` : "";
-
     return mainRow + detailRow;
   }).join("");
 
+  // ---- Quiz progress rows ----
+  let quizRowsHtml = `<p style="color:var(--text-faint);font-size:13px;">Loading…</p>`;
+  if(QUIZ_PROGRESS_ROWS){
+    let filteredQuizRows = QUIZ_PROGRESS_ROWS;
+    if(teamRosterFilter.startsWith("role:")){
+      filteredQuizRows = filteredQuizRows.filter(r=> r.role === teamRosterFilter.slice(5));
+    }
+    if(teamSearchQuery.trim()){
+      const q = teamSearchQuery.trim().toLowerCase();
+      filteredQuizRows = filteredQuizRows.filter(r=> r.name.toLowerCase().includes(q));
+    }
+    quizRowsHtml = filteredQuizRows.map(r=>{
+      const expanded = quizProgressExpandedRows.has(r.id);
+      const quizPills = r.perQuiz.map(pq=> `<button class="status-pill ${pq.completed?'done':''}" ${pq.completed?`data-view-quiz-attempt="${r.id}:${pq.quizId}"`:''} style="${pq.completed?'cursor:pointer;':'cursor:default;'}">${escapeHtml(pq.title)} · ${pq.completed?'Completed':'Not started'}</button>`).join("");
+      const mainRow = `
+        <tr class="team-row-main" data-quiz-team-toggle="${r.id}" style="cursor:pointer;">
+          <td>${escapeHtml(r.name)}</td>
+          <td style="min-width:160px;"><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="flex:1;"><div style="width:${r.pct}%"></div></div><span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${r.pct}%</span></div></td>
+          <td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${r.completedCount}/${r.totalCount} completed</td>
+          <td style="text-align:center;color:var(--text-faint);">${expanded?'▾':'▸'}</td>
+        </tr>`;
+      const detailRow = expanded ? `
+        <tr class="team-row-detail"><td colspan="4">
+          <div style="display:flex;flex-wrap:wrap;gap:8px;padding:6px 4px 14px;">
+            ${quizPills || `<span style="color:var(--text-faint);font-size:12.5px;">No quizzes sent to this person yet.</span>`}
+          </div>
+        </td></tr>` : "";
+      return mainRow + detailRow;
+    }).join("") || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`;
+  }
+
+  function sectionHeader(key, title, count){
+    const open = teamsSectionOpen[key];
+    return `<div class="collapsible-header" data-team-section-toggle="${key}" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+      <h2 style="margin:0;">${title}${count!=null?` <span style="color:var(--text-faint);font-size:13px;font-weight:400;">(${count})</span>`:''}</h2>
+      <span style="color:var(--text-faint);font-size:16px;">${open?'▾':'▸'}</span>
+    </div>`;
+  }
+
   renderShell(`
     <div class="card">
-      <div class="k-label">ADMIN</div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <h2 style="margin:0;">Teams</h2>
-        <button class="btn primary" id="new-team-btn">+ New team</button>
-      </div>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 14px;">Group people together to filter progress by cohort, or target announcements at just this group.</p>
-      <div>${teamsHtml}</div>
+      ${sectionHeader('teams', 'Teams', TEAMS_LIST.length)}
+      ${teamsSectionOpen.teams ? `
+        <div style="margin-top:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <p style="color:var(--text-dim);font-size:13.5px;margin:0;">Group people together to filter progress by cohort, or target announcements at just this group.</p>
+            <button class="btn primary" id="new-team-btn">+ New team</button>
+          </div>
+          <div>${teamsHtml}</div>
+        </div>` : ""}
     </div>
+
     <div class="card" style="margin-top:16px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:6px;">
-        <h2 style="margin:0;">Progress</h2>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;">
-          <button class="btn" id="go-analyze-btn">📊 Analyze</button>
-          <input type="text" id="team-search" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" style="width:180px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
-          <select id="team-filter" style="width:auto;">
-            <option value="">All teams</option>
-            <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
-            <option value="role:editor" ${teamRosterFilter==='role:editor'?'selected':''}>Editors</option>
-            <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
-            ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
-          </select>
-          <select id="module-filter" style="width:auto;">
-            <option value="">All modules (overall)</option>
-            ${MODULES.map(m=>`<option value="${m.id}" ${teamModuleFilter===m.id?'selected':''}>${escapeHtml(m.title)}</option>`).join("")}
-          </select>
-        </div>
-      </div>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">${focusModule ? `Showing progress on <strong style="color:var(--text);">${escapeHtml(focusModule.title)}</strong> only.` : "Click a person to see their module-by-module breakdown."} Click a module pill to see missed questions on their latest attempt.</p>
-      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th><th>${focusModule ? escapeHtml(focusModule.title) : "Overall"}</th><th>${focusModule ? "Score" : "Mastered"}</th><th></th><th></th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="7" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
+      ${sectionHeader('people', 'People', teamRows.length)}
+      ${teamsSectionOpen.people ? `
+        <div style="margin-top:14px;">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+            <input type="text" id="team-search" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" style="width:180px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
+            <select id="team-filter" style="width:auto;">
+              <option value="">All teams</option>
+              <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
+              <option value="role:editor" ${teamRosterFilter==='role:editor'?'selected':''}>Editors</option>
+              <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
+              ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
+            </select>
+            <button class="btn" id="go-analyze-btn" style="margin-left:auto;">📊 Analyze</button>
+          </div>
+          <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th><th></th><th></th></tr></thead><tbody>${peopleRows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
+        </div>` : ""}
     </div>
+
+    <div class="card" style="margin-top:16px;">
+      ${sectionHeader('modules', 'Module Progress')}
+      ${teamsSectionOpen.modules ? `
+        <div style="margin-top:14px;">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+            <select id="module-filter" style="width:auto;">
+              <option value="">All modules (overall)</option>
+              ${MODULES.map(m=>`<option value="${m.id}" ${teamModuleFilter===m.id?'selected':''}>${escapeHtml(m.title)}</option>`).join("")}
+            </select>
+          </div>
+          <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">${focusModule ? `Showing progress on <strong style="color:var(--text);">${escapeHtml(focusModule.title)}</strong> only.` : "Click a person to see their module-by-module breakdown."} Click a module pill to see missed questions on their latest attempt.</p>
+          <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>${focusModule ? escapeHtml(focusModule.title) : "Overall"}</th><th>${focusModule ? "Score" : "Mastered"}</th><th></th></tr></thead><tbody>${moduleRows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
+        </div>` : ""}
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      ${sectionHeader('quizzes', 'Quiz Progress')}
+      ${teamsSectionOpen.quizzes ? `
+        <div style="margin-top:14px;">
+          <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Percent of sent quizzes each person has completed. Click a completed quiz to see their answers.</p>
+          <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Completion</th><th></th><th></th></tr></thead><tbody>${quizRowsHtml}</tbody></table></div>
+        </div>` : ""}
+    </div>
+
     <div id="attempt-detail" style="margin-top:16px;"></div>
+    <div id="quiz-attempt-detail" style="margin-top:16px;"></div>
   `);
 
-  document.getElementById("go-analyze-btn").addEventListener("click", openAnalyze);
-  document.getElementById("new-team-btn").addEventListener("click", ()=> openTeamManageModal(null));
+  root.querySelectorAll("[data-team-section-toggle]").forEach(el=> el.addEventListener("click", async ()=>{
+    const key = el.getAttribute("data-team-section-toggle");
+    teamsSectionOpen[key] = !teamsSectionOpen[key];
+    if(key==="quizzes" && teamsSectionOpen.quizzes && !QUIZ_PROGRESS_ROWS){
+      render(); // show the section immediately with a loading state
+      await loadQuizProgressData();
+    }
+    render();
+  }));
+
+  document.getElementById("go-analyze-btn")?.addEventListener("click", openAnalyze);
+  document.getElementById("new-team-btn")?.addEventListener("click", ()=> openTeamManageModal(null));
   root.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
-  document.getElementById("team-filter").addEventListener("change", (e)=>{ teamRosterFilter = e.target.value; render(); });
-  document.getElementById("module-filter").addEventListener("change", (e)=>{ teamModuleFilter = e.target.value; render(); });
-  let teamSearchDebounce = null;
-  document.getElementById("team-search").addEventListener("input", (e)=>{
-    teamSearchQuery = e.target.value;
-    clearTimeout(teamSearchDebounce);
-    teamSearchDebounce = setTimeout(()=>{
-      render();
-      const el = document.getElementById("team-search");
-      if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-    }, 250);
-  });
+  document.getElementById("team-filter")?.addEventListener("change", (e)=>{ teamRosterFilter = e.target.value; render(); });
+  document.getElementById("module-filter")?.addEventListener("change", (e)=>{ teamModuleFilter = e.target.value; render(); });
+  const teamSearchEl = document.getElementById("team-search");
+  if(teamSearchEl){
+    let teamSearchDebounce = null;
+    teamSearchEl.addEventListener("input", (e)=>{
+      teamSearchQuery = e.target.value;
+      clearTimeout(teamSearchDebounce);
+      teamSearchDebounce = setTimeout(()=>{
+        render();
+        const el = document.getElementById("team-search");
+        if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+      }, 250);
+    });
+  }
 
   root.querySelectorAll("[data-role-select]").forEach(el=> el.addEventListener("change", (e)=>{
     const id = el.getAttribute("data-role-select");
@@ -1445,6 +1549,16 @@ function renderTeam(){
     e.stopPropagation();
     const [userId, moduleId] = el.getAttribute("data-view-attempt").split(":");
     await showAttemptDetail(userId, moduleId);
+  }));
+  root.querySelectorAll("[data-quiz-team-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
+    const id = el.getAttribute("data-quiz-team-toggle");
+    if(quizProgressExpandedRows.has(id)) quizProgressExpandedRows.delete(id); else quizProgressExpandedRows.add(id);
+    render();
+  }));
+  root.querySelectorAll("[data-view-quiz-attempt]").forEach(el=> el.addEventListener("click", async (e)=>{
+    e.stopPropagation();
+    const [userId, quizId] = el.getAttribute("data-view-quiz-attempt").split(":");
+    await showStandaloneQuizAttemptDetail(userId, quizId);
   }));
 }
 
@@ -1503,12 +1617,378 @@ async function showAttemptDetail(userId, moduleId){
   }));
 }
 
+async function showStandaloneQuizAttemptDetail(userId, quizId){
+  const holder = document.getElementById("quiz-attempt-detail");
+  holder.innerHTML = `<div class="card"><p style="color:var(--text-faint);font-family:var(--mono);font-size:12px;">Loading answers…</p></div>`;
+  const person = teamRows.find(r=>r.id===userId);
+  const { data: quiz } = await supabase.from("standalone_quizzes").select("*").eq("id", quizId).single();
+  const { data: attempt } = await supabase.from("standalone_quiz_attempts").select("*").eq("user_id", userId).eq("quiz_id", quizId).single();
+  if(!attempt){
+    holder.innerHTML = `<div class="card"><p style="color:var(--text-dim);font-size:13.5px;">No submission found.</p></div>`;
+    return;
+  }
+  const rows = (attempt.answers||[]).map(ans=>{
+    if(ans.type === "long_answer"){
+      return `<div class="sub-card"><div style="font-size:14px;margin-bottom:6px;"><strong>${escapeHtml(ans.question)}</strong> <span class="tag" style="margin-left:6px;">LONG ANSWER</span></div><div style="font-size:13px;color:var(--text-dim);white-space:pre-wrap;">${escapeHtml(ans.answer || '(no answer)')}</div></div>`;
+    }
+    const selectedText = ans.selected!=null ? ans.options[ans.selected] : "(no answer)";
+    const correctText = ans.options[ans.correct];
+    return `<div class="sub-card"><div style="font-size:14px;margin-bottom:6px;"><strong>${escapeHtml(ans.question)}</strong></div>
+      <div style="font-size:13px;color:${ans.is_correct?'var(--green)':'var(--red)'};">Their answer: ${escapeHtml(selectedText)}</div>
+      ${!ans.is_correct?`<div style="font-size:13px;color:var(--green);">Correct answer: ${escapeHtml(correctText)}</div>`:''}
+    </div>`;
+  }).join("");
+  holder.innerHTML = `
+    <div class="card">
+      <div class="k-label">QUIZ SUBMISSION · ${escapeHtml(person?person.name:'')} · ${escapeHtml(quiz?quiz.title:'')}</div>
+      ${attempt.mc_total ? `<h2 style="margin-bottom:16px;">${attempt.mc_score}/${attempt.mc_total} correct</h2>` : `<h2 style="margin-bottom:16px;">Submitted</h2>`}
+      ${rows || `<p style="color:var(--text-faint);font-size:13px;">No answers recorded.</p>`}
+    </div>
+  `;
+}
+
+/* ============================================================
+   QUIZZES — list, take, results, and admin builder
+   ============================================================ */
+function renderQuizzesList(){
+  const isAdminUser = isAdmin();
+  const visible = QUIZZES.filter(q=> isAdminUser || q.sent);
+  const cards = visible.map(q=>{
+    const completed = !!q.myAttempt;
+    const tag = !q.sent ? `<span class="status-pill">Draft</span>` : (completed ? `<span class="status-pill done">Completed</span>` : `<span class="status-pill">Not started</span>`);
+    return `<div class="mod-card" data-quiz-open="${q.id}">
+      <div class="row-top"><div><h3>${escapeHtml(q.title)}</h3><p class="sub">${q.questions.length} question${q.questions.length===1?'':'s'} · from ${escapeHtml(q.createdByName||'an admin')}</p></div></div>
+      <div class="meta"><span>${tag}</span></div>
+    </div>`;
+  }).join("");
+  const addBtn = isAdminUser ? `<button class="dashed-btn" id="add-quiz" style="margin-top:14px;">+ New quiz</button>` : "";
+  renderShell(`
+    <section class="hero">
+      <div class="eyebrow">${T('quizzes.eyebrow','Quizzes')}</div>
+      <h1>${T('quizzes.h1','Quick check-ins from your admins')}</h1>
+      <p>${T('quizzes.p','These are separate from your Training Module quizzes — one-off quizzes sent out by admins.')}</p>
+    </section>
+    <div class="grid">${cards || '<p style="color:var(--text-faint);font-size:13px;">No quizzes yet.</p>'}</div>
+    ${addBtn}
+  `);
+  root.querySelectorAll("[data-quiz-open]").forEach(el=> el.addEventListener("click", async ()=>{
+    const id = el.getAttribute("data-quiz-open");
+    const q = QUIZZES.find(x=>x.id===id);
+    if(isAdminUser && q.createdBy === session.user.id){ await openQuizBuilder(id); return; }
+    currentQuizId = id;
+    if(q.myAttempt){ view = "quiz-result-standalone"; render(); }
+    else { quizTakeAnswers = {}; view = "quiz-take"; render(); }
+  }));
+  const addBtn2 = document.getElementById("add-quiz");
+  if(addBtn2) addBtn2.addEventListener("click", createNewStandaloneQuiz);
+}
+
+async function createNewStandaloneQuiz(){
+  const title = prompt("Quiz title:");
+  if(!title || !title.trim()) return;
+  const { data, error } = await supabase.from("standalone_quizzes").insert({ title:title.trim(), created_by:session.user.id, created_by_name:profile.name, audience_type:"everyone", sent:false }).select().single();
+  if(error){ alert("Couldn't create quiz: " + error.message); return; }
+  await loadStandaloneQuizzes();
+  await openQuizBuilder(data.id);
+}
+
+function renderQuizTake(){
+  const q = QUIZZES.find(x=>x.id===currentQuizId);
+  if(!q){ view="quizzes"; render(); return; }
+  const questionsHtml = q.questions.map((qq,i)=>{
+    if(qq.type === "long_answer"){
+      return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1} · LONG ANSWER</span></div>
+        <div style="font-size:14px;margin-bottom:10px;color:var(--text);">${escapeHtml(qq.question)}</div>
+        <textarea data-quiz-longanswer="${qq.id}" placeholder="Type your answer…" style="min-height:100px;width:100%;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:10px;font-family:var(--sans);font-size:14px;">${escapeHtml(quizTakeAnswers[qq.id]||"")}</textarea>
+      </div>`;
+    }
+    const opts = (qq.options||[]).map((opt,oi)=>`<div class="opt-row"><input type="radio" name="qtake-${qq.id}" data-quiz-mc="${qq.id}" value="${oi}" ${quizTakeAnswers[qq.id]===oi?'checked':''}> <span>${escapeHtml(opt)}</span></div>`).join("");
+    return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1}</span></div>
+      <div style="font-size:14px;margin-bottom:10px;color:var(--text);">${escapeHtml(qq.question)}</div>${opts}
+    </div>`;
+  }).join("");
+  renderShell(`
+    <div class="card">
+      <div class="k-label">QUIZ</div>
+      <h2 style="margin-bottom:16px;">${escapeHtml(q.title)}</h2>
+      ${questionsHtml || `<p style="color:var(--text-faint);font-size:13px;">This quiz has no questions yet.</p>`}
+      <div class="nav-buttons"><button class="btn" id="quiz-take-back">← Back to Quizzes</button><button class="btn primary" id="submit-standalone-quiz">Submit Quiz</button></div>
+    </div>
+  `);
+  document.getElementById("quiz-take-back").addEventListener("click", ()=>{ view="quizzes"; render(); });
+  root.querySelectorAll("[data-quiz-mc]").forEach(el=> el.addEventListener("change", (e)=>{ quizTakeAnswers[el.getAttribute("data-quiz-mc")] = +e.target.value; }));
+  root.querySelectorAll("[data-quiz-longanswer]").forEach(el=> el.addEventListener("input", (e)=>{ quizTakeAnswers[el.getAttribute("data-quiz-longanswer")] = e.target.value; }));
+  document.getElementById("submit-standalone-quiz").addEventListener("click", submitStandaloneQuiz);
+}
+
+async function submitStandaloneQuiz(){
+  const q = QUIZZES.find(x=>x.id===currentQuizId);
+  if(!q) return;
+  let mcScore = 0, mcTotal = 0;
+  const answers = [];
+  let longAnswerHtml = "";
+  q.questions.forEach(qq=>{
+    if(qq.type === "multiple_choice"){
+      mcTotal++;
+      const selected = quizTakeAnswers[qq.id];
+      const isCorrect = selected === qq.correct;
+      if(isCorrect) mcScore++;
+      answers.push({ question_id:qq.id, question:qq.question, type:"multiple_choice", options:qq.options, selected, correct:qq.correct, is_correct:isCorrect });
+    } else {
+      const text = (quizTakeAnswers[qq.id]||"").trim();
+      answers.push({ question_id:qq.id, question:qq.question, type:"long_answer", answer:text });
+      if(text) longAnswerHtml += `<p><strong>${escapeHtml(qq.question)}</strong><br>${escapeHtml(text)}</p>`;
+    }
+  });
+  const { error } = await supabase.from("standalone_quiz_attempts").insert({ quiz_id:q.id, user_id:session.user.id, user_name:profile.name, answers, mc_score:mcScore, mc_total:mcTotal });
+  if(error){ alert("Couldn't submit: " + error.message); return; }
+  if(longAnswerHtml && q.createdBy){
+    await supabase.from("messages").insert({ sender_id:session.user.id, sender_name:profile.name, recipient_id:q.createdBy, audience:"user", type:"reply", claimed_by:q.createdBy, body:`<p>📝 ${escapeHtml(profile.name)} submitted long-answer responses for the quiz "${escapeHtml(q.title)}":</p>${longAnswerHtml}` });
+  }
+  await loadStandaloneQuizzes();
+  view = "quiz-result-standalone"; render();
+}
+
+function renderQuizResultStandalone(){
+  const q = QUIZZES.find(x=>x.id===currentQuizId);
+  if(!q || !q.myAttempt){ view="quizzes"; render(); return; }
+  const a = q.myAttempt;
+  const rows = (a.answers||[]).map(ans=>{
+    if(ans.type === "long_answer"){
+      return `<div class="sub-card"><div style="font-size:14px;margin-bottom:6px;color:var(--text);"><strong>${escapeHtml(ans.question)}</strong></div><div style="font-size:13px;color:var(--text-dim);white-space:pre-wrap;">${escapeHtml(ans.answer || '(no answer)')}</div></div>`;
+    }
+    const selectedText = ans.selected!=null ? ans.options[ans.selected] : "(no answer)";
+    const correctText = ans.options[ans.correct];
+    return `<div class="sub-card"><div style="font-size:14px;margin-bottom:6px;color:var(--text);"><strong>${escapeHtml(ans.question)}</strong></div>
+      <div style="font-size:13px;color:${ans.is_correct?'var(--green)':'var(--red)'};">Your answer: ${escapeHtml(selectedText)}</div>
+      ${!ans.is_correct?`<div style="font-size:13px;color:var(--green);">Correct answer: ${escapeHtml(correctText)}</div>`:''}
+    </div>`;
+  }).join("");
+  renderShell(`
+    <div class="card">
+      <div class="k-label">QUIZ SUBMITTED</div>
+      <h2 style="margin-bottom:6px;">${escapeHtml(q.title)}</h2>
+      ${a.mc_total ? `<p style="color:var(--text-dim);font-size:14px;margin-bottom:16px;">${a.mc_score}/${a.mc_total} correct</p>` : ""}
+      ${rows}
+      <div class="nav-buttons"><div></div><button class="btn primary" id="back-to-quizzes">Back to Quizzes</button></div>
+    </div>
+  `);
+  document.getElementById("back-to-quizzes").addEventListener("click", ()=>{ view="quizzes"; render(); });
+}
+
+async function openQuizBuilder(id){
+  if(!TEAMS_LIST.length){
+    const { data: teamsData } = await supabase.from("teams").select("*").order("name");
+    const { data: memberships } = await supabase.from("team_members").select("*");
+    TEAMS_LIST = (teamsData||[]).map(t=>({ id:t.id, name:t.name, memberIds:(memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id) }));
+  }
+  if(!teamRows.length){
+    const { data: people } = await supabase.from("profiles").select("*").order("name");
+    teamRows = (people||[]).map(p=>({ id:p.id, name:p.name, role:p.role, perModule:{}, perModuleRaw:{}, overall:0, mastered:0, teamIds:[] }));
+  }
+  const { data: qRow } = await supabase.from("standalone_quizzes").select("*").eq("id", id).single();
+  const { data: questions } = await supabase.from("standalone_quiz_questions").select("*").eq("quiz_id", id).order("sort_order");
+  const { data: recipients } = await supabase.from("standalone_quiz_recipients").select("user_id").eq("quiz_id", id);
+  quizBuilderDraft = {
+    id, title:qRow.title, audienceType:qRow.audience_type, teamId:qRow.team_id, sent:qRow.sent,
+    specificIds: (recipients||[]).map(r=>r.user_id),
+    questions: (questions||[]).map(q=>({ id:q.id, type:q.question_type, question:q.question, options:q.options||["Option A","Option B"], correct:q.correct_index||0, explain:q.explanation||"" }))
+  };
+  expandedQuizQuestionIdx = null;
+  view = "quiz-builder"; render();
+}
+
+let quizTitleAutosaveTimer = null;
+let quizQuestionAutosaveTimers = {};
+
+function renderQuizBuilder(){
+  const d = quizBuilderDraft;
+  const locked = d.sent; // audience/team/people can't change after sending
+
+  const questionsHtml = d.questions.map((q,i)=>{
+    if(i === expandedQuizQuestionIdx){
+      const typeToggle = `<div class="field"><label>Question type</label>
+        <select data-qz-type="${i}">
+          <option value="multiple_choice" ${q.type==='multiple_choice'?'selected':''}>Multiple choice</option>
+          <option value="long_answer" ${q.type==='long_answer'?'selected':''}>Long answer</option>
+        </select></div>`;
+      const mcFields = q.type==="multiple_choice" ? `
+        <div class="field"><label>Options (select correct)</label>
+          ${q.options.map((opt,oi)=>`<div class="opt-row"><input type="radio" name="qzcorrect-${i}" data-qz-correct="${i}" value="${oi}" ${q.correct===oi?'checked':''}><input type="text" data-qz-opt="${i}:${oi}" value="${escapeHtml(opt)}"><button class="mini-btn danger" data-qz-opt-del="${i}:${oi}" ${q.options.length<=2?'disabled':''}>✕</button></div>`).join("")}
+          <button class="mini-btn" data-qz-opt-add="${i}" style="margin-top:4px;">+ Add option</button>
+        </div>
+        <div class="field"><label>Explanation (optional)</label><textarea data-qz-explain="${i}" style="min-height:50px;">${escapeHtml(q.explain)}</textarea></div>` : "";
+      return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1} · EDITING</span><div style="display:flex;align-items:center;gap:10px;"><span id="qz-save-status-${i}" style="font-size:11px;color:var(--text-faint);font-family:var(--mono);"></span><button class="mini-btn danger" data-qz-del="${i}">Delete</button></div></div>
+        ${typeToggle}
+        <div class="field"><label>Question</label><textarea data-qz-text="${i}" style="min-height:55px;">${escapeHtml(q.question)}</textarea></div>
+        ${mcFields}
+        <div class="nav-buttons"><div></div><button class="btn primary" data-qz-done="${i}">Done</button></div>
+      </div>`;
+    }
+    return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1}${q.question?' · '+escapeHtml(q.question.slice(0,50))+(q.question.length>50?'…':''):''} · ${q.type==='long_answer'?'LONG ANSWER':'MULTIPLE CHOICE'}</span>
+      <div class="mini-tools"><button class="mini-btn" data-qz-edit="${i}">Edit</button><button class="mini-btn danger" data-qz-del="${i}">Delete</button></div></div>
+    </div>`;
+  }).join("");
+
+  const audienceSection = `
+    <div class="field"><label>Send to</label>
+      <select id="qz-audience" ${locked?'disabled':''}>
+        <option value="everyone" ${d.audienceType==='everyone'?'selected':''}>Everyone</option>
+        <option value="team" ${d.audienceType==='team'?'selected':''}>A specific team…</option>
+        <option value="specific" ${d.audienceType==='specific'?'selected':''}>Specific people…</option>
+      </select>
+    </div>
+    ${d.audienceType==='team' ? `<div class="field" id="qz-team-field"><label>Team</label><select id="qz-team-select" ${locked?'disabled':''}>${TEAMS_LIST.map(t=>`<option value="${t.id}" ${d.teamId===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("") || '<option value="">No teams yet</option>'}</select></div>` : ""}
+    ${d.audienceType==='specific' ? `<div class="field" id="qz-people-field"><label>Choose people</label><div id="qz-people-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">${teamRows.map(r=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);"><input type="checkbox" value="${r.id}" class="qz-person-check" ${d.specificIds.includes(r.id)?'checked':''} ${locked?'disabled':''}> ${escapeHtml(r.name)}</label>`).join("")}</div></div>` : ""}
+  `;
+
+  renderShell(`
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div class="k-label">${d.sent ? "SENT QUIZ" : "DRAFT QUIZ"}</div>
+        <span id="qz-title-save-status" style="font-size:11px;color:var(--text-faint);font-family:var(--mono);"></span>
+      </div>
+      <div class="field"><label>Quiz title</label><input type="text" id="qz-title" value="${escapeHtml(d.title)}"></div>
+      ${audienceSection}
+      <div class="editor-section"><div class="editor-section-head"><h3>Questions</h3></div>${questionsHtml || '<p style="color:var(--text-faint);font-size:13px;">No questions yet.</p>'}<button class="dashed-btn" id="add-qz-question">+ Add question</button></div>
+      <div class="nav-buttons"><div style="display:flex;gap:10px;"><button class="btn" id="qz-back">← Back</button><button class="btn danger" id="qz-delete">Delete quiz</button></div>
+      ${!d.sent ? `<button class="btn primary" id="qz-send">Send quiz →</button>` : `<span class="status-pill done">Sent</span>`}</div>
+      ${!d.sent ? `<p style="color:var(--text-faint);font-size:11.5px;font-family:var(--mono);margin-top:10px;">Questions save automatically. Nobody can see this quiz until you send it.</p>` : ""}
+    </div>
+  `);
+  wireQuizBuilderEvents();
+}
+
+function wireQuizBuilderEvents(){
+  const d = quizBuilderDraft;
+
+  document.getElementById("qz-back").addEventListener("click", async ()=>{ await loadStandaloneQuizzes(); view="quizzes"; render(); });
+  document.getElementById("qz-delete").addEventListener("click", async ()=>{
+    if(confirm(`Delete "${d.title||'this quiz'}"? This can't be undone.`)){
+      await supabase.from("standalone_quizzes").delete().eq("id", d.id);
+      await loadStandaloneQuizzes(); view="quizzes"; render();
+    }
+  });
+
+  const titleInput = document.getElementById("qz-title");
+  titleInput.addEventListener("input", (e)=>{
+    d.title = e.target.value;
+    const statusEl = document.getElementById("qz-title-save-status");
+    if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
+    clearTimeout(quizTitleAutosaveTimer);
+    quizTitleAutosaveTimer = setTimeout(async ()=>{
+      const { error } = await supabase.from("standalone_quizzes").update({ title:d.title }).eq("id", d.id);
+      const el = document.getElementById("qz-title-save-status");
+      if(el){ if(error){ el.textContent="Couldn't save: "+error.message; el.style.color="var(--red)"; } else { el.textContent="Saved"; el.style.color="var(--green)"; } }
+    }, 600);
+  });
+
+  const audienceSelect = document.getElementById("qz-audience");
+  if(audienceSelect) audienceSelect.addEventListener("change", (e)=>{ d.audienceType = e.target.value; renderQuizBuilder(); });
+  const teamSelect = document.getElementById("qz-team-select");
+  if(teamSelect) teamSelect.addEventListener("change", (e)=>{ d.teamId = e.target.value; });
+
+  root.querySelectorAll("[data-qz-edit]").forEach(el=> el.addEventListener("click", ()=>{ expandedQuizQuestionIdx = +el.dataset.qzEdit; renderQuizBuilder(); }));
+  root.querySelectorAll("[data-qz-done]").forEach(el=> el.addEventListener("click", ()=>{ expandedQuizQuestionIdx = null; renderQuizBuilder(); }));
+  root.querySelectorAll("[data-qz-del]").forEach(el=> el.addEventListener("click", async ()=>{
+    const i = +el.dataset.qzDel;
+    if(!confirm("Delete this question?")) return;
+    const { error } = await supabase.from("standalone_quiz_questions").delete().eq("id", d.questions[i].id);
+    if(error){ alert("Couldn't delete: " + error.message); return; }
+    d.questions.splice(i,1);
+    if(expandedQuizQuestionIdx===i) expandedQuizQuestionIdx=null;
+    renderQuizBuilder();
+  }));
+
+  function scheduleQuestionAutosave(i){
+    const q = d.questions[i];
+    const statusEl = document.getElementById(`qz-save-status-${i}`);
+    if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
+    clearTimeout(quizQuestionAutosaveTimers[q.id]);
+    quizQuestionAutosaveTimers[q.id] = setTimeout(async ()=>{
+      const { error } = await supabase.from("standalone_quiz_questions").update({
+        question_type:q.type, question:q.question,
+        options: q.type==="multiple_choice" ? q.options : null,
+        correct_index: q.type==="multiple_choice" ? q.correct : null,
+        explanation: q.explain
+      }).eq("id", q.id);
+      const el = document.getElementById(`qz-save-status-${i}`);
+      if(el){ if(error){ el.textContent="Couldn't save: "+error.message; el.style.color="var(--red)"; } else { el.textContent="Saved"; el.style.color="var(--green)"; } }
+    }, 600);
+  }
+  root.querySelectorAll("[data-qz-type]").forEach(el=> el.addEventListener("change", (e)=>{ const i=+el.dataset.qzType; d.questions[i].type=e.target.value; scheduleQuestionAutosave(i); renderQuizBuilder(); }));
+  root.querySelectorAll("[data-qz-text]").forEach(el=> el.addEventListener("input", (e)=>{ const i=+el.dataset.qzText; d.questions[i].question=e.target.value; scheduleQuestionAutosave(i); }));
+  root.querySelectorAll("[data-qz-explain]").forEach(el=> el.addEventListener("input", (e)=>{ const i=+el.dataset.qzExplain; d.questions[i].explain=e.target.value; scheduleQuestionAutosave(i); }));
+  root.querySelectorAll("[data-qz-opt]").forEach(el=> el.addEventListener("input", (e)=>{ const [qi,oi]=el.dataset.qzOpt.split(":").map(Number); d.questions[qi].options[oi]=e.target.value; scheduleQuestionAutosave(qi); }));
+  root.querySelectorAll("[data-qz-correct]").forEach(el=> el.addEventListener("change", (e)=>{ const i=+el.dataset.qzCorrect; d.questions[i].correct=+e.target.value; scheduleQuestionAutosave(i); }));
+  root.querySelectorAll("[data-qz-opt-add]").forEach(el=> el.addEventListener("click", ()=>{ const i=+el.dataset.qzOptAdd; d.questions[i].options.push("New option"); scheduleQuestionAutosave(i); renderQuizBuilder(); }));
+  root.querySelectorAll("[data-qz-opt-del]").forEach(el=> el.addEventListener("click", ()=>{
+    const [qi,oi]=el.dataset.qzOptDel.split(":").map(Number); if(d.questions[qi].options.length<=2) return;
+    d.questions[qi].options.splice(oi,1);
+    if(d.questions[qi].correct===oi) d.questions[qi].correct=0; else if(d.questions[qi].correct>oi) d.questions[qi].correct-=1;
+    scheduleQuestionAutosave(qi); renderQuizBuilder();
+  }));
+
+  document.getElementById("add-qz-question").addEventListener("click", async ()=>{
+    const { data, error } = await supabase.from("standalone_quiz_questions").insert({ quiz_id:d.id, sort_order:d.questions.length, question_type:"multiple_choice", question:"New question", options:["Option A","Option B"], correct_index:0, explanation:"" }).select().single();
+    if(error){ alert("Couldn't add question: " + error.message); return; }
+    d.questions.push({ id:data.id, type:data.question_type, question:data.question, options:data.options, correct:data.correct_index, explain:data.explanation||"" });
+    expandedQuizQuestionIdx = d.questions.length-1;
+    renderQuizBuilder();
+  });
+
+  root.querySelectorAll(".qz-person-check").forEach(cb=> cb.addEventListener("change", ()=>{
+    d.specificIds = Array.from(document.querySelectorAll(".qz-person-check:checked")).map(c=>c.value);
+  }));
+
+  const sendBtn = document.getElementById("qz-send");
+  if(sendBtn) sendBtn.addEventListener("click", async ()=>{
+    if(!d.title.trim()){ alert("Give the quiz a title first."); return; }
+    if(!d.questions.length){ alert("Add at least one question first."); return; }
+    if(d.audienceType==="team" && !d.teamId){ alert("Pick a team first."); return; }
+    if(d.audienceType==="specific" && !d.specificIds.length){ alert("Pick at least one person first."); return; }
+    const { error } = await supabase.from("standalone_quizzes").update({ audience_type:d.audienceType, team_id: d.audienceType==="team"?d.teamId:null, sent:true }).eq("id", d.id);
+    if(error){ alert("Couldn't send: " + error.message); return; }
+    if(d.audienceType==="specific"){
+      await supabase.from("standalone_quiz_recipients").delete().eq("quiz_id", d.id);
+      await supabase.from("standalone_quiz_recipients").insert(d.specificIds.map(uid=>({ quiz_id:d.id, user_id:uid })));
+    }
+    d.sent = true;
+    alert("Quiz sent.");
+    await loadStandaloneQuizzes();
+    renderQuizBuilder();
+  });
+}
+
 /* ============================================================
    ANALYZE (admin only) — team-wide trends
    ============================================================ */
 let ANALYZE_MODULE_STATS = [];
 let ANALYZE_MISSED_QUESTIONS = [];
 let ANALYZE_TOTALS = { totalPeople:0, notStarted:0, totalAttempts:0, totalFlags:0 };
+
+/* ============================================================
+   STANDALONE QUIZZES — admin-authored, no module attached.
+   Separate from Training Module quizzes entirely.
+   ============================================================ */
+let QUIZZES = [];
+let currentQuizId = null;
+let quizTakeAnswers = {};
+let quizBuilderDraft = null;
+let expandedQuizQuestionIdx = null;
+
+async function loadStandaloneQuizzes(){
+  if(guestMode){ QUIZZES = []; return; }
+  const { data: quizzes } = await supabase.from("standalone_quizzes").select("*").order("created_at", { ascending:false });
+  const { data: questions } = await supabase.from("standalone_quiz_questions").select("*").order("sort_order");
+  const { data: myAttempts } = await supabase.from("standalone_quiz_attempts").select("*").eq("user_id", session.user.id);
+  QUIZZES = (quizzes||[]).map(q=>({
+    id:q.id, title:q.title, createdBy:q.created_by, createdByName:q.created_by_name,
+    audienceType:q.audience_type, teamId:q.team_id, sent:q.sent, createdAt:q.created_at,
+    questions:(questions||[]).filter(qq=>qq.quiz_id===q.id).map(qq=>({ id:qq.id, type:qq.question_type, question:qq.question, options:qq.options||[], correct:qq.correct_index, explain:qq.explanation||"" })),
+    myAttempt: (myAttempts||[]).find(a=>a.quiz_id===q.id) || null
+  }));
+}
 
 async function openAnalyze(){
   if(guestMode){ view = "analyze"; render(); return; }
@@ -3231,11 +3711,16 @@ function renderHome(){
         <div class="row-top"><div><h3>${T('home.card.notes.title','My Notes')}</h3><p class="sub">${T('home.card.notes.sub','Your own private notepad — nobody else can see it, not even admins.')}</p></div><div class="led-strip"><span class="led" style="background:var(--amber);border-color:var(--amber);box-shadow:0 0 8px var(--amber);"></span></div></div>
         <div class="meta"><span>${T('home.card.notes.tag','PRIVATE TO YOU')}</span></div>
       </div>
+      <div class="mod-card" id="go-quizzes-card">
+        <div class="row-top"><div><h3>${T('home.card.quizzes.title','Quizzes')}</h3><p class="sub">${T('home.card.quizzes.sub','One-off quizzes sent out by admins — separate from your training modules.')}</p></div><div class="led-strip"><span class="led" style="background:var(--red);border-color:var(--red);box-shadow:0 0 8px var(--red);"></span></div></div>
+        <div class="meta"><span>${QUIZZES.filter(q=>q.sent).length} SENT TO YOU</span></div>
+      </div>
     </div>
   `);
   document.getElementById("go-modules-card").addEventListener("click", ()=>{ view="dashboard"; render(); });
   document.getElementById("go-reference-card").addEventListener("click", openReference);
   document.getElementById("go-notes-card").addEventListener("click", openNotes);
+  document.getElementById("go-quizzes-card").addEventListener("click", ()=>{ view="quizzes"; render(); });
 }
 
 /* ============================================================
@@ -3673,6 +4158,10 @@ function render(){
   else if(view==="chat") renderChat();
   else if(view==="notes") renderNotes();
   else if(view==="guest-editor") renderGuestEditor();
+  else if(view==="quizzes") renderQuizzesList();
+  else if(view==="quiz-take") renderQuizTake();
+  else if(view==="quiz-result-standalone") renderQuizResultStandalone();
+  else if(view==="quiz-builder") renderQuizBuilder();
 }
 
 /* ============================================================
