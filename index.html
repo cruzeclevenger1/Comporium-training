@@ -342,7 +342,6 @@ let quizAnswers = []; let quizRevealed = []; let quizIdx = 0;
 
 let draftModule = null; let editingExistingId = null;
 let expandedLessonIdx = null; let expandedQuestionIdx = null;
-let lessonSnapshot = null; let questionSnapshot = null;
 let teamRows = [];
 let REFERENCE_PAGES = [];
 let currentRefId = null;
@@ -2667,185 +2666,253 @@ function compressImageFile(file, maxDim, quality){
   });
 }
 
-function openEditor(id){
-  if(id){ editingExistingId=id; draftModule=JSON.parse(JSON.stringify(modById(id))); }
-  else { editingExistingId=null; draftModule=blankModule(); }
+async function openEditor(id){
+  if(id){
+    editingExistingId = id;
+    draftModule = JSON.parse(JSON.stringify(modById(id)));
+    expandedLessonIdx = null; expandedQuestionIdx = null;
+    view = "editor"; render();
+    return;
+  }
+  const title = prompt("Module title:");
+  if(!title || !title.trim()) return;
+  const newId = slugify(title.trim()) || ("module-" + Date.now());
+  const { error } = await supabase.from("modules").insert({ id:newId, title:title.trim(), short:"", led_color:"green", sort_order: MODULES.length+1 });
+  if(error){ alert("Couldn't create module: " + error.message); return; }
+  await loadEverything();
+  editingExistingId = newId;
+  draftModule = JSON.parse(JSON.stringify(modById(newId)));
   expandedLessonIdx = null; expandedQuestionIdx = null;
-  lessonSnapshot = null; questionSnapshot = null;
-  view="editor"; render();
+  view = "editor"; render();
+  if(isAdmin()) openNewModuleNotifyModal(title.trim());
 }
 
 function renderEditor(){
   const d = draftModule;
-  const lessonLocked = expandedLessonIdx !== null;
   const lessonsHtml = d.lessons.map((l,i)=>{
     if(i === expandedLessonIdx){
       return `<div class="sub-card"><div class="sub-card-head"><span class="tag">LESSON ${i+1} · EDITING</span>
-        <button class="mini-btn danger" data-lesson-del="${i}">Delete</button></div>
+        <div style="display:flex;align-items:center;gap:10px;"><span id="lesson-save-status-${i}" style="font-size:11px;color:var(--text-faint);font-family:var(--mono);"></span><button class="mini-btn danger" data-lesson-del="${i}">Delete</button></div></div>
         <div class="field"><label>Label</label><input type="text" data-lesson-label="${i}" value="${escapeHtml(l.label)}"></div>
         <div class="field"><label>Title</label><input type="text" data-lesson-title="${i}" value="${escapeHtml(l.title)}"></div>
         <div class="field"><label>Body</label>${richEditorHtml(`lesson-rte-${i}`, l.body)}<div class="hint">Paste an image directly, or use the 🖼 button. Drag an image's corner to resize it.</div></div>
-        <div class="nav-buttons"><button class="btn" data-lesson-cancel="${i}">Cancel</button><button class="btn primary" data-lesson-save="${i}">Save lesson</button></div>
+        <div class="nav-buttons"><div></div><button class="btn primary" data-lesson-done="${i}">Done</button></div>
       </div>`;
     }
     return `<div class="sub-card"><div class="sub-card-head"><span class="tag">LESSON ${i+1}${l.title?' · '+escapeHtml(l.title):''}</span>
       <div class="mini-tools">
-        <button class="mini-btn" data-lesson-up="${i}" ${lessonLocked||i===0?'disabled':''}>↑</button>
-        <button class="mini-btn" data-lesson-down="${i}" ${lessonLocked||i===d.lessons.length-1?'disabled':''}>↓</button>
-        <button class="mini-btn" data-lesson-edit="${i}" ${lessonLocked?'disabled':''}>Edit</button>
-        <button class="mini-btn danger" data-lesson-del="${i}" ${lessonLocked?'disabled':''}>Delete</button>
+        <button class="mini-btn" data-lesson-up="${i}" ${i===0?'disabled':''}>↑</button>
+        <button class="mini-btn" data-lesson-down="${i}" ${i===d.lessons.length-1?'disabled':''}>↓</button>
+        <button class="mini-btn" data-lesson-edit="${i}">Edit</button>
+        <button class="mini-btn danger" data-lesson-del="${i}">Delete</button>
       </div></div>
     </div>`;
   }).join("");
 
-  const questionLocked = expandedQuestionIdx !== null;
   const quizHtml = d.quiz.map((q,i)=>{
     if(i === expandedQuestionIdx){
       const optsHtml = q.opts.map((opt,oi)=>`<div class="opt-row"><input type="radio" name="correct-${i}" data-q-correct="${i}" value="${oi}" ${q.correct===oi?'checked':''}>
         <input type="text" data-q-opt="${i}:${oi}" value="${escapeHtml(opt)}"><button class="mini-btn danger" data-q-opt-del="${i}:${oi}" ${q.opts.length<=2?'disabled':''}>✕</button></div>`).join("");
       return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1} · EDITING</span>
-        <button class="mini-btn danger" data-q-del="${i}">Delete</button></div>
+        <div style="display:flex;align-items:center;gap:10px;"><span id="q-save-status-${i}" style="font-size:11px;color:var(--text-faint);font-family:var(--mono);"></span><button class="mini-btn danger" data-q-del="${i}">Delete</button></div></div>
         <div class="field"><label>Question</label><textarea data-q-text="${i}" style="min-height:55px;">${escapeHtml(q.q)}</textarea></div>
         <div class="field"><label>Options (select correct)</label>${optsHtml}<button class="mini-btn" data-q-opt-add="${i}" style="margin-top:4px;">+ Add option</button></div>
         <div class="field"><label>Explanation</label><textarea data-q-explain="${i}" style="min-height:55px;">${escapeHtml(q.explain)}</textarea></div>
-        <div class="nav-buttons"><button class="btn" data-q-cancel="${i}">Cancel</button><button class="btn primary" data-q-save="${i}">Save question</button></div>
+        <div class="nav-buttons"><div></div><button class="btn primary" data-q-done="${i}">Done</button></div>
       </div>`;
     }
     return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1}${q.q?' · '+escapeHtml(q.q.slice(0,50))+(q.q.length>50?'…':''):''}</span>
       <div class="mini-tools">
-        <button class="mini-btn" data-q-up="${i}" ${questionLocked||i===0?'disabled':''}>↑</button>
-        <button class="mini-btn" data-q-down="${i}" ${questionLocked||i===d.quiz.length-1?'disabled':''}>↓</button>
-        <button class="mini-btn" data-q-edit="${i}" ${questionLocked?'disabled':''}>Edit</button>
-        <button class="mini-btn danger" data-q-del="${i}" ${questionLocked?'disabled':''}>Delete</button>
+        <button class="mini-btn" data-q-up="${i}" ${i===0?'disabled':''}>↑</button>
+        <button class="mini-btn" data-q-down="${i}" ${i===d.quiz.length-1?'disabled':''}>↓</button>
+        <button class="mini-btn" data-q-edit="${i}">Edit</button>
+        <button class="mini-btn danger" data-q-del="${i}">Delete</button>
       </div></div>
     </div>`;
   }).join("");
 
   renderShell(`
     <div class="card">
-      <div class="k-label">${editingExistingId?"EDITING MODULE":"NEW MODULE"}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div class="k-label">${editingExistingId?"EDITING MODULE":"NEW MODULE"}</div>
+        <span id="mod-save-status" style="font-size:11px;color:var(--text-faint);font-family:var(--mono);"></span>
+      </div>
       <div class="field"><label>Module title</label><input type="text" id="mod-title" value="${escapeHtml(d.title)}"></div>
       <div class="field"><label>Short description</label><textarea id="mod-short" style="min-height:55px;">${escapeHtml(d.short)}</textarea></div>
-      <div class="editor-section"><div class="editor-section-head"><h3>Lessons</h3></div>${lessonsHtml||'<p style="color:var(--text-faint);font-size:13px;">No lessons yet.</p>'}<button class="dashed-btn" id="add-lesson" ${lessonLocked?'disabled':''}>+ Add lesson</button></div>
-      <div class="editor-section"><div class="editor-section-head"><h3>Quiz questions</h3></div>${quizHtml||'<p style="color:var(--text-faint);font-size:13px;">No questions yet.</p>'}<button class="dashed-btn" id="add-question" ${questionLocked?'disabled':''}>+ Add question</button></div>
-      <div class="nav-buttons"><div style="display:flex;gap:10px;"><button class="btn" id="editor-cancel">Cancel</button>${editingExistingId?`<button class="btn danger" id="editor-delete">Delete module</button>`:""}</div>
-      <button class="btn primary" id="editor-save" ${lessonLocked||questionLocked?'disabled':''}>Save module</button></div>
-      ${(lessonLocked||questionLocked) ? `<p style="color:var(--amber);font-size:12px;font-family:var(--mono);margin-top:10px;">Save or cancel the ${lessonLocked?'lesson':'question'} you're editing before saving the module.</p>` : ""}
+      <div class="editor-section"><div class="editor-section-head"><h3>Lessons</h3></div>${lessonsHtml||'<p style="color:var(--text-faint);font-size:13px;">No lessons yet.</p>'}<button class="dashed-btn" id="add-lesson">+ Add lesson</button></div>
+      <div class="editor-section"><div class="editor-section-head"><h3>Quiz questions</h3></div>${quizHtml||'<p style="color:var(--text-faint);font-size:13px;">No questions yet.</p>'}<button class="dashed-btn" id="add-question">+ Add question</button></div>
+      <div class="nav-buttons"><div style="display:flex;gap:10px;"><button class="btn danger" id="editor-delete">Delete module</button></div>
+      <button class="btn primary" id="editor-done">Done</button></div>
+      <p style="color:var(--text-faint);font-size:11.5px;font-family:var(--mono);margin-top:10px;">Changes save automatically as you type.</p>
     </div>`);
   wireEditorEvents();
 }
 
+let modAutosaveTimer = null;
+let lessonAutosaveTimers = {};
+let quizAutosaveTimers = {};
+
 function wireEditorEvents(){
   const d = draftModule;
-  document.getElementById("mod-title").addEventListener("input", e=>{ d.title=e.target.value; });
-  document.getElementById("mod-short").addEventListener("input", e=>{ d.short=e.target.value; });
 
-  root.querySelectorAll("[data-lesson-label]").forEach(el=> el.addEventListener("input", e=>{ d.lessons[+el.dataset.lessonLabel].label=e.target.value; }));
-  root.querySelectorAll("[data-lesson-title]").forEach(el=> el.addEventListener("input", e=>{ d.lessons[+el.dataset.lessonTitle].title=e.target.value; }));
+  function scheduleModAutosave(){
+    const statusEl = document.getElementById("mod-save-status");
+    if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
+    clearTimeout(modAutosaveTimer);
+    modAutosaveTimer = setTimeout(async ()=>{
+      const { error } = await supabase.from("modules").update({ title:d.title, short:d.short }).eq("id", editingExistingId);
+      const el = document.getElementById("mod-save-status");
+      if(el){
+        if(error){ el.textContent = "Couldn't save: " + error.message; el.style.color = "var(--red)"; }
+        else { el.textContent = "Saved"; el.style.color = "var(--green)"; }
+      }
+    }, 600);
+  }
+  document.getElementById("mod-title").addEventListener("input", e=>{ d.title=e.target.value; scheduleModAutosave(); });
+  document.getElementById("mod-short").addEventListener("input", e=>{ d.short=e.target.value; scheduleModAutosave(); });
+
+  function scheduleLessonAutosave(i){
+    const l = d.lessons[i];
+    const statusEl = document.getElementById(`lesson-save-status-${i}`);
+    if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
+    clearTimeout(lessonAutosaveTimers[l.id]);
+    lessonAutosaveTimers[l.id] = setTimeout(async ()=>{
+      const { error } = await supabase.from("lessons").update({ label:l.label, title:l.title, body:l.body }).eq("id", l.id);
+      const el = document.getElementById(`lesson-save-status-${i}`);
+      if(el){
+        if(error){ el.textContent = "Couldn't save: " + error.message; el.style.color = "var(--red)"; }
+        else { el.textContent = "Saved"; el.style.color = "var(--green)"; }
+      }
+    }, 600);
+  }
+  root.querySelectorAll("[data-lesson-label]").forEach(el=> el.addEventListener("input", e=>{ const i=+el.dataset.lessonLabel; d.lessons[i].label=e.target.value; scheduleLessonAutosave(i); }));
+  root.querySelectorAll("[data-lesson-title]").forEach(el=> el.addEventListener("input", e=>{ const i=+el.dataset.lessonTitle; d.lessons[i].title=e.target.value; scheduleLessonAutosave(i); }));
   if(expandedLessonIdx !== null){
     wireRichEditor(`lesson-rte-${expandedLessonIdx}`);
     const rteEl = document.getElementById(`lesson-rte-${expandedLessonIdx}`);
-    if(rteEl) rteEl.addEventListener("input", ()=>{ d.lessons[expandedLessonIdx].body = getCleanEditorHtml(rteEl); });
+    if(rteEl) rteEl.addEventListener("input", ()=>{ d.lessons[expandedLessonIdx].body = getCleanEditorHtml(rteEl); scheduleLessonAutosave(expandedLessonIdx); });
   }
-  root.querySelectorAll("[data-lesson-up]").forEach(el=> el.addEventListener("click", ()=>{ if(expandedLessonIdx!==null) return; const i=+el.dataset.lessonUp; [d.lessons[i-1],d.lessons[i]]=[d.lessons[i],d.lessons[i-1]]; renderEditor(); }));
-  root.querySelectorAll("[data-lesson-down]").forEach(el=> el.addEventListener("click", ()=>{ if(expandedLessonIdx!==null) return; const i=+el.dataset.lessonDown; [d.lessons[i+1],d.lessons[i]]=[d.lessons[i],d.lessons[i+1]]; renderEditor(); }));
-  root.querySelectorAll("[data-lesson-del]").forEach(el=> el.addEventListener("click", ()=>{
-    if(expandedLessonIdx!==null) return;
+  root.querySelectorAll("[data-lesson-up]").forEach(el=> el.addEventListener("click", async ()=>{
+    const i=+el.dataset.lessonUp;
+    [d.lessons[i-1],d.lessons[i]]=[d.lessons[i],d.lessons[i-1]];
+    renderEditor();
+    await Promise.all([
+      supabase.from("lessons").update({ sort_order:i-1 }).eq("id", d.lessons[i-1].id),
+      supabase.from("lessons").update({ sort_order:i }).eq("id", d.lessons[i].id)
+    ]);
+  }));
+  root.querySelectorAll("[data-lesson-down]").forEach(el=> el.addEventListener("click", async ()=>{
+    const i=+el.dataset.lessonDown;
+    [d.lessons[i+1],d.lessons[i]]=[d.lessons[i],d.lessons[i+1]];
+    renderEditor();
+    await Promise.all([
+      supabase.from("lessons").update({ sort_order:i }).eq("id", d.lessons[i].id),
+      supabase.from("lessons").update({ sort_order:i+1 }).eq("id", d.lessons[i+1].id)
+    ]);
+  }));
+  root.querySelectorAll("[data-lesson-del]").forEach(el=> el.addEventListener("click", async ()=>{
     const i=+el.dataset.lessonDel;
-    if(confirm("Delete this lesson?")){ d.lessons.splice(i,1); expandedLessonIdx=null; lessonSnapshot=null; renderEditor(); }
+    if(!confirm("Delete this lesson?")) return;
+    const { error } = await supabase.from("lessons").delete().eq("id", d.lessons[i].id);
+    if(error){ alert("Couldn't delete: " + error.message); return; }
+    d.lessons.splice(i,1);
+    if(expandedLessonIdx===i) expandedLessonIdx=null;
+    renderEditor();
   }));
   root.querySelectorAll("[data-lesson-edit]").forEach(el=> el.addEventListener("click", ()=>{
-    if(expandedLessonIdx !== null){ alert("Save or cancel the lesson you're currently editing first."); return; }
-    const i = +el.dataset.lessonEdit;
-    lessonSnapshot = JSON.parse(JSON.stringify(d.lessons[i]));
-    expandedLessonIdx = i; renderEditor();
+    expandedLessonIdx = +el.dataset.lessonEdit; renderEditor();
   }));
-  root.querySelectorAll("[data-lesson-save]").forEach(el=> el.addEventListener("click", ()=>{
-    const i = +el.dataset.lessonSave;
-    if(!d.lessons[i].title.trim()){ alert("Give the lesson a title before saving it."); return; }
-    expandedLessonIdx = null; lessonSnapshot = null; renderEditor();
+  root.querySelectorAll("[data-lesson-done]").forEach(el=> el.addEventListener("click", ()=>{
+    expandedLessonIdx = null; renderEditor();
   }));
-  root.querySelectorAll("[data-lesson-cancel]").forEach(el=> el.addEventListener("click", ()=>{
-    const i = +el.dataset.lessonCancel;
-    if(lessonSnapshot) d.lessons[i] = lessonSnapshot;
-    expandedLessonIdx = null; lessonSnapshot = null; renderEditor();
-  }));
-  document.getElementById("add-lesson").addEventListener("click", ()=>{
-    if(expandedLessonIdx !== null){ alert("Save or cancel the lesson you're currently editing first."); return; }
-    d.lessons.push(blankLesson());
-    const i = d.lessons.length-1;
-    lessonSnapshot = JSON.parse(JSON.stringify(d.lessons[i]));
-    expandedLessonIdx = i; renderEditor();
+  document.getElementById("add-lesson").addEventListener("click", async ()=>{
+    const blank = blankLesson();
+    const { data, error } = await supabase.from("lessons").insert({ module_id: editingExistingId, sort_order: d.lessons.length, label: blank.label, title: blank.title, body: blank.body }).select().single();
+    if(error){ alert("Couldn't add lesson: " + error.message); return; }
+    d.lessons.push({ id:data.id, label:data.label, title:data.title, body:data.body });
+    expandedLessonIdx = d.lessons.length-1;
+    renderEditor();
   });
 
-  root.querySelectorAll("[data-q-text]").forEach(el=> el.addEventListener("input", e=>{ d.quiz[+el.dataset.qText].q=e.target.value; }));
-  root.querySelectorAll("[data-q-explain]").forEach(el=> el.addEventListener("input", e=>{ d.quiz[+el.dataset.qExplain].explain=e.target.value; }));
-  root.querySelectorAll("[data-q-opt]").forEach(el=> el.addEventListener("input", e=>{ const [qi,oi]=el.dataset.qOpt.split(":").map(Number); d.quiz[qi].opts[oi]=e.target.value; }));
-  root.querySelectorAll("[data-q-correct]").forEach(el=> el.addEventListener("change", e=>{ d.quiz[+el.dataset.qCorrect].correct=+e.target.value; }));
-  root.querySelectorAll("[data-q-opt-add]").forEach(el=> el.addEventListener("click", ()=>{ d.quiz[+el.dataset.qOptAdd].opts.push("New option"); renderEditor(); }));
+  function scheduleQuizAutosave(i){
+    const q = d.quiz[i];
+    const statusEl = document.getElementById(`q-save-status-${i}`);
+    if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
+    clearTimeout(quizAutosaveTimers[q.id]);
+    quizAutosaveTimers[q.id] = setTimeout(async ()=>{
+      const { error } = await supabase.from("quiz_questions").update({ question:q.q, options:q.opts, correct_index:q.correct, explanation:q.explain }).eq("id", q.id);
+      const el = document.getElementById(`q-save-status-${i}`);
+      if(el){
+        if(error){ el.textContent = "Couldn't save: " + error.message; el.style.color = "var(--red)"; }
+        else { el.textContent = "Saved"; el.style.color = "var(--green)"; }
+      }
+    }, 600);
+  }
+  root.querySelectorAll("[data-q-text]").forEach(el=> el.addEventListener("input", e=>{ const i=+el.dataset.qText; d.quiz[i].q=e.target.value; scheduleQuizAutosave(i); }));
+  root.querySelectorAll("[data-q-explain]").forEach(el=> el.addEventListener("input", e=>{ const i=+el.dataset.qExplain; d.quiz[i].explain=e.target.value; scheduleQuizAutosave(i); }));
+  root.querySelectorAll("[data-q-opt]").forEach(el=> el.addEventListener("input", e=>{ const [qi,oi]=el.dataset.qOpt.split(":").map(Number); d.quiz[qi].opts[oi]=e.target.value; scheduleQuizAutosave(qi); }));
+  root.querySelectorAll("[data-q-correct]").forEach(el=> el.addEventListener("change", e=>{ const qi=+el.dataset.qCorrect; d.quiz[qi].correct=+e.target.value; scheduleQuizAutosave(qi); }));
+  root.querySelectorAll("[data-q-opt-add]").forEach(el=> el.addEventListener("click", ()=>{ const qi=+el.dataset.qOptAdd; d.quiz[qi].opts.push("New option"); scheduleQuizAutosave(qi); renderEditor(); }));
   root.querySelectorAll("[data-q-opt-del]").forEach(el=> el.addEventListener("click", ()=>{
     const [qi,oi]=el.dataset.qOptDel.split(":").map(Number); if(d.quiz[qi].opts.length<=2) return;
-    d.quiz[qi].opts.splice(oi,1); if(d.quiz[qi].correct===oi) d.quiz[qi].correct=0; else if(d.quiz[qi].correct>oi) d.quiz[qi].correct-=1; renderEditor();
+    d.quiz[qi].opts.splice(oi,1); if(d.quiz[qi].correct===oi) d.quiz[qi].correct=0; else if(d.quiz[qi].correct>oi) d.quiz[qi].correct-=1;
+    scheduleQuizAutosave(qi); renderEditor();
   }));
-  root.querySelectorAll("[data-q-up]").forEach(el=> el.addEventListener("click", ()=>{ if(expandedQuestionIdx!==null) return; const i=+el.dataset.qUp; [d.quiz[i-1],d.quiz[i]]=[d.quiz[i],d.quiz[i-1]]; renderEditor(); }));
-  root.querySelectorAll("[data-q-down]").forEach(el=> el.addEventListener("click", ()=>{ if(expandedQuestionIdx!==null) return; const i=+el.dataset.qDown; [d.quiz[i+1],d.quiz[i]]=[d.quiz[i],d.quiz[i+1]]; renderEditor(); }));
-  root.querySelectorAll("[data-q-del]").forEach(el=> el.addEventListener("click", ()=>{
-    if(expandedQuestionIdx!==null) return;
+  root.querySelectorAll("[data-q-up]").forEach(el=> el.addEventListener("click", async ()=>{
+    const i=+el.dataset.qUp;
+    [d.quiz[i-1],d.quiz[i]]=[d.quiz[i],d.quiz[i-1]];
+    renderEditor();
+    await Promise.all([
+      supabase.from("quiz_questions").update({ sort_order:i-1 }).eq("id", d.quiz[i-1].id),
+      supabase.from("quiz_questions").update({ sort_order:i }).eq("id", d.quiz[i].id)
+    ]);
+  }));
+  root.querySelectorAll("[data-q-down]").forEach(el=> el.addEventListener("click", async ()=>{
+    const i=+el.dataset.qDown;
+    [d.quiz[i+1],d.quiz[i]]=[d.quiz[i],d.quiz[i+1]];
+    renderEditor();
+    await Promise.all([
+      supabase.from("quiz_questions").update({ sort_order:i }).eq("id", d.quiz[i].id),
+      supabase.from("quiz_questions").update({ sort_order:i+1 }).eq("id", d.quiz[i+1].id)
+    ]);
+  }));
+  root.querySelectorAll("[data-q-del]").forEach(el=> el.addEventListener("click", async ()=>{
     const i=+el.dataset.qDel;
-    if(confirm("Delete this question?")){ d.quiz.splice(i,1); expandedQuestionIdx=null; questionSnapshot=null; renderEditor(); }
+    if(!confirm("Delete this question?")) return;
+    const { error } = await supabase.from("quiz_questions").delete().eq("id", d.quiz[i].id);
+    if(error){ alert("Couldn't delete: " + error.message); return; }
+    d.quiz.splice(i,1);
+    if(expandedQuestionIdx===i) expandedQuestionIdx=null;
+    renderEditor();
   }));
   root.querySelectorAll("[data-q-edit]").forEach(el=> el.addEventListener("click", ()=>{
-    if(expandedQuestionIdx !== null){ alert("Save or cancel the question you're currently editing first."); return; }
-    const i = +el.dataset.qEdit;
-    questionSnapshot = JSON.parse(JSON.stringify(d.quiz[i]));
-    expandedQuestionIdx = i; renderEditor();
+    expandedQuestionIdx = +el.dataset.qEdit; renderEditor();
   }));
-  root.querySelectorAll("[data-q-save]").forEach(el=> el.addEventListener("click", ()=>{
-    const i = +el.dataset.qSave;
-    if(!d.quiz[i].q.trim()){ alert("Give the question some text before saving it."); return; }
-    expandedQuestionIdx = null; questionSnapshot = null; renderEditor();
+  root.querySelectorAll("[data-q-done]").forEach(el=> el.addEventListener("click", ()=>{
+    expandedQuestionIdx = null; renderEditor();
   }));
-  root.querySelectorAll("[data-q-cancel]").forEach(el=> el.addEventListener("click", ()=>{
-    const i = +el.dataset.qCancel;
-    if(questionSnapshot) d.quiz[i] = questionSnapshot;
-    expandedQuestionIdx = null; questionSnapshot = null; renderEditor();
-  }));
-  document.getElementById("add-question").addEventListener("click", ()=>{
-    d.quiz.push(blankQuestion());
-    const i = d.quiz.length-1;
-    questionSnapshot = JSON.parse(JSON.stringify(d.quiz[i]));
-    expandedQuestionIdx = i; renderEditor();
+  document.getElementById("add-question").addEventListener("click", async ()=>{
+    const blank = blankQuestion();
+    const { data, error } = await supabase.from("quiz_questions").insert({ module_id: editingExistingId, sort_order: d.quiz.length, question: blank.q, options: blank.opts, correct_index: blank.correct, explanation: blank.explain }).select().single();
+    if(error){ alert("Couldn't add question: " + error.message); return; }
+    d.quiz.push({ id:data.id, q:data.question, opts:data.options, correct:data.correct_index, explain:data.explanation });
+    expandedQuestionIdx = d.quiz.length-1;
+    renderEditor();
   });
 
-  document.getElementById("editor-cancel").addEventListener("click", ()=>{ view = editingExistingId?"lesson":"dashboard"; if(editingExistingId){ currentModId=editingExistingId; currentLessonIdx=0; } render(); });
+  document.getElementById("editor-done").addEventListener("click", async ()=>{
+    await loadEverything();
+    currentModId = editingExistingId; currentLessonIdx = 0;
+    const freshMod = modById(editingExistingId);
+    view = (freshMod && freshMod.lessons.length) ? "lesson" : "dashboard";
+    render();
+  });
 
-  const delBtn = document.getElementById("editor-delete");
-  if(delBtn) delBtn.addEventListener("click", async ()=>{
+  document.getElementById("editor-delete").addEventListener("click", async ()=>{
     if(confirm(`Delete "${d.title||'this module'}"? This can't be undone.`)){
       await supabase.from("modules").delete().eq("id", editingExistingId);
       await loadEverything(); view="dashboard"; render();
     }
-  });
-
-  document.getElementById("editor-save").addEventListener("click", async ()=>{
-    if(expandedLessonIdx !== null || expandedQuestionIdx !== null){ alert("Save or cancel what you're currently editing first."); return; }
-    if(!d.title.trim()){ alert("Give the module a title before saving."); return; }
-    const wasNewModule = !editingExistingId;
-    const id = editingExistingId || slugify(d.title);
-    await supabase.from("modules").upsert({ id, title:d.title, short:d.short, led_color:d.ledColor, sort_order: editingExistingId ? undefined : (MODULES.length+1) });
-    await supabase.from("lessons").delete().eq("module_id", id);
-    if(d.lessons.length){
-      await supabase.from("lessons").insert(d.lessons.map((l,i)=>({ module_id:id, sort_order:i, label:l.label, title:l.title, body:l.body })));
-    }
-    await supabase.from("quiz_questions").delete().eq("module_id", id);
-    if(d.quiz.length){
-      await supabase.from("quiz_questions").insert(d.quiz.map((q,i)=>({ module_id:id, sort_order:i, question:q.q, options:q.opts, correct_index:q.correct, explanation:q.explain })));
-    }
-    await loadEverything();
-    currentModId = id; currentLessonIdx = 0;
-    view = MODULES.find(m=>m.id===id).lessons.length ? "lesson" : "dashboard";
-    render();
-    if(wasNewModule && isAdmin()) openNewModuleNotifyModal(d.title);
   });
 }
 
@@ -3200,8 +3267,8 @@ function renderReference(){
         ${richEditorHtml("ref-body-rte", refDraft.body)}
         <div class="hint" style="margin-top:8px;">Paste an image directly, or use the 🖼 button. Drag an image's corner to resize it.</div>
         <div class="nav-buttons">
-          <div style="display:flex;gap:10px;"><button class="btn" id="ref-cancel">Cancel</button><button class="btn danger" id="ref-delete">Delete page</button></div>
-          <button class="btn primary" id="ref-save">Save page</button>
+          <div style="display:flex;gap:10px;align-items:center;"><button class="btn danger" id="ref-delete">Delete page</button><span id="ref-save-status" style="font-size:12px;color:var(--text-faint);font-family:var(--mono);"></span></div>
+          <button class="btn primary" id="ref-done">Done editing</button>
         </div>
       </div>`;
   } else {
@@ -3223,6 +3290,15 @@ function renderReference(){
   `);
 
   if(refEditing) wireRichEditor("ref-body-rte");
+  if(refEditing){
+    const refTitleInput = document.getElementById("ref-title");
+    const refBodyRte = document.getElementById("ref-body-rte");
+    if(refTitleInput && refBodyRte){
+      const trigger = ()=> scheduleRefAutosave(page.id, refTitleInput, refBodyRte);
+      refTitleInput.addEventListener("input", trigger);
+      refBodyRte.addEventListener("input", trigger);
+    }
+  }
 
   root.querySelectorAll("[data-ref-select]").forEach(el=> el.addEventListener("click", (e)=>{
     if(e.target.closest("[data-ref-toggle]")||e.target.closest("[data-ref-addsub]")||e.target.closest("[data-ref-del]")) return;
@@ -3293,15 +3369,8 @@ function renderReference(){
 
   const editBtn = document.getElementById("ref-edit");
   if(editBtn) editBtn.addEventListener("click", ()=>{ refDraft = { title:page.title, body:page.body }; refEditing = true; render(); });
-  const cancelBtn = document.getElementById("ref-cancel");
-  if(cancelBtn) cancelBtn.addEventListener("click", ()=>{ refEditing=false; render(); });
-  const saveBtn = document.getElementById("ref-save");
-  if(saveBtn) saveBtn.addEventListener("click", async ()=>{
-    const title = document.getElementById("ref-title").value.trim() || "Untitled page";
-    const body = getCleanEditorHtml(document.getElementById("ref-body-rte"));
-    await supabase.from("reference_pages").update({ title, body }).eq("id", page.id);
-    refEditing = false; await loadReference(); render();
-  });
+  const doneBtn = document.getElementById("ref-done");
+  if(doneBtn) doneBtn.addEventListener("click", ()=>{ refEditing=false; render(); });
   const deleteBtn = document.getElementById("ref-delete");
   if(deleteBtn) deleteBtn.addEventListener("click", async ()=>{
     if(confirm(`Delete "${page.title}"? This can't be undone.`)){
@@ -3309,6 +3378,28 @@ function renderReference(){
       refEditing = false; currentRefId = null; await loadReference(); render();
     }
   });
+}
+
+let refSaveTimer = null;
+function scheduleRefAutosave(pageId, titleInput, bodyRte){
+  const statusEl = document.getElementById("ref-save-status");
+  if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
+  clearTimeout(refSaveTimer);
+  refSaveTimer = setTimeout(async ()=>{
+    const title = titleInput.value.trim() || "Untitled page";
+    const body = getCleanEditorHtml(bodyRte);
+    const { error } = await supabase.from("reference_pages").update({ title, body }).eq("id", pageId);
+    const statusElNow = document.getElementById("ref-save-status");
+    if(error){
+      if(statusElNow){ statusElNow.textContent = "Couldn't save: " + error.message; statusElNow.style.color = "var(--red)"; }
+      return;
+    }
+    const p = REFERENCE_PAGES.find(x=>x.id===pageId);
+    if(p){ p.title = title; p.body = body; }
+    const titleEl = document.querySelector(`[data-ref-select="${pageId}"] .ref-row-title`);
+    if(titleEl) titleEl.textContent = title;
+    if(statusElNow){ statusElNow.textContent = "Saved"; statusElNow.style.color = "var(--green)"; }
+  }, 700);
 }
 
 async function reorderRefDrop(draggedId, targetId, pos){
@@ -3491,18 +3582,22 @@ function renderNotes(){
 
 function scheduleNoteAutosave(noteId, titleInput, bodyRte){
   const statusEl = document.getElementById("note-save-status");
-  if(statusEl) statusEl.textContent = "Saving…";
+  if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
   clearTimeout(noteSaveTimer);
   noteSaveTimer = setTimeout(async ()=>{
     const title = titleInput.value.trim() || "Untitled note";
     const body = getCleanEditorHtml(bodyRte);
-    await supabase.from("personal_notes").update({ title, body, updated_at: new Date().toISOString() }).eq("id", noteId);
+    const { error } = await supabase.from("personal_notes").update({ title, body, updated_at: new Date().toISOString() }).eq("id", noteId);
+    const statusElNow = document.getElementById("note-save-status");
+    if(error){
+      if(statusElNow){ statusElNow.textContent = "Couldn't save: " + error.message; statusElNow.style.color = "var(--red)"; }
+      return;
+    }
     const n = PERSONAL_NOTES.find(x=>x.id===noteId);
     if(n){ n.title = title; n.body = body; }
     const titleEl = document.querySelector(`[data-note-select="${noteId}"] .ref-row-title`);
     if(titleEl) titleEl.textContent = title;
-    const statusElNow = document.getElementById("note-save-status");
-    if(statusElNow) statusElNow.textContent = "Saved";
+    if(statusElNow){ statusElNow.textContent = "Saved"; statusElNow.style.color = "var(--green)"; }
   }, 900);
 }
 
