@@ -1933,7 +1933,7 @@ function openFeedbackModal(type, context){
   document.getElementById(editorId).focus();
   document.getElementById("fb-cancel").addEventListener("click", closeModal);
   document.getElementById("fb-send").addEventListener("click", async ()=>{
-    const body = document.getElementById(editorId).innerHTML.trim();
+    const body = getCleanEditorHtml(document.getElementById(editorId)).trim();
     if(!body || body === "<br>") { closeModal(); return; }
     await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"admins", type, body, context });
     closeModal();
@@ -1994,7 +1994,7 @@ async function openAnnouncementModal(prefillBody){
 
   document.getElementById("an-cancel").addEventListener("click", closeModal);
   document.getElementById("an-send").addEventListener("click", async ()=>{
-    const body = document.getElementById(editorId).innerHTML.trim();
+    const body = getCleanEditorHtml(document.getElementById(editorId)).trim();
     if(!body || body === "<br>") { closeModal(); return; }
     const scope = document.getElementById("ann-scope").value;
     const recipientRole = scope === "all" ? null : scope;
@@ -2051,7 +2051,7 @@ async function openNewConversationModal(){
   document.getElementById(editorId).focus();
   document.getElementById("newconvo-cancel").addEventListener("click", closeModal);
   document.getElementById("newconvo-send").addEventListener("click", async ()=>{
-    const body = document.getElementById(editorId).innerHTML.trim();
+    const body = getCleanEditorHtml(document.getElementById(editorId)).trim();
     if(!body || body === "<br>") { closeModal(); return; }
     const targetId = document.getElementById("newconvo-person").value;
     const { error, data } = await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: targetId, audience:"user", type:"comment", body, claimed_by: session.user.id }).select().single();
@@ -2073,7 +2073,7 @@ function openCoachingModal(targetUserId, targetName, context){
   document.getElementById(editorId).focus();
   document.getElementById("coach-cancel").addEventListener("click", closeModal);
   document.getElementById("coach-send").addEventListener("click", async ()=>{
-    const body = document.getElementById(editorId).innerHTML.trim();
+    const body = getCleanEditorHtml(document.getElementById(editorId)).trim();
     if(!body || body === "<br>") { closeModal(); return; }
     await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: targetUserId, audience:"user", type:"comment", body, context, claimed_by: session.user.id });
     closeModal();
@@ -2392,6 +2392,16 @@ function wireRichEditor(id){
    browsers (images would render at inflated size only while
    actively editing). This gives identical behavior everywhere.
    ============================================================ */
+// The resize handle and delete button are live editing affordances only — they
+// must never end up saved as part of the actual content, or they'd show up (and
+// even still work) in read-only views. Always read saved content through this,
+// never through a raw .innerHTML, on any editor whose content gets persisted.
+function getCleanEditorHtml(editorEl){
+  if(!editorEl) return "";
+  const clone = editorEl.cloneNode(true);
+  clone.querySelectorAll(".rte-resize-handle, .rte-img-delete").forEach(el=> el.remove());
+  return clone.innerHTML;
+}
 function fixImageSizing(wrap){
   const img = wrap.querySelector("img");
   if(!img) return;
@@ -2543,6 +2553,13 @@ function normalizePastedImages(editorEl){
   // the old way, on the wrapper instead of the image) — this runs on every render,
   // so it self-heals in read-only views too, not just while actively editing.
   editorEl.querySelectorAll(".rte-img-wrap").forEach(fixImageSizing);
+  // These live editing affordances should only ever exist inside an actively
+  // editable .rte-body. If they show up anywhere else, it's leftover content
+  // saved before this was fixed — strip it out so it can't be seen or used
+  // (and, crucially, resized) in read-only views.
+  editorEl.querySelectorAll(".rte-resize-handle, .rte-img-delete").forEach(el=>{
+    if(!el.closest(".rte-body")) el.remove();
+  });
 }
 function setImageSize(img, w, h){
   img.setAttribute("width", w);
@@ -2728,7 +2745,7 @@ function wireEditorEvents(){
   if(expandedLessonIdx !== null){
     wireRichEditor(`lesson-rte-${expandedLessonIdx}`);
     const rteEl = document.getElementById(`lesson-rte-${expandedLessonIdx}`);
-    if(rteEl) rteEl.addEventListener("input", ()=>{ d.lessons[expandedLessonIdx].body = rteEl.innerHTML; });
+    if(rteEl) rteEl.addEventListener("input", ()=>{ d.lessons[expandedLessonIdx].body = getCleanEditorHtml(rteEl); });
   }
   root.querySelectorAll("[data-lesson-up]").forEach(el=> el.addEventListener("click", ()=>{ if(expandedLessonIdx!==null) return; const i=+el.dataset.lessonUp; [d.lessons[i-1],d.lessons[i]]=[d.lessons[i],d.lessons[i-1]]; renderEditor(); }));
   root.querySelectorAll("[data-lesson-down]").forEach(el=> el.addEventListener("click", ()=>{ if(expandedLessonIdx!==null) return; const i=+el.dataset.lessonDown; [d.lessons[i+1],d.lessons[i]]=[d.lessons[i],d.lessons[i+1]]; renderEditor(); }));
@@ -3281,7 +3298,7 @@ function renderReference(){
   const saveBtn = document.getElementById("ref-save");
   if(saveBtn) saveBtn.addEventListener("click", async ()=>{
     const title = document.getElementById("ref-title").value.trim() || "Untitled page";
-    const body = document.getElementById("ref-body-rte").innerHTML;
+    const body = getCleanEditorHtml(document.getElementById("ref-body-rte"));
     await supabase.from("reference_pages").update({ title, body }).eq("id", page.id);
     refEditing = false; await loadReference(); render();
   });
@@ -3478,7 +3495,7 @@ function scheduleNoteAutosave(noteId, titleInput, bodyRte){
   clearTimeout(noteSaveTimer);
   noteSaveTimer = setTimeout(async ()=>{
     const title = titleInput.value.trim() || "Untitled note";
-    const body = bodyRte.innerHTML;
+    const body = getCleanEditorHtml(bodyRte);
     await supabase.from("personal_notes").update({ title, body, updated_at: new Date().toISOString() }).eq("id", noteId);
     const n = PERSONAL_NOTES.find(x=>x.id===noteId);
     if(n){ n.title = title; n.body = body; }
