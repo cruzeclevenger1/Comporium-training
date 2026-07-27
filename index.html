@@ -908,12 +908,13 @@ function renderShell(inner){
               <button id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>
               <button id="open-announce">📣 Make Announcement</button>
               <button id="open-guest-editor">👀 Edit Guest Preview</button>
+              <button id="open-edit-log">📋 Edit Log</button>
             </div>
           </div>` : (canEditContent() && !isAdmin()) ? `<button class="pill-btn" id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>` : ""}
         <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
       </div>
     </header>
-    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':view==='quiz-analyze'?'QUIZ ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':''))}`}</nav>`}
+    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':view==='quiz-analyze'?'QUIZ ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='edit-log'?'EDIT LOG':''))}`}</nav>`}
     <div class="top-nav">
       <button class="top-nav-btn ${section==='home'?'active':''}" id="nav-home">${T('nav.dashboard','Dashboard')}</button>
       <button class="top-nav-btn ${section==='modules'?'active':''}" id="nav-modules">${T('nav.modules','Training Modules')}</button>
@@ -951,6 +952,8 @@ function renderShell(inner){
   if(openAnnounce) openAnnounce.addEventListener("click", ()=> openAnnouncementModal());
   const openGuestEditorBtn = document.getElementById("open-guest-editor");
   if(openGuestEditorBtn) openGuestEditorBtn.addEventListener("click", openGuestEditor);
+  const openEditLogBtn = document.getElementById("open-edit-log");
+  if(openEditLogBtn) openEditLogBtn.addEventListener("click", openEditLog);
   const goTeamBtn = document.getElementById("go-team-btn");
   if(goTeamBtn) goTeamBtn.addEventListener("click", openTeamProgress);
   const guestViewToggle = document.getElementById("guest-view-toggle");
@@ -1227,7 +1230,7 @@ async function loadQuizProgressData(){
     });
     const perQuiz = eligible.map(q=>{
       const attempt = (attempts||[]).find(a=>a.quiz_id===q.id && a.user_id===person.id);
-      return { quizId:q.id, title:q.title, completed: !!attempt };
+      return { quizId:q.id, title:q.title, completed: !!attempt, needsGrading: !!attempt && !attempt.graded };
     });
     const completedCount = perQuiz.filter(x=>x.completed).length;
     const pct = perQuiz.length ? Math.round((completedCount/perQuiz.length)*100) : 0;
@@ -1436,7 +1439,11 @@ function renderTeam(){
     }
     quizRowsHtml = filteredQuizRows.map(r=>{
       const expanded = quizProgressExpandedRows.has(r.id);
-      const quizPills = r.perQuiz.map(pq=> `<button class="status-pill ${pq.completed?'done':''}" ${pq.completed?`data-view-quiz-attempt="${r.id}:${pq.quizId}"`:''} style="${pq.completed?'cursor:pointer;':'cursor:default;'}">${escapeHtml(pq.title)} · ${pq.completed?'Completed':'Not started'}</button>`).join("");
+      const quizPills = r.perQuiz.map(pq=>{
+        const cls = pq.needsGrading ? 'progress' : pq.completed ? 'done' : '';
+        const label = pq.needsGrading ? 'Needs grading' : pq.completed ? 'Completed' : 'Not started';
+        return `<button class="status-pill ${cls}" ${pq.completed?`data-view-quiz-attempt="${r.id}:${pq.quizId}"`:''} style="${pq.completed?'cursor:pointer;':'cursor:default;'}">${escapeHtml(pq.title)} · ${label}</button>`;
+      }).join("");
       const mainRow = `
         <tr class="team-row-main" data-quiz-team-toggle="${r.id}" style="cursor:pointer;">
           <td>${escapeHtml(r.name)}</td>
@@ -1709,6 +1716,7 @@ async function showAttemptDetail(userId, moduleId){
   }));
 }
 
+let pendingGrades = {};
 async function showStandaloneQuizAttemptDetail(userId, quizId){
   const holder = document.getElementById("quiz-attempt-detail");
   holder.innerHTML = `<div class="card"><p style="color:var(--text-faint);font-family:var(--mono);font-size:12px;">Loading answers…</p></div>`;
@@ -1719,9 +1727,22 @@ async function showStandaloneQuizAttemptDetail(userId, quizId){
     holder.innerHTML = `<div class="card"><p style="color:var(--text-dim);font-size:13.5px;">No submission found.</p></div>`;
     return;
   }
-  const rows = (attempt.answers||[]).map(ans=>{
+  const needsGrading = !attempt.graded;
+  pendingGrades = {};
+  const rows = (attempt.answers||[]).map((ans,idx)=>{
     if(ans.type === "long_answer"){
-      return `<div class="sub-card"><div style="font-size:14px;margin-bottom:6px;"><strong>${escapeHtml(ans.question)}</strong> <span class="tag" style="margin-left:6px;">LONG ANSWER</span></div><div style="font-size:13px;color:var(--text-dim);white-space:pre-wrap;">${escapeHtml(ans.answer || '(no answer)')}</div></div>`;
+      if(needsGrading){
+        return `<div class="sub-card">
+          <div style="font-size:14px;margin-bottom:6px;"><strong>${escapeHtml(ans.question)}</strong> <span class="tag" style="margin-left:6px;">LONG ANSWER · NEEDS GRADING</span></div>
+          <div style="font-size:13px;color:var(--text-dim);white-space:pre-wrap;margin-bottom:12px;">${escapeHtml(ans.answer || '(no answer)')}</div>
+          <div style="display:flex;gap:10px;">
+            <button class="mini-btn grade-choice" data-grade-idx="${idx}" data-grade-val="true" style="color:var(--text-dim);">✓ Mark Correct</button>
+            <button class="mini-btn grade-choice" data-grade-idx="${idx}" data-grade-val="false" style="color:var(--text-dim);">✕ Mark Incorrect</button>
+          </div>
+        </div>`;
+      }
+      const gradeLabel = ans.is_correct===true ? ' · CORRECT' : ans.is_correct===false ? ' · INCORRECT' : '';
+      return `<div class="sub-card"><div style="font-size:14px;margin-bottom:6px;"><strong>${escapeHtml(ans.question)}</strong> <span class="tag" style="margin-left:6px;">LONG ANSWER${gradeLabel}</span></div><div style="font-size:13px;color:var(--text-dim);white-space:pre-wrap;">${escapeHtml(ans.answer || '(no answer)')}</div></div>`;
     }
     const selectedText = ans.selected!=null ? ans.options[ans.selected] : "(no answer)";
     const correctText = ans.options[ans.correct];
@@ -1734,9 +1755,37 @@ async function showStandaloneQuizAttemptDetail(userId, quizId){
     <div class="card">
       <div class="k-label">QUIZ SUBMISSION · ${escapeHtml(person?person.name:'')} · ${escapeHtml(quiz?quiz.title:'')}</div>
       ${attempt.mc_total ? `<h2 style="margin-bottom:16px;">${attempt.mc_score}/${attempt.mc_total} correct</h2>` : `<h2 style="margin-bottom:16px;">Submitted</h2>`}
+      ${needsGrading ? `<p style="color:var(--amber);font-size:13px;margin-bottom:16px;">⚠ This submission has long-answer questions that need grading before it's finalized.</p>` : ""}
       ${rows || `<p style="color:var(--text-faint);font-size:13px;">No answers recorded.</p>`}
+      ${needsGrading ? `<div class="nav-buttons"><div></div><button class="btn primary" id="finalize-grading">Finalize grading</button></div>` : ""}
     </div>
   `;
+  if(needsGrading){
+    holder.querySelectorAll(".grade-choice").forEach(btn=> btn.addEventListener("click", ()=>{
+      const idx = btn.getAttribute("data-grade-idx");
+      const val = btn.getAttribute("data-grade-val") === "true";
+      pendingGrades[idx] = val;
+      holder.querySelectorAll(`.grade-choice[data-grade-idx="${idx}"]`).forEach(b=>{
+        const isThis = b === btn;
+        b.style.color = isThis ? (val ? "var(--green)" : "var(--red)") : "var(--text-dim)";
+        b.style.borderColor = isThis ? (val ? "var(--green-dim)" : "var(--red-dim)") : "";
+        b.style.fontWeight = isThis ? "700" : "400";
+      });
+    }));
+    document.getElementById("finalize-grading").addEventListener("click", async ()=>{
+      const longAnswerCount = (attempt.answers||[]).filter(a=>a.type==="long_answer").length;
+      if(Object.keys(pendingGrades).length < longAnswerCount){ alert("Grade every long-answer question before finalizing."); return; }
+      const updatedAnswers = (attempt.answers||[]).map((ans,idx)=>{
+        if(ans.type==="long_answer" && pendingGrades[idx]!=null) return { ...ans, is_correct: pendingGrades[idx] };
+        return ans;
+      });
+      const { error } = await supabase.from("standalone_quiz_attempts").update({ answers: updatedAnswers, graded: true }).eq("quiz_id", quizId).eq("user_id", userId);
+      if(error){ alert("Couldn't save grading: " + error.message); return; }
+      logEdit("graded", "standalone_quiz_attempt", `${quiz?quiz.title:'quiz'} — ${person?person.name:'submission'}`);
+      QUIZ_PROGRESS_ROWS = null; // force a fresh load next time Quiz Progress is opened
+      await showStandaloneQuizAttemptDetail(userId, quizId);
+    });
+  }
 }
 
 /* ============================================================
@@ -1764,7 +1813,7 @@ function renderQuizzesList(){
     </div>`;
   }
 
-  const addBtn = canManageQuizzes ? `<button class="dashed-btn" id="add-quiz" style="margin-top:14px;">+ New quiz</button>` : "";
+  const addBtn = (canManageQuizzes && editMode) ? `<button class="dashed-btn" id="add-quiz" style="margin-top:14px;">+ New quiz</button>` : "";
   renderShell(`
     <section class="hero">
       <div class="eyebrow">${T('quizzes.eyebrow','Quizzes')}</div>
@@ -1789,7 +1838,7 @@ function renderQuizzesList(){
   root.querySelectorAll("[data-quiz-open]").forEach(el=> el.addEventListener("click", async ()=>{
     const id = el.getAttribute("data-quiz-open");
     const q = QUIZZES.find(x=>x.id===id);
-    if(canManageQuizzes){ await openQuizBuilder(id); return; }
+    if(canManageQuizzes && editMode){ await openQuizBuilder(id); return; }
     currentQuizId = id;
     if(q.myAttempt){ view = "quiz-result-standalone"; render(); }
     else { quizTakeAnswers = {}; view = "quiz-take"; render(); }
@@ -1803,6 +1852,7 @@ async function createNewStandaloneQuiz(){
   if(!title) return;
   const { data, error } = await supabase.from("standalone_quizzes").insert({ title:title.trim(), created_by:session.user.id, created_by_name:profile.name, audience_type:"everyone", sent:false }).select().single();
   if(error){ alert("Couldn't create quiz: " + error.message); return; }
+  logEdit("created", "standalone_quiz", title.trim());
   await loadStandaloneQuizzes();
   await openQuizBuilder(data.id);
 }
@@ -1842,6 +1892,7 @@ async function submitStandaloneQuiz(){
   let mcScore = 0, mcTotal = 0;
   const answers = [];
   let longAnswerHtml = "";
+  let hasLongAnswer = false;
   q.questions.forEach(qq=>{
     if(qq.type === "multiple_choice"){
       mcTotal++;
@@ -1850,6 +1901,7 @@ async function submitStandaloneQuiz(){
       if(isCorrect) mcScore++;
       answers.push({ question_id:qq.id, question:qq.question, type:"multiple_choice", options:qq.options, selected, correct:qq.correct, is_correct:isCorrect });
     } else {
+      hasLongAnswer = true;
       const text = (quizTakeAnswers[qq.id]||"").trim();
       answers.push({ question_id:qq.id, question:qq.question, type:"long_answer", answer:text });
       if(text) longAnswerHtml += `<p><strong>${escapeHtml(qq.question)}</strong><br>${escapeHtml(text)}</p>`;
@@ -1857,19 +1909,19 @@ async function submitStandaloneQuiz(){
   });
   const submitBtn = document.getElementById("submit-standalone-quiz");
   if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = "Submitting…"; }
-  const { error } = await supabase.from("standalone_quiz_attempts").insert({ quiz_id:q.id, user_id:session.user.id, user_name:profile.name, answers, mc_score:mcScore, mc_total:mcTotal });
+  const { error } = await supabase.from("standalone_quiz_attempts").insert({ quiz_id:q.id, user_id:session.user.id, user_name:profile.name, answers, mc_score:mcScore, mc_total:mcTotal, graded: !hasLongAnswer });
   if(error){
     alert("Couldn't submit: " + error.message);
     if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = "Submit Quiz"; }
     return;
   }
-  if(longAnswerHtml && q.createdBy){
-    await supabase.from("messages").insert({ sender_id:session.user.id, sender_name:profile.name, recipient_id:q.createdBy, audience:"user", type:"reply", claimed_by:q.createdBy, body:`<p>📝 ${escapeHtml(profile.name)} submitted long-answer responses for the quiz "${escapeHtml(q.title)}":</p>${longAnswerHtml}` }).catch(()=>{});
+  if(hasLongAnswer && q.createdBy){
+    await supabase.from("messages").insert({ sender_id:session.user.id, sender_name:profile.name, recipient_id:q.createdBy, audience:"user", type:"reply", claimed_by:q.createdBy, body:`<p>📝 ${escapeHtml(profile.name)} submitted long-answer responses for the quiz "${escapeHtml(q.title)}" — this needs grading before it's finalized. Go to Teams → Quiz Progress to review and grade it:</p>${longAnswerHtml}` }).catch(()=>{});
   }
   // Attach the just-submitted attempt immediately, in memory — the results
   // page no longer depends on a fresh reload finding it, which was the
   // cause of getting stuck on the submit screen.
-  q.myAttempt = { quiz_id:q.id, user_id:session.user.id, user_name:profile.name, answers, mc_score:mcScore, mc_total:mcTotal };
+  q.myAttempt = { quiz_id:q.id, user_id:session.user.id, user_name:profile.name, answers, mc_score:mcScore, mc_total:mcTotal, graded: !hasLongAnswer };
   view = "quiz-result-standalone"; render();
   loadStandaloneQuizzes().catch(()=>{}); // refresh in the background, doesn't block the transition
 }
@@ -1894,6 +1946,7 @@ function renderQuizResultStandalone(){
       <div class="k-label">QUIZ SUBMITTED</div>
       <h2 style="margin-bottom:6px;">${escapeHtml(q.title)}</h2>
       ${a.mc_total ? `<p style="color:var(--text-dim);font-size:14px;margin-bottom:16px;">${a.mc_score}/${a.mc_total} correct</p>` : ""}
+      ${!a.graded ? `<p style="color:var(--amber);font-size:13px;margin-bottom:16px;">⏳ Your long-answer responses are waiting to be graded.</p>` : ""}
       ${rows}
       <div class="nav-buttons"><div></div><button class="btn primary" id="back-to-quizzes">Back to Quizzes</button></div>
     </div>
@@ -1991,6 +2044,7 @@ function wireQuizBuilderEvents(){
   document.getElementById("qz-delete").addEventListener("click", async ()=>{
     if(confirm(`Delete "${d.title||'this quiz'}"? This can't be undone.`)){
       await supabase.from("standalone_quizzes").delete().eq("id", d.id);
+      logEdit("deleted", "standalone_quiz", d.title);
       await loadStandaloneQuizzes(); view="quizzes"; render();
     }
   });
@@ -2072,27 +2126,31 @@ function wireQuizBuilderEvents(){
     if(!d.questions.length){ alert("Add at least one question first."); return; }
     if(d.audienceType==="team" && !d.teamId){ alert("Pick a team first."); return; }
     if(d.audienceType==="specific" && !d.specificIds.length){ alert("Pick at least one person first."); return; }
+    sendBtn.disabled = true; sendBtn.textContent = "Sending…";
     const { error } = await supabase.from("standalone_quizzes").update({ audience_type:d.audienceType, team_id: d.audienceType==="team"?d.teamId:null, sent:true }).eq("id", d.id);
-    if(error){ alert("Couldn't send: " + error.message); return; }
+    if(error){ alert("Couldn't send: " + error.message); sendBtn.disabled = false; sendBtn.textContent = "Send quiz →"; return; }
     if(d.audienceType==="specific"){
-      await supabase.from("standalone_quiz_recipients").delete().eq("quiz_id", d.id);
-      await supabase.from("standalone_quiz_recipients").insert(d.specificIds.map(uid=>({ quiz_id:d.id, user_id:uid })));
-    }
-    // Notify whoever it was sent to, the same way announcements already work.
-    const recipientRole = d.audienceType==="everyone" ? null : d.audienceType==="team" ? "team" : "specific";
-    const { data: annData, error: annErr } = await supabase.from("messages").insert({
-      sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement",
-      body: `<p>📝 New quiz available: <strong>${escapeHtml(d.title)}</strong>. Head to Quizzes to take it.</p>`,
-      recipient_role: recipientRole,
-      team_id: d.audienceType==="team" ? d.teamId : null
-    }).select().single();
-    if(!annErr && d.audienceType==="specific" && annData){
-      await supabase.from("announcement_recipients").insert(d.specificIds.map(uid=>({ message_id: annData.id, user_id: uid })));
+      await supabase.from("standalone_quiz_recipients").delete().eq("quiz_id", d.id).catch(()=>{});
+      await supabase.from("standalone_quiz_recipients").insert(d.specificIds.map(uid=>({ quiz_id:d.id, user_id:uid }))).catch(()=>{});
     }
     d.sent = true;
-    alert("Quiz sent.");
-    await loadStandaloneQuizzes();
+    logEdit("sent", "standalone_quiz", d.title);
+    showToast("Quiz sent.");
     renderQuizBuilder();
+    // Notify whoever it was sent to (best-effort — never let this block the UI from updating).
+    (async ()=>{
+      const recipientRole = d.audienceType==="everyone" ? null : d.audienceType==="team" ? "team" : "specific";
+      const { data: annData } = await supabase.from("messages").insert({
+        sender_id: session.user.id, sender_name: profile.name, audience:"all", type:"announcement",
+        body: `<p>📝 New quiz available: <strong>${escapeHtml(d.title)}</strong>. Head to Quizzes to take it.</p>`,
+        recipient_role: recipientRole,
+        team_id: d.audienceType==="team" ? d.teamId : null
+      }).select().single().catch(()=>({ data:null }));
+      if(d.audienceType==="specific" && annData){
+        await supabase.from("announcement_recipients").insert(d.specificIds.map(uid=>({ message_id: annData.id, user_id: uid }))).catch(()=>{});
+      }
+      await loadStandaloneQuizzes().catch(()=>{});
+    })();
   });
 }
 
@@ -2125,6 +2183,77 @@ async function loadStandaloneQuizzes(){
     questions:(questions||[]).filter(qq=>qq.quiz_id===q.id).map(qq=>({ id:qq.id, type:qq.question_type, question:qq.question, options:qq.options||[], correct:qq.correct_index, explain:qq.explanation||"" })),
     myAttempt: (myAttempts||[]).find(a=>a.quiz_id===q.id) || null
   }));
+}
+
+/* ============================================================
+   EDIT LOG (admin only) — who changed what, and when
+   ============================================================ */
+let EDIT_LOG_ROWS = [];
+let editLogTypeFilter = "";
+let editLogSearchQuery = "";
+
+async function openEditLog(){
+  const { data, error } = await supabase.from("edit_log").select("*").order("created_at", { ascending:false }).limit(300);
+  if(error){ alert("Couldn't load the edit log: " + error.message); return; }
+  EDIT_LOG_ROWS = data || [];
+  view = "edit-log"; render();
+}
+
+const EDIT_LOG_TYPE_LABELS = {
+  module: "Module", lesson: "Lesson", module_quiz_question: "Module quiz question",
+  reference_page: "Reference page", standalone_quiz: "Quiz", standalone_quiz_attempt: "Quiz grading"
+};
+const EDIT_LOG_ACTION_COLORS = { created:"var(--green)", updated:"var(--cyan)", deleted:"var(--red)", sent:"var(--amber)", graded:"var(--cyan)" };
+
+function renderEditLog(){
+  let rows = EDIT_LOG_ROWS;
+  if(editLogTypeFilter) rows = rows.filter(r=> r.entity_type === editLogTypeFilter);
+  if(editLogSearchQuery.trim()){
+    const q = editLogSearchQuery.trim().toLowerCase();
+    rows = rows.filter(r=> (r.entity_label||"").toLowerCase().includes(q) || (r.actor_name||"").toLowerCase().includes(q));
+  }
+
+  const rowsHtml = rows.map(r=>{
+    const typeLabel = EDIT_LOG_TYPE_LABELS[r.entity_type] || r.entity_type;
+    const actionColor = EDIT_LOG_ACTION_COLORS[r.action] || "var(--text-dim)";
+    const when = new Date(r.created_at).toLocaleString();
+    return `<tr>
+      <td style="font-family:var(--mono);font-size:11.5px;color:var(--text-faint);white-space:nowrap;">${when}</td>
+      <td>${escapeHtml(r.actor_name||'Unknown')}</td>
+      <td style="color:${actionColor};font-family:var(--mono);font-size:11.5px;text-transform:uppercase;white-space:nowrap;">${escapeHtml(r.action)}</td>
+      <td style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${escapeHtml(typeLabel)}</td>
+      <td>${escapeHtml(r.entity_label||'')}</td>
+    </tr>`;
+  }).join("");
+
+  renderShell(`
+    <div class="card">
+      <div class="k-label">ADMIN</div>
+      <h2 style="margin-bottom:4px;">Edit Log</h2>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Every change to modules, lessons, module quizzes, the reference guide, and standalone quizzes — including who made it and when. Showing the most recent 300 entries.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+        <input type="text" id="edit-log-search" data-no-enter-submit placeholder="Search by name or person…" value="${escapeHtml(editLogSearchQuery)}" style="width:220px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
+        <select id="edit-log-filter" style="width:auto;">
+          <option value="">All types</option>
+          ${Object.entries(EDIT_LOG_TYPE_LABELS).map(([k,v])=>`<option value="${k}" ${editLogTypeFilter===k?'selected':''}>${v}</option>`).join("")}
+        </select>
+      </div>
+      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Type</th><th>What</th></tr></thead><tbody>${rowsHtml || `<tr><td colspan="5" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No matching entries.</td></tr>`}</tbody></table></div>
+    </div>
+  `);
+
+  document.getElementById("edit-log-filter").addEventListener("change", (e)=>{ editLogTypeFilter = e.target.value; render(); });
+  const searchEl = document.getElementById("edit-log-search");
+  let editLogSearchDebounce = null;
+  searchEl.addEventListener("input", (e)=>{
+    editLogSearchQuery = e.target.value;
+    clearTimeout(editLogSearchDebounce);
+    editLogSearchDebounce = setTimeout(()=>{
+      render();
+      const el = document.getElementById("edit-log-search");
+      if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    }, 200);
+  });
 }
 
 async function openAnalyze(){
@@ -2600,6 +2729,14 @@ async function sendThreadMessage(rootId){
    REALTIME + TOASTS
    ============================================================ */
 function stripHtml(html){ const d = document.createElement("div"); d.innerHTML = html; return (d.textContent||"").trim(); }
+
+function logEdit(action, entityType, entityLabel, details){
+  if(guestMode || !session) return;
+  supabase.from("edit_log").insert({
+    actor_id: session.user.id, actor_name: profile.name,
+    action, entity_type: entityType, entity_label: entityLabel || "", details: details || null
+  }).then(()=>{}, ()=>{}); // best-effort — never let logging failures affect the actual save
+}
 
 function showToast(text, onClickFn){
   const el = document.createElement("div");
@@ -3427,6 +3564,7 @@ async function openEditor(id){
   const newId = slugify(title.trim()) || ("module-" + Date.now());
   const { error } = await supabase.from("modules").insert({ id:newId, title:title.trim(), short:"", led_color:"green", sort_order: MODULES.length+1 });
   if(error){ alert("Couldn't create module: " + error.message); return; }
+  logEdit("created", "module", title.trim());
   await loadEverything();
   editingExistingId = newId;
   draftModule = JSON.parse(JSON.stringify(modById(newId)));
@@ -3563,6 +3701,7 @@ function wireEditorEvents(){
     if(!confirm("Delete this lesson?")) return;
     const { error } = await supabase.from("lessons").delete().eq("id", d.lessons[i].id);
     if(error){ alert("Couldn't delete: " + error.message); return; }
+    logEdit("deleted", "lesson", `${d.title} — ${d.lessons[i].title}`);
     d.lessons.splice(i,1);
     if(expandedLessonIdx===i) expandedLessonIdx=null;
     renderEditor();
@@ -3571,12 +3710,15 @@ function wireEditorEvents(){
     expandedLessonIdx = +el.dataset.lessonEdit; renderEditor();
   }));
   root.querySelectorAll("[data-lesson-done]").forEach(el=> el.addEventListener("click", ()=>{
+    const i = +el.dataset.lessonDone;
+    logEdit("updated", "lesson", `${d.title} — ${d.lessons[i].title}`);
     expandedLessonIdx = null; renderEditor();
   }));
   document.getElementById("add-lesson").addEventListener("click", async ()=>{
     const blank = blankLesson();
     const { data, error } = await supabase.from("lessons").insert({ module_id: editingExistingId, sort_order: d.lessons.length, label: blank.label, title: blank.title, body: blank.body }).select().single();
     if(error){ alert("Couldn't add lesson: " + error.message); return; }
+    logEdit("created", "lesson", `${d.title} — ${blank.title}`);
     d.lessons.push({ id:data.id, label:data.label, title:data.title, body:data.body });
     expandedLessonIdx = d.lessons.length-1;
     renderEditor();
@@ -3629,6 +3771,7 @@ function wireEditorEvents(){
     if(!confirm("Delete this question?")) return;
     const { error } = await supabase.from("quiz_questions").delete().eq("id", d.quiz[i].id);
     if(error){ alert("Couldn't delete: " + error.message); return; }
+    logEdit("deleted", "module_quiz_question", `${d.title} — ${d.quiz[i].q}`);
     d.quiz.splice(i,1);
     if(expandedQuestionIdx===i) expandedQuestionIdx=null;
     renderEditor();
@@ -3637,12 +3780,15 @@ function wireEditorEvents(){
     expandedQuestionIdx = +el.dataset.qEdit; renderEditor();
   }));
   root.querySelectorAll("[data-q-done]").forEach(el=> el.addEventListener("click", ()=>{
+    const i = +el.dataset.qDone;
+    logEdit("updated", "module_quiz_question", `${d.title} — ${d.quiz[i].q}`);
     expandedQuestionIdx = null; renderEditor();
   }));
   document.getElementById("add-question").addEventListener("click", async ()=>{
     const blank = blankQuestion();
     const { data, error } = await supabase.from("quiz_questions").insert({ module_id: editingExistingId, sort_order: d.quiz.length, question: blank.q, options: blank.opts, correct_index: blank.correct, explanation: blank.explain }).select().single();
     if(error){ alert("Couldn't add question: " + error.message); return; }
+    logEdit("created", "module_quiz_question", `${d.title} — ${blank.q}`);
     d.quiz.push({ id:data.id, q:data.question, opts:data.options, correct:data.correct_index, explain:data.explanation });
     expandedQuestionIdx = d.quiz.length-1;
     renderEditor();
@@ -3659,6 +3805,7 @@ function wireEditorEvents(){
   document.getElementById("editor-delete").addEventListener("click", async ()=>{
     if(confirm(`Delete "${d.title||'this module'}"? This can't be undone.`)){
       await supabase.from("modules").delete().eq("id", editingExistingId);
+      logEdit("deleted", "module", d.title);
       await loadEverything(); view="dashboard"; render();
     }
   });
@@ -3963,6 +4110,7 @@ function renderHome(){
    REFERENCE GUIDE (OneNote-style, admin editable)
    ============================================================ */
 let refCollapsed = new Set();
+let refSearchQuery = "";
 let dragRefId = null;
 
 async function loadReference(){
@@ -3999,11 +4147,15 @@ function renderReference(){
     </div>`;
   }
 
-  const sidebarHtml = tops.map(p=>{
-    const kids = childPages(p.id);
-    const collapsed = refCollapsed.has(p.id);
+  const searchActive = refSearchQuery.trim().length > 0;
+  const searchLower = refSearchQuery.trim().toLowerCase();
+  const titleMatches = (p)=> p.title.toLowerCase().includes(searchLower);
+
+  const sidebarHtml = tops.filter(p=> !searchActive || titleMatches(p) || childPages(p.id).some(titleMatches)).map(p=>{
+    const kids = childPages(p.id).filter(k=> !searchActive || titleMatches(p) || titleMatches(k));
+    const collapsed = searchActive ? false : refCollapsed.has(p.id);
     return sidebarRow(p,false) + (!collapsed ? kids.map(k=>sidebarRow(k,true)).join("") : "");
-  }).join("") || `<p style="color:var(--text-faint);font-size:12.5px;padding:10px;">No pages yet.</p>`;
+  }).join("") || (searchActive ? `<p style="color:var(--text-faint);font-size:12.5px;padding:10px;">No matches.</p>` : `<p style="color:var(--text-faint);font-size:12.5px;padding:10px;">No pages yet.</p>`);
 
   const addTopBtn = editOn ? `<button class="dashed-btn" id="add-ref-page" style="margin-top:10px;">+ Add page</button>` : "";
 
@@ -4037,10 +4189,27 @@ function renderReference(){
 
   renderShell(`
     <div class="ref-layout">
-      <div class="ref-sidebar"><div class="ref-sidebar-list">${sidebarHtml}</div>${addTopBtn}</div>
+      <div class="ref-sidebar">
+        <input type="text" id="ref-search" data-no-enter-submit placeholder="Search reference guide…" value="${escapeHtml(refSearchQuery)}" style="width:100%;box-sizing:border-box;margin-bottom:10px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:8px 10px;font-size:13px;">
+        <div class="ref-sidebar-list">${sidebarHtml}</div>${addTopBtn}
+      </div>
       <div class="ref-content">${contentHtml}</div>
     </div>
   `);
+
+  const refSearchEl = document.getElementById("ref-search");
+  if(refSearchEl){
+    let refSearchDebounce = null;
+    refSearchEl.addEventListener("input", (e)=>{
+      refSearchQuery = e.target.value;
+      clearTimeout(refSearchDebounce);
+      refSearchDebounce = setTimeout(()=>{
+        render();
+        const el = document.getElementById("ref-search");
+        if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+      }, 200);
+    });
+  }
 
   if(refEditing) wireRichEditor("ref-body-rte");
   if(refEditing){
@@ -4067,7 +4236,7 @@ function renderReference(){
   const addPageBtn = document.getElementById("add-ref-page");
   if(addPageBtn) addPageBtn.addEventListener("click", async ()=>{
     const { data, error } = await supabase.from("reference_pages").insert({ title:"New page", body:"<p>Write here.</p>", parent_id:null, sort_order: tops.length }).select().single();
-    if(!error){ await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
+    if(!error){ logEdit("created", "reference_page", data.title); await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
   });
   root.querySelectorAll("[data-ref-addsub]").forEach(el=> el.addEventListener("click", async (e)=>{
     e.stopPropagation();
@@ -4075,7 +4244,7 @@ function renderReference(){
     const kids = childPages(parentId);
     refCollapsed.delete(parentId);
     const { data, error } = await supabase.from("reference_pages").insert({ title:"New subsection", body:"<p>Write here.</p>", parent_id:parentId, sort_order: kids.length }).select().single();
-    if(!error){ await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
+    if(!error){ logEdit("created", "reference_page", data.title); await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
   }));
   root.querySelectorAll("[data-ref-del]").forEach(el=> el.addEventListener("click", async (e)=>{
     e.stopPropagation();
@@ -4084,6 +4253,7 @@ function renderReference(){
     const hasKids = childPages(id).length>0;
     if(confirm(`Delete "${target.title}"?${hasKids?' This will also delete its subsections.':''}`)){
       await supabase.from("reference_pages").delete().eq("id", id);
+      logEdit("deleted", "reference_page", target.title);
       if(currentRefId===id) currentRefId = null;
       await loadReference(); render();
     }
@@ -4123,11 +4293,12 @@ function renderReference(){
   const editBtn = document.getElementById("ref-edit");
   if(editBtn) editBtn.addEventListener("click", ()=>{ refDraft = { title:page.title, body:page.body }; refEditing = true; render(); });
   const doneBtn = document.getElementById("ref-done");
-  if(doneBtn) doneBtn.addEventListener("click", ()=>{ refEditing=false; render(); });
+  if(doneBtn) doneBtn.addEventListener("click", ()=>{ logEdit("updated", "reference_page", page.title); refEditing=false; render(); });
   const deleteBtn = document.getElementById("ref-delete");
   if(deleteBtn) deleteBtn.addEventListener("click", async ()=>{
     if(confirm(`Delete "${page.title}"? This can't be undone.`)){
       await supabase.from("reference_pages").delete().eq("id", page.id);
+      logEdit("deleted", "reference_page", page.title);
       refEditing = false; currentRefId = null; await loadReference(); render();
     }
   });
@@ -4183,6 +4354,7 @@ async function reorderRefDrop(draggedId, targetId, pos){
 let PERSONAL_NOTES = [];
 let currentNoteId = null;
 let notesCollapsed = new Set();
+let noteSearchQuery = "";
 let dragNoteId = null;
 let noteSaveTimer = null;
 
@@ -4218,11 +4390,15 @@ function renderNotes(){
     </div>`;
   }
 
-  const sidebarHtml = tops.map(n=>{
-    const kids = childNotes(n.id);
-    const collapsed = notesCollapsed.has(n.id);
+  const noteSearchActive = noteSearchQuery.trim().length > 0;
+  const noteSearchLower = noteSearchQuery.trim().toLowerCase();
+  const noteTitleMatches = (n)=> n.title.toLowerCase().includes(noteSearchLower);
+
+  const sidebarHtml = tops.filter(n=> !noteSearchActive || noteTitleMatches(n) || childNotes(n.id).some(noteTitleMatches)).map(n=>{
+    const kids = childNotes(n.id).filter(k=> !noteSearchActive || noteTitleMatches(n) || noteTitleMatches(k));
+    const collapsed = noteSearchActive ? false : notesCollapsed.has(n.id);
     return sidebarRow(n,false) + (!collapsed ? kids.map(k=>sidebarRow(k,true)).join("") : "");
-  }).join("") || `<p style="color:var(--text-faint);font-size:12.5px;padding:10px;">No notes yet.</p>`;
+  }).join("") || (noteSearchActive ? `<p style="color:var(--text-faint);font-size:12.5px;padding:10px;">No matches.</p>` : `<p style="color:var(--text-faint);font-size:12.5px;padding:10px;">No notes yet.</p>`);
 
   const note = PERSONAL_NOTES.find(n=>n.id===currentNoteId);
   let contentHtml;
@@ -4244,10 +4420,27 @@ function renderNotes(){
 
   renderShell(`
     <div class="ref-layout">
-      <div class="ref-sidebar"><div class="ref-sidebar-list">${sidebarHtml}</div><button class="dashed-btn" id="add-note" style="margin-top:10px;">+ Add note</button></div>
+      <div class="ref-sidebar">
+        <input type="text" id="note-search" data-no-enter-submit placeholder="Search notes…" value="${escapeHtml(noteSearchQuery)}" style="width:100%;box-sizing:border-box;margin-bottom:10px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:8px 10px;font-size:13px;">
+        <div class="ref-sidebar-list">${sidebarHtml}</div><button class="dashed-btn" id="add-note" style="margin-top:10px;">+ Add note</button>
+      </div>
       <div class="ref-content">${contentHtml}</div>
     </div>
   `);
+
+  const noteSearchEl = document.getElementById("note-search");
+  if(noteSearchEl){
+    let noteSearchDebounce = null;
+    noteSearchEl.addEventListener("input", (e)=>{
+      noteSearchQuery = e.target.value;
+      clearTimeout(noteSearchDebounce);
+      noteSearchDebounce = setTimeout(()=>{
+        render();
+        const el = document.getElementById("note-search");
+        if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+      }, 200);
+    });
+  }
 
   if(note) wireRichEditor("note-body-rte");
 
@@ -4399,6 +4592,7 @@ function render(){
   else if(view==="quiz-result-standalone") renderQuizResultStandalone();
   else if(view==="quiz-builder") renderQuizBuilder();
   else if(view==="quiz-analyze") renderQuizAnalyze();
+  else if(view==="edit-log") renderEditLog();
 }
 
 /* ============================================================
