@@ -245,12 +245,6 @@
   .lightbox-hint{ position:absolute; bottom:22px; left:50%; transform:translateX(-50%); color:#ffffff99; font-family:var(--mono); font-size:11px; letter-spacing:.03em; }
 
   .guest-banner{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; background:var(--amber-dim); border:1px solid var(--amber); border-radius:10px; padding:10px 16px; margin-bottom:16px; font-size:13px; color:var(--amber); }
-  .tour-overlay{ position:fixed; inset:0; z-index:500; pointer-events:none; }
-  .tour-card{ position:fixed; bottom:28px; left:50%; transform:translateX(-50%); pointer-events:auto; background:var(--panel); border:1px solid var(--cyan); border-radius:14px; padding:20px 24px; max-width:460px; width:calc(100% - 40px); box-shadow:0 20px 50px #000000aa; }
-  .tour-card .tour-step{ font-family:var(--mono); font-size:11px; color:var(--cyan); letter-spacing:.05em; margin-bottom:6px; }
-  .tour-card h3{ margin:0 0 8px; font-size:16px; }
-  .tour-card p{ margin:0 0 16px; font-size:13.5px; color:var(--text-dim); line-height:1.6; }
-  .tour-card .tour-actions{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
   .ult-edit-text{ cursor:pointer; border-bottom:1px dashed var(--amber); }
   .ult-edit-text:hover{ background:var(--amber-dim); }
   .lightbox-close:hover{ background:#ffffff22; }
@@ -544,12 +538,12 @@ function openGuestIntroModal(){
 
 function openGuestTourChoiceModal(){
   openModal(`
-    <h3>Want a guided walkthrough?</h3>
-    <p class="sub">I can walk you through the main features — both what a regular agent sees day to day, and what an admin can do. Takes about two minutes. Or you're welcome to just explore on your own.</p>
-    <div class="modal-actions"><button class="btn" id="guest-explore">No thanks, let me explore</button><button class="btn primary" id="guest-tour-start">Yes, show me around</button></div>
+    <h3>Would you like to review all the features?</h3>
+    <p class="sub">I can show you a quick rundown of what this platform can do — especially the admin side — or you can jump straight in and explore on your own with sample data. Either way, you can pull up the feature list anytime from the button at the top.</p>
+    <div class="modal-actions"><button class="btn" id="guest-explore">No thanks, let me explore</button><button class="btn primary" id="guest-review-features">Yes, show me</button></div>
   `);
   document.getElementById("guest-explore").addEventListener("click", ()=>{ closeModal(); enterGuestMode(false); });
-  document.getElementById("guest-tour-start").addEventListener("click", ()=>{ closeModal(); enterGuestMode(true); });
+  document.getElementById("guest-review-features").addEventListener("click", ()=>{ closeModal(); enterGuestMode(true); });
 }
 
 async function fetchGuestDemoCustomization(){
@@ -560,13 +554,13 @@ async function fetchGuestDemoCustomization(){
   }catch(e){ return null; }
 }
 
-async function enterGuestMode(startTour){
+async function enterGuestMode(showFeatures){
   const customization = await fetchGuestDemoCustomization(); // fetched BEFORE guestMode flips on, using the real client
   guestMode = true;
   guestViewingAsAdmin = false;
   buildGuestFixtures(customization);
-  view = "home"; render();
-  if(startTour) setTimeout(()=> startGuestTour(), 400);
+  view = showFeatures ? "guest-features" : "home";
+  render();
 }
 
 function exitGuestMode(){
@@ -675,71 +669,43 @@ function buildGuestFixtures(customization){
   UI_TEXT = {}; UI_TEXT_DEFAULTS = {};
 }
 
-let tourSteps = [];
-let tourStepIndex = 0;
+function renderGuestFeatureList(){
+  const section = (title, items)=> `
+    <div class="editor-section">
+      <div class="editor-section-head"><h3>${title}</h3></div>
+      ${items.map(([name,desc])=>`<div class="sub-card"><div style="font-size:14px;color:var(--text);margin-bottom:4px;"><strong>${escapeHtml(name)}</strong></div><div style="font-size:13px;color:var(--text-dim);">${escapeHtml(desc)}</div></div>`).join("")}
+    </div>`;
 
-function buildTourSteps(){
-  return [
-    { run: ()=>{ guestViewingAsAdmin=false; view="home"; render(); }, title:"This is Home", text:"Every agent lands here after logging in. It links out to Training Modules, the Reference Guide, and their own private Notes." },
-    { run: ()=>{ view="dashboard"; render(); }, title:"Training Modules", text:"Each card is a module — lessons plus a scored quiz. The progress bar reflects real progress: reading the lessons counts for half, the quiz score for the other half." },
-    { run: ()=>{ currentModId=MODULES[0]?MODULES[0].id:null; currentLessonIdx=0; view="lesson"; render(); }, title:"Lessons", text:"Simple, readable pages. Agents can leave a comment on anything confusing, and it goes straight to whichever admin picks it up." },
-    { run: ()=>{ startQuiz(); }, title:"Quizzes", text:"Multiple choice with instant feedback, plus a \"Flag this question\" option if something seems worded oddly or feels wrong." },
-    { run: ()=>{ openReference(); }, title:"Reference Guide", text:"A living, searchable knowledge base for the whole team, not just new hires. Pages can have sub-pages, similar to OneNote." },
-    { run: ()=>{ openNotes(); }, title:"My Notes", text:"A fully private notepad just for this one agent. Autosaves as they type — not even admins can see someone else's notes." },
-    { run: ()=>{ openNotifications(); }, title:"Notifications", text:"Announcements from admins land here, and anyone can flag or comment on specific content they run into." },
-    { run: ()=>{ guestViewingAsAdmin=true; editMode=false; view="home"; render(); }, title:"Now, the admin view", text:"Let's switch perspectives. Admins get everything an agent has, plus tools for managing the team and the content itself." },
-    { run: ()=>{ openTeamProgress(); }, title:"Teams & progress", text:"Admins see everyone's progress, can group people into teams, search by name, filter by module, and reset a password or remove an account if needed." },
-    { run: ()=>{ openAnalyze(); }, title:"Analyze", text:"Team-wide trends: average completion per module, and — this one matters — which quiz questions get missed most often across everyone. That usually points to the content, not the reps." },
-    { run: ()=>{ editMode=true; view="dashboard"; render(); }, title:"Editing content", text:"With edit mode on, admins can add modules, drag to reorder them, and edit lessons and quiz questions directly — no code required." },
-    { run: ()=>{ editMode=false; }, title:"That's the tour", text:"Feel free to keep clicking around on your own — remember, nothing in this preview is saved anywhere. Exit guest mode any time from the button in the top right." }
-  ];
-}
+  renderShell(`
+    <div class="card">
+      <div class="eyebrow">GUEST PREVIEW</div>
+      <h1 style="margin-bottom:6px;">Everything this platform can do</h1>
+      <p style="color:var(--text-dim);margin-bottom:10px;">A quick rundown of what your team gets day to day, and what your admins get behind the scenes. Nothing here touches real data — feel free to click into anything after this.</p>
 
-async function startGuestTour(){
-  tourSteps = buildTourSteps();
-  tourStepIndex = 0;
-  await runTourStep();
-}
-async function runTourStep(){
-  const step = tourSteps[tourStepIndex];
-  await step.run();
-  renderTourCard();
-}
-function renderTourCard(){
-  let overlay = document.getElementById("tour-overlay");
-  if(!overlay){
-    overlay = document.createElement("div");
-    overlay.id = "tour-overlay";
-    overlay.className = "tour-overlay";
-    document.body.appendChild(overlay);
-  }
-  const step = tourSteps[tourStepIndex];
-  const isLast = tourStepIndex === tourSteps.length-1;
-  overlay.innerHTML = `
-    <div class="tour-card">
-      <div class="tour-step">STEP ${tourStepIndex+1} OF ${tourSteps.length}</div>
-      <h3>${escapeHtml(step.title)}</h3>
-      <p>${escapeHtml(step.text)}</p>
-      <div class="tour-actions">
-        <button class="btn" id="tour-skip">Skip tour</button>
-        <div style="display:flex;gap:8px;">
-          ${tourStepIndex>0 ? `<button class="btn" id="tour-back">Back</button>` : ""}
-          <button class="btn primary" id="tour-next">${isLast ? "Finish" : "Next →"}</button>
-        </div>
-      </div>
+      ${section("For your whole team", [
+        ["Structured Training Modules", "Lessons plus a scored quiz per module, with progress tracked automatically as they read and test."],
+        ["Reference Guide", "A searchable, living knowledge base with nested sub-pages — not just for new hires, for everyone."],
+        ["Private Notes", "A personal notepad for each person that autosaves as they type. Not even admins can see it."],
+        ["Standalone Quizzes", "One-off quizzes sent directly by admins — separate from training modules, supporting both multiple choice and long-answer questions."],
+        ["Built-in messaging", "Flag a confusing question, leave a comment on a lesson, or start a direct conversation — all routed straight to an admin."],
+        ["Live notifications", "Announcements and new quizzes show up instantly, with a \"what you missed\" digest on login."]
+      ])}
+
+      ${section("For admins", [
+        ["Full content editor", "Create and edit modules, lessons, and quizzes directly in the browser — no code, autosaves as you type."],
+        ["Granular permissions", "Beyond Admin/Editor/User — grant any custom mix of editing content, creating quizzes, and managing people."],
+        ["Teams & People", "Group people into cohorts, reset passwords, manage roles, and remove accounts."],
+        ["Module & Quiz Progress", "See exactly who's completed what, drill into individual missed questions, and grade long-answer quiz responses."],
+        ["Analyze", "Team-wide trends — completion rates and the questions people miss most often, across both training modules and standalone quizzes."],
+        ["Targeted Announcements & Quizzes", "Send to everyone, a specific team, or hand-picked people."],
+        ["Edit Log", "A full audit trail of every content change — who changed what, and when."],
+        ["This Guest Preview itself", "Fully customizable — admins control exactly what a prospective client or new hire sees in this exact sandbox."]
+      ])}
+
+      <button class="btn primary" id="guest-features-done" style="margin-top:6px;">Start exploring →</button>
     </div>
-  `;
-  document.getElementById("tour-skip").addEventListener("click", endGuestTour);
-  const backBtn = document.getElementById("tour-back");
-  if(backBtn) backBtn.addEventListener("click", async ()=>{ tourStepIndex--; await runTourStep(); });
-  document.getElementById("tour-next").addEventListener("click", async ()=>{
-    if(isLast){ endGuestTour(); return; }
-    tourStepIndex++; await runTourStep();
-  });
-}
-function endGuestTour(){
-  const overlay = document.getElementById("tour-overlay");
-  if(overlay) overlay.remove();
+  `);
+  document.getElementById("guest-features-done").addEventListener("click", ()=>{ view="home"; render(); });
 }
 
 async function submitAuth(){
@@ -883,7 +849,10 @@ function renderShell(inner){
     ${guestMode ? `
     <div class="guest-banner">
       <span>👀 Guest preview — nothing you do here is saved</span>
-      <button class="mini-btn" id="guest-view-toggle">Viewing as: ${guestViewingAsAdmin ? "Admin" : "Agent"} (switch)</button>
+      <div style="display:flex;gap:8px;">
+        <button class="mini-btn" id="guest-list-features">📋 List Features</button>
+        <button class="mini-btn" id="guest-view-toggle">Viewing as: ${guestViewingAsAdmin ? "Admin" : "Agent"} (switch)</button>
+      </div>
     </div>` : ""}
     <header class="top">
       <div class="brand">
@@ -914,7 +883,7 @@ function renderShell(inner){
         <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
       </div>
     </header>
-    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':view==='quiz-analyze'?'QUIZ ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='edit-log'?'EDIT LOG':''))}`}</nav>`}
+    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes"||view==="guest-features") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':view==='quiz-analyze'?'QUIZ ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='edit-log'?'EDIT LOG':''))}`}</nav>`}
     <div class="top-nav">
       <button class="top-nav-btn ${section==='home'?'active':''}" id="nav-home">${T('nav.dashboard','Dashboard')}</button>
       <button class="top-nav-btn ${section==='modules'?'active':''}" id="nav-modules">${T('nav.modules','Training Modules')}</button>
@@ -958,6 +927,8 @@ function renderShell(inner){
   if(goTeamBtn) goTeamBtn.addEventListener("click", openTeamProgress);
   const guestViewToggle = document.getElementById("guest-view-toggle");
   if(guestViewToggle) guestViewToggle.addEventListener("click", ()=>{ guestViewingAsAdmin = !guestViewingAsAdmin; view="home"; render(); });
+  const guestListFeaturesBtn = document.getElementById("guest-list-features");
+  if(guestListFeaturesBtn) guestListFeaturesBtn.addEventListener("click", ()=>{ view="guest-features"; render(); });
   // Every single page render — however it was reached, including internal calls
   // that bypass the top-level render() router entirely — passes through here.
   // That makes this the one guaranteed place to catch and fix any raw/oversized
@@ -1717,6 +1688,7 @@ async function showAttemptDetail(userId, moduleId){
 }
 
 let pendingGrades = {};
+let chatPendingGrades = {}; // rootId -> { answerIdx: boolean } for inline grading in Chat
 async function showStandaloneQuizAttemptDetail(userId, quizId){
   const holder = document.getElementById("quiz-attempt-detail");
   holder.innerHTML = `<div class="card"><p style="color:var(--text-faint);font-family:var(--mono);font-size:12px;">Loading answers…</p></div>`;
@@ -1916,13 +1888,14 @@ async function submitStandaloneQuiz(){
     return;
   }
   if(hasLongAnswer && q.createdBy){
-    await Promise.resolve(supabase.from("messages").insert({ sender_id:session.user.id, sender_name:profile.name, recipient_id:q.createdBy, audience:"user", type:"reply", claimed_by:q.createdBy, body:`<p>📝 ${escapeHtml(profile.name)} submitted long-answer responses for the quiz "${escapeHtml(q.title)}" — this needs grading before it's finalized. Go to Teams → Quiz Progress to review and grade it:</p>${longAnswerHtml}` })).catch(()=>{});
+    await Promise.resolve(supabase.from("messages").insert({ sender_id:session.user.id, sender_name:profile.name, recipient_id:q.createdBy, audience:"user", type:"reply", claimed_by:q.createdBy, related_quiz_id:q.id, related_quiz_user_id:session.user.id, body:`<p>📝 ${escapeHtml(profile.name)} submitted long-answer responses for the quiz "${escapeHtml(q.title)}" — grade it below, then reply to send them feedback.</p>${longAnswerHtml}` })).catch(()=>{});
   }
   // Attach the just-submitted attempt immediately, in memory — the results
   // page no longer depends on a fresh reload finding it, which was the
   // cause of getting stuck on the submit screen.
   q.myAttempt = { quiz_id:q.id, user_id:session.user.id, user_name:profile.name, answers, mc_score:mcScore, mc_total:mcTotal, graded: !hasLongAnswer };
-  view = "quiz-result-standalone"; render();
+  showToast(hasLongAnswer ? "Submitted — your long answers are awaiting grading." : "Quiz submitted.");
+  view = "quizzes"; render();
   loadStandaloneQuizzes().catch(()=>{}); // refresh in the background, doesn't block the transition
 }
 
@@ -2469,6 +2442,17 @@ async function loadAllNotifications(){
     const lastActivity = messages.length ? messages[messages.length-1].created_at : root.created_at;
     return { root, messages, lastActivity };
   }).sort((a,b)=> new Date(b.lastActivity) - new Date(a.lastActivity));
+
+  const quizLinkedThreads = NOTIF_THREADS.filter(t=> t.root.related_quiz_id && t.root.related_quiz_user_id);
+  if(quizLinkedThreads.length){
+    const quizIds = [...new Set(quizLinkedThreads.map(t=>t.root.related_quiz_id))];
+    const { data: linkedAttempts } = await supabase.from("standalone_quiz_attempts").select("*").in("quiz_id", quizIds);
+    const { data: linkedQuizzes } = await supabase.from("standalone_quizzes").select("id,title").in("id", quizIds);
+    quizLinkedThreads.forEach(t=>{
+      t.relatedAttempt = (linkedAttempts||[]).find(a=> a.quiz_id===t.root.related_quiz_id && a.user_id===t.root.related_quiz_user_id) || null;
+      t.relatedQuizTitle = (linkedQuizzes||[]).find(q=>q.id===t.root.related_quiz_id)?.title || "quiz";
+    });
+  }
 }
 
 function notifBadgeCount(){
@@ -2546,6 +2530,23 @@ function threadCardHtml(t){
       <div class="chat-bubble-body">${m.body}</div>
     </div>`;
   }).join("");
+
+  const needsGrading = t.relatedAttempt && !t.relatedAttempt.graded;
+  const gradingHtml = needsGrading ? `
+    <div class="sub-card" style="background:#0a0f1c;margin-top:10px;">
+      <div class="sub-card-head"><span class="tag">GRADE THIS SUBMISSION · ${escapeHtml(t.relatedQuizTitle||'')}</span></div>
+      ${t.relatedAttempt.answers.map((ans,idx)=> ans.type==="long_answer" ? `<div style="margin-bottom:14px;">
+          <div style="font-size:13px;color:var(--text);margin-bottom:4px;"><strong>${escapeHtml(ans.question)}</strong></div>
+          <div style="font-size:13px;color:var(--text-dim);white-space:pre-wrap;margin-bottom:8px;">${escapeHtml(ans.answer||'(no answer)')}</div>
+          <div style="display:flex;gap:8px;">
+            <button class="mini-btn chat-grade-choice" data-chat-grade-root="${t.root.id}" data-chat-grade-idx="${idx}" data-chat-grade-val="true">✓ Correct</button>
+            <button class="mini-btn chat-grade-choice" data-chat-grade-root="${t.root.id}" data-chat-grade-idx="${idx}" data-chat-grade-val="false">✕ Incorrect</button>
+          </div>
+        </div>` : '').join("")}
+      <button class="btn primary" data-chat-finalize-grade="${t.root.id}">Finalize grading</button>
+      <p style="color:var(--text-faint);font-size:11.5px;margin-top:8px;">Type feedback below and hit Send to tell them why — that's separate from grading and goes straight into this conversation.</p>
+    </div>` : "";
+
   return `
     <div class="sub-card thread-card">
       <div class="sub-card-head">
@@ -2553,6 +2554,7 @@ function threadCardHtml(t){
         <span style="display:flex;gap:8px;align-items:center;">${statusPill}<button class="mini-btn" data-thread-toggle="${t.root.id}">Hide</button><button class="mini-btn danger" data-discard-thread="${t.root.id}">Discard</button></span>
       </div>
       <div class="chat-scroll">${bubbles}</div>
+      ${gradingHtml}
       <div class="field" style="margin-top:10px;">${richEditorHtml(`thread-rte-${t.root.id}`, "")}</div>
       <button class="mini-btn" data-send-thread="${t.root.id}" style="margin-top:8px;">Send</button>
     </div>`;
@@ -2687,6 +2689,35 @@ function renderChat(){
   }));
   root.querySelectorAll("[data-send-thread]").forEach(el=> el.addEventListener("click", async ()=>{
     await sendThreadMessage(el.getAttribute("data-send-thread"));
+  }));
+  root.querySelectorAll(".chat-grade-choice").forEach(btn=> btn.addEventListener("click", ()=>{
+    const rootId = btn.getAttribute("data-chat-grade-root");
+    const idx = btn.getAttribute("data-chat-grade-idx");
+    const val = btn.getAttribute("data-chat-grade-val") === "true";
+    if(!chatPendingGrades[rootId]) chatPendingGrades[rootId] = {};
+    chatPendingGrades[rootId][idx] = val;
+    root.querySelectorAll(`.chat-grade-choice[data-chat-grade-root="${rootId}"][data-chat-grade-idx="${idx}"]`).forEach(b=>{
+      const isThis = b === btn;
+      b.style.color = isThis ? (val ? "var(--green)" : "var(--red)") : "var(--text-dim)";
+      b.style.fontWeight = isThis ? "700" : "400";
+    });
+  }));
+  root.querySelectorAll("[data-chat-finalize-grade]").forEach(btn=> btn.addEventListener("click", async ()=>{
+    const rootId = btn.getAttribute("data-chat-finalize-grade");
+    const t = NOTIF_THREADS.find(x=>x.root.id===rootId);
+    if(!t || !t.relatedAttempt) return;
+    const grades = chatPendingGrades[rootId] || {};
+    const longAnswerIdxs = t.relatedAttempt.answers.map((a,i)=> a.type==="long_answer" ? i : null).filter(i=>i!=null);
+    const allGraded = longAnswerIdxs.every(i=> grades[i] != null);
+    if(!allGraded){ alert("Grade every long-answer question before finalizing."); return; }
+    const updatedAnswers = t.relatedAttempt.answers.map((a,i)=> a.type==="long_answer" ? { ...a, is_correct: grades[i] } : a);
+    const { error } = await supabase.from("standalone_quiz_attempts").update({ answers: updatedAnswers, graded: true }).eq("quiz_id", t.root.related_quiz_id).eq("user_id", t.root.related_quiz_user_id);
+    if(error){ alert("Couldn't save grading: " + error.message); return; }
+    logEdit("graded", "standalone_quiz_attempt", `${t.relatedQuizTitle} — ${t.root.sender_name}`);
+    delete chatPendingGrades[rootId];
+    showToast("Grading saved.");
+    QUIZ_PROGRESS_ROWS = null;
+    await refreshMessagingView();
   }));
 }
 
@@ -4587,6 +4618,7 @@ function render(){
   else if(view==="chat") renderChat();
   else if(view==="notes") renderNotes();
   else if(view==="guest-editor") renderGuestEditor();
+  else if(view==="guest-features") renderGuestFeatureList();
   else if(view==="quizzes") renderQuizzesList();
   else if(view==="quiz-take") renderQuizTake();
   else if(view==="quiz-result-standalone") renderQuizResultStandalone();
