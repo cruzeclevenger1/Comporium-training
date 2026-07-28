@@ -286,7 +286,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r11";
+const BUILD_VERSION = "2026-07-27T00:00Z-r14";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -349,6 +349,7 @@ let lastModuleContext = null; // { view, modId, lessonIdx } — lets the Trainin
 const MAX_QUIZ_ATTEMPTS = 3;
 let quizAnswers = []; let quizRevealed = []; let quizIdx = 0;
 let quizActiveIndices = []; // indices into m.quiz actually being shown this session
+let quizSimScreenIndex = {}; // session-relative quizIdx -> current screen index, for simulation questions
 let quizCarriedAnswers = {}; // originalIndex -> answer detail, for missed-only retakes (previously-correct questions, not being retaken)
 
 let draftModule = null; let editingExistingId = null;
@@ -494,7 +495,7 @@ async function loadEverything(){
     id:m.id, title:m.title, short:m.short, ledColor:m.led_color,
     popupEnabled: !!m.popup_enabled, popupTitle: m.popup_title||"", popupBody: m.popup_body||"",
     lessons:(lessons||[]).filter(l=>l.module_id===m.id).map(l=>({id:l.id,label:l.label,title:l.title,body:l.body})),
-    quiz:(quiz||[]).filter(q=>q.module_id===m.id).map(q=>({id:q.id,q:q.question,opts:q.options,correct:q.correct_index,explain:q.explanation}))
+    quiz:(quiz||[]).filter(q=>q.module_id===m.id).map(q=>({id:q.id,q:q.question,opts:q.options,correct:q.correct_index,explain:q.explanation,type:q.question_type||'multiple_choice',simScreens:q.sim_screens||[]}))
   }));
 
   const { data: prog } = await supabase.from("progress").select("*").eq("user_id", session.user.id);
@@ -1148,6 +1149,7 @@ function renderLesson(){
 
 async function startQuiz(mode){
   const m = modById(currentModId);
+  quizSimScreenIndex = {};
   const priorAttempts = (progressMap[m.id] && progressMap[m.id].attempts) || 0;
   if(priorAttempts >= MAX_QUIZ_ATTEMPTS){ alert(`You've used all ${MAX_QUIZ_ATTEMPTS} attempts for this quiz.`); return; }
   quizCarriedAnswers = {};
@@ -1182,21 +1184,63 @@ function renderQuiz(){
   const realIdx = quizActiveIndices[quizIdx];
   const q = m.quiz[realIdx]; const revealed = quizRevealed[quizIdx]; const selected = quizAnswers[quizIdx];
   const isMissedRetake = quizActiveIndices.length < m.quiz.length;
-  const opts = q.opts.map((opt,i)=>{ let cls="opt"; if(revealed){ cls+=" disabled"; if(i===q.correct) cls+=" correct"; else if(i===selected) cls+=" wrong"; } else if(i===selected){ cls+=" selected"; }
-    return `<div class="${cls}" data-idx="${i}"><div class="dot"></div><span class="txt">${escapeHtml(opt)}</span></div>`; }).join("");
-  const explain = revealed ? `<div class="explain"><strong>${selected===q.correct?'Correct.':'Not quite.'}</strong> ${escapeHtml(q.explain)}</div>` : "";
+  const isSim = q.type === 'simulation';
   const isLast = quizIdx === quizActiveIndices.length-1;
   const editBtn = canEdit() ? `<button class="btn" id="edit-mod-q" style="border-color:var(--amber);color:var(--amber);">✎ Edit module</button>` : "";
+
+  let bodyHtml, nextLabel, nextDisabled;
+  if(isSim){
+    const screens = q.simScreens || [];
+    if(quizSimScreenIndex[quizIdx] === undefined) quizSimScreenIndex[quizIdx] = 0;
+    const screen = screens[quizSimScreenIndex[quizIdx]];
+    if(!screen || !screen.image){
+      bodyHtml = `<p style="color:var(--text-faint);">This simulation hasn't been set up yet.</p>`;
+    } else {
+      const zonesHtml = (screen.zones||[]).map((z,zi)=>`<div class="sim-play-zone" data-sim-play-zone="${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;cursor:pointer;"></div>`).join("");
+      bodyHtml = `<div style="position:relative;display:inline-block;max-width:100%;">
+        <img src="${screen.image}" style="max-width:100%;display:block;user-select:none;border-radius:8px;" draggable="false">
+        ${zonesHtml}
+      </div>${selected ? `<p style="color:var(--green);font-size:13px;margin-top:12px;">✓ Done — you found it.</p>` : ""}`;
+    }
+    nextLabel = isLast ? 'See results →' : 'Next question →';
+    nextDisabled = selected===null;
+  } else {
+    const opts = q.opts.map((opt,i)=>{ let cls="opt"; if(revealed){ cls+=" disabled"; if(i===q.correct) cls+=" correct"; else if(i===selected) cls+=" wrong"; } else if(i===selected){ cls+=" selected"; }
+      return `<div class="${cls}" data-idx="${i}"><div class="dot"></div><span class="txt">${escapeHtml(opt)}</span></div>`; }).join("");
+    const explain = revealed ? `<div class="explain"><strong>${selected===q.correct?'Correct.':'Not quite.'}</strong> ${escapeHtml(q.explain)}</div>` : "";
+    bodyHtml = opts + explain;
+    nextLabel = isLast?(revealed?'See results →':'Check answer'):(revealed?'Next question →':'Check answer');
+    nextDisabled = selected===null;
+  }
+
   renderShell(`
     <div class="q-progress">MODULE QUIZ${isMissedRetake?' · RETAKING MISSED QUESTIONS':''} · ${escapeHtml(m.title.toUpperCase())} · QUESTION ${quizIdx+1} OF ${quizActiveIndices.length}</div>
-    <div class="card"><div class="q-block"><h3>${escapeHtml(q.q)}</h3>${opts}</div>${explain}
+    <div class="card"><div class="q-block"><h3>${escapeHtml(q.q)}</h3>${bodyHtml}</div>
       <div class="nav-buttons"><div style="display:flex;gap:10px;"><button class="btn" id="quiz-prev" ${quizIdx===0?'disabled':''}>← Previous</button>${editBtn}</div>
-      <button class="btn primary" id="quiz-next" ${selected===null?'disabled':''}>${isLast?(revealed?'See results →':'Check answer'):(revealed?'Next question →':'Check answer')}</button></div>
+      <button class="btn primary" id="quiz-next" ${nextDisabled?'disabled':''}>${nextLabel}</button></div>
       <div class="nav-buttons" style="margin-top:8px;"><button class="mini-btn" id="flag-question">🚩 Flag this question</button><div></div></div>
     </div>`);
-  if(!revealed) root.querySelectorAll(".opt").forEach(el=> el.addEventListener("click", ()=>{ quizAnswers[quizIdx]=parseInt(el.getAttribute("data-idx")); render(); }));
+
+  if(isSim){
+    root.querySelectorAll("[data-sim-play-zone]").forEach(el=> el.addEventListener("click", ()=>{
+      const zi = +el.getAttribute("data-sim-play-zone");
+      const screens = q.simScreens;
+      const screen = screens[quizSimScreenIndex[quizIdx]];
+      const zone = screen.zones[zi];
+      if(zone.targetScreenId){
+        const nextScreenIdx = screens.findIndex(s=>s.id===zone.targetScreenId);
+        if(nextScreenIdx>=0){ quizSimScreenIndex[quizIdx] = nextScreenIdx; render(); }
+      } else {
+        quizAnswers[quizIdx] = "done";
+        render();
+      }
+    }));
+    document.getElementById("quiz-next").addEventListener("click", ()=>{ if(isLast){ finishQuiz(); } else { quizIdx++; render(); } });
+  } else {
+    if(!revealed) root.querySelectorAll(".opt").forEach(el=> el.addEventListener("click", ()=>{ quizAnswers[quizIdx]=parseInt(el.getAttribute("data-idx")); render(); }));
+    document.getElementById("quiz-next").addEventListener("click", ()=>{ if(!revealed){ quizRevealed[quizIdx]=true; render(); } else if(isLast){ finishQuiz(); } else { quizIdx++; render(); } });
+  }
   document.getElementById("quiz-prev").addEventListener("click", ()=>{ if(quizIdx>0){ quizIdx--; render(); } });
-  document.getElementById("quiz-next").addEventListener("click", ()=>{ if(!revealed){ quizRevealed[quizIdx]=true; render(); } else if(isLast){ finishQuiz(); } else { quizIdx++; render(); } });
   const editModQ=document.getElementById("edit-mod-q"); if(editModQ) editModQ.addEventListener("click", ()=>openEditor(m.id));
   document.getElementById("flag-question").addEventListener("click", ()=> openFeedbackModal("flag", `${m.title} — Q${quizIdx+1}: ${q.q}`));
 }
@@ -1206,7 +1250,11 @@ async function finishQuiz(){
   const answerDetail = new Array(m.quiz.length);
   quizActiveIndices.forEach((realIdx, i)=>{
     const q = m.quiz[realIdx];
-    answerDetail[realIdx] = { question:q.q, options:q.opts, selected:quizAnswers[i], correct:q.correct, is_correct: quizAnswers[i]===q.correct };
+    if(q.type === 'simulation'){
+      answerDetail[realIdx] = { question:q.q, type:'simulation', is_correct: true };
+    } else {
+      answerDetail[realIdx] = { question:q.q, options:q.opts, selected:quizAnswers[i], correct:q.correct, is_correct: quizAnswers[i]===q.correct };
+    }
   });
   Object.keys(quizCarriedAnswers).forEach(idxStr=>{ answerDetail[+idxStr] = quizCarriedAnswers[idxStr]; });
   const correctCount = answerDetail.reduce((acc,a)=> acc + (a && a.is_correct ? 1 : 0), 0);
@@ -2756,6 +2804,7 @@ function renderModuleAnalyzeDetail(){
     if(delErr){ alert("Couldn't reset: " + delErr.message); return; }
     await supabase.from("progress").update({ best_score:0, last_score:0, attempts:0 }).eq("user_id", uid).eq("module_id", m.id);
     logEdit("reset", "module_quiz_attempts", `${m.title} — ${name}`);
+    if(uid === session.user.id) await loadEverything(); // refresh our own cached progress, not just the roster view
     showToast("Attempts reset.");
     await openModuleAnalyzeDetail(m.id);
   }));
@@ -3522,7 +3571,54 @@ function openPasswordResetModal(userId, name){
    ============================================================ */
 function blankModule(){ return { id:null, title:"", short:"", ledColor:"green", lessons:[], quiz:[] }; }
 function blankLesson(){ return { title:"New lesson", label:"Lesson · Untitled", body:"<p>Write the lesson content here.</p>" }; }
-function blankQuestion(){ return { q:"New question", opts:["Option A","Option B"], correct:0, explain:"" }; }
+function blankQuestion(){ return { q:"New question", opts:["Option A","Option B"], correct:0, explain:"", type:"multiple_choice", simScreens:[] }; }
+
+function openSimZoneTargetModal(d, qi, si, zi, onSaved){
+  const screens = d.quiz[qi].simScreens;
+  const zone = screens[si].zones[zi];
+  const options = screens.map((s,idx)=> idx===si ? "" : `<option value="${s.id}" ${zone.targetScreenId===s.id?'selected':''}>Screen ${idx+1}</option>`).join("");
+  openModal(`
+    <h3>Where does this button lead?</h3>
+    <p class="sub">Pick the next screen, or "Finish" if this is the button that completes the simulation.</p>
+    <div class="field"><select id="sim-zone-target-select">
+      <option value="" ${!zone.targetScreenId?'selected':''}>Finish (completes the simulation)</option>
+      ${options}
+    </select></div>
+    <div class="modal-actions"><button class="btn" id="sim-zone-cancel">Cancel</button><button class="btn primary" id="sim-zone-save">Save</button></div>
+  `);
+  document.getElementById("sim-zone-cancel").addEventListener("click", closeModal);
+  document.getElementById("sim-zone-save").addEventListener("click", ()=>{
+    const val = document.getElementById("sim-zone-target-select").value;
+    zone.targetScreenId = val || null;
+    closeModal();
+    onSaved();
+  });
+}
+
+function renderSimBuilder(q, qi){
+  const screens = q.simScreens || [];
+  const screensHtml = screens.map((screen, si)=>{
+    const zonesHtml = (screen.zones||[]).map((z,zi)=>{
+      const targetScreenIdx = z.targetScreenId ? screens.findIndex(s=>s.id===z.targetScreenId) : -1;
+      const targetLabel = targetScreenIdx>=0 ? `→ Screen ${targetScreenIdx+1}` : "→ Finish";
+      return `<div class="sim-zone" data-sim-zone="${qi}:${si}:${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;border:2px dashed var(--cyan);cursor:pointer;">
+        <button class="sim-zone-del" data-sim-zone-del="${qi}:${si}:${zi}" style="position:absolute;top:-10px;right:-10px;width:18px;height:18px;border-radius:50%;background:#c0392bdd;color:#fff;font-size:11px;line-height:18px;text-align:center;cursor:pointer;border:none;">✕</button>
+        <span style="position:absolute;bottom:2px;left:2px;background:#000000cc;color:var(--cyan);font-size:10px;padding:1px 4px;border-radius:3px;font-family:var(--mono);white-space:nowrap;">${escapeHtml(targetLabel)}</span>
+      </div>`;
+    }).join("");
+    return `<div class="sub-card" style="margin-bottom:10px;">
+      <div class="sub-card-head"><span class="tag">SCREEN ${si+1}</span><button class="mini-btn danger" data-sim-screen-del="${qi}:${si}">Delete screen</button></div>
+      ${screen.image ? `
+        <div class="sim-screen-canvas" data-sim-canvas="${qi}:${si}" style="position:relative;display:inline-block;max-width:100%;cursor:crosshair;touch-action:none;">
+          <img src="${screen.image}" style="max-width:100%;display:block;pointer-events:none;user-select:none;" draggable="false">
+          ${zonesHtml}
+        </div>
+        <p class="hint">Drag on the image to draw a clickable zone, then pick where it leads. The zone stays invisible to trainees.</p>
+      ` : `<input type="file" accept="image/*" data-sim-upload="${qi}:${si}">`}
+    </div>`;
+  }).join("");
+  return `<div class="field"><label>Screens (in order)</label>${screensHtml || '<p style="color:var(--text-faint);font-size:13px;">No screens yet.</p>'}<button class="mini-btn" data-sim-add-screen="${qi}" style="margin-top:6px;">+ Add screen</button></div>`;
+}
 /* ============================================================
    DRAG AUTO-SCROLL — activated during any drag-to-reorder gesture
    so dragging near the top/bottom edge scrolls the page.
@@ -3856,7 +3952,7 @@ function wireRichEditor(id){
   fileInput.addEventListener("change", async ()=>{
     const file = fileInput.files[0]; if(!file) return;
     const dataUrl = await compressImageFile(file);
-    insertResizableImage(editorEl, dataUrl);
+    await insertResizableImage(editorEl, dataUrl);
     attachImageResizeHandles(editorEl);
     fileInput.value = "";
   });
@@ -3875,7 +3971,7 @@ function wireRichEditor(id){
           e.preventDefault();
           const file = item.getAsFile();
           const dataUrl = await compressImageFile(file);
-          insertResizableImage(editorEl, dataUrl);
+          await insertResizableImage(editorEl, dataUrl);
           attachImageResizeHandles(editorEl);
           return;
         }
@@ -3991,6 +4087,42 @@ document.addEventListener("click", (e)=>{
   selectedImageWrap = null;
 });
 let _imgResizeDrag = null;
+
+let _simZoneDrawing = null;
+document.addEventListener("mousemove", (e)=>{
+  if(!_simZoneDrawing) return;
+  const { rect, startX, startY, previewEl } = _simZoneDrawing;
+  const x1 = Math.min(startX, e.clientX), x2 = Math.max(startX, e.clientX);
+  const y1 = Math.min(startY, e.clientY), y2 = Math.max(startY, e.clientY);
+  previewEl.style.left = (x1 - rect.left) + "px";
+  previewEl.style.top = (y1 - rect.top) + "px";
+  previewEl.style.width = (x2-x1) + "px";
+  previewEl.style.height = (y2-y1) + "px";
+});
+document.addEventListener("mouseup", (e)=>{
+  if(!_simZoneDrawing) return;
+  const { qi, si, rect, startX, startY, previewEl, draftModule } = _simZoneDrawing;
+  _simZoneDrawing = null;
+  previewEl.remove();
+  const x1 = Math.min(startX, e.clientX), x2 = Math.max(startX, e.clientX);
+  const y1 = Math.min(startY, e.clientY), y2 = Math.max(startY, e.clientY);
+  const wPx = x2-x1, hPx = y2-y1;
+  if(wPx < 10 || hPx < 10) return; // too small — treat as an accidental click, not a real zone
+  const xPct = ((x1-rect.left)/rect.width)*100, yPct = ((y1-rect.top)/rect.height)*100;
+  const wPct = (wPx/rect.width)*100, hPct = (hPx/rect.height)*100;
+  const zone = { x:Math.round(xPct*10)/10, y:Math.round(yPct*10)/10, w:Math.round(wPct*10)/10, h:Math.round(hPct*10)/10, targetScreenId:null };
+  const screen = draftModule.quiz[qi].simScreens[si];
+  if(!screen.zones) screen.zones = [];
+  screen.zones.push(zone);
+  const newIdx = screen.zones.length-1;
+  // These two globals are set by whichever page is currently using this shared
+  // drawing mechanism — right now that's only the module quiz editor.
+  scheduleQuizAutosaveGlobal(qi);
+  renderEditor();
+  openSimZoneTargetModal(draftModule, qi, si, newIdx, ()=>{ scheduleQuizAutosaveGlobal(qi); renderEditor(); });
+});
+let scheduleQuizAutosaveGlobal = ()=>{}; // reassigned by wireEditorEvents each time it runs, so the shared drag handler above can trigger a save
+
 document.addEventListener("mousedown", (e)=>{
   const handle = e.target.closest(".rte-resize-handle");
   if(!handle) return;
@@ -4150,16 +4282,20 @@ document.addEventListener("click", (e)=>{
 
 function insertResizableImage(editorEl, dataUrl){
   editorEl.focus();
-  const probe = new Image();
-  probe.onload = ()=>{
-    const maxW = 340, maxH = 260;
-    let w = probe.naturalWidth || maxW, h = probe.naturalHeight || maxH;
-    const scale = Math.min(maxW/w, maxH/h, 1);
-    w = Math.max(Math.round(w*scale), 80);
-    h = Math.max(Math.round(h*scale), 60);
-    document.execCommand("insertHTML", false, `<span class="rte-img-wrap" contenteditable="false" draggable="true"><img src="${dataUrl}" width="${w}" height="${h}" style="width:${w}px;height:${h}px;"></span>&nbsp;`);
-  };
-  probe.src = dataUrl;
+  return new Promise((resolve)=>{
+    const probe = new Image();
+    probe.onload = ()=>{
+      const maxW = 340, maxH = 260;
+      let w = probe.naturalWidth || maxW, h = probe.naturalHeight || maxH;
+      const scale = Math.min(maxW/w, maxH/h, 1);
+      w = Math.max(Math.round(w*scale), 80);
+      h = Math.max(Math.round(h*scale), 60);
+      document.execCommand("insertHTML", false, `<span class="rte-img-wrap" contenteditable="false" draggable="true"><img src="${dataUrl}" width="${w}" height="${h}" style="width:${w}px;height:${h}px;"></span>&nbsp;`);
+      resolve();
+    };
+    probe.onerror = ()=> resolve(); // don't hang forever if the image data is somehow bad
+    probe.src = dataUrl;
+  });
 }
 function compressImageFile(file, maxDim){
   // PNG instead of JPEG — lossy JPEG compression is genuinely bad for screenshots
@@ -4238,17 +4374,27 @@ function renderEditor(){
 
   const quizHtml = d.quiz.map((q,i)=>{
     if(i === expandedQuestionIdx){
-      const optsHtml = q.opts.map((opt,oi)=>`<div class="opt-row"><input type="radio" name="correct-${i}" data-q-correct="${i}" value="${oi}" ${q.correct===oi?'checked':''}>
-        <input type="text" data-q-opt="${i}:${oi}" value="${escapeHtml(opt)}"><button class="mini-btn danger" data-q-opt-del="${i}:${oi}" ${q.opts.length<=2?'disabled':''}>✕</button></div>`).join("");
+      const typeSelectHtml = `<div class="field"><label>Question type</label>
+        <select data-q-type="${i}">
+          <option value="multiple_choice" ${q.type!=='simulation'?'selected':''}>Multiple choice</option>
+          <option value="simulation" ${q.type==='simulation'?'selected':''}>Simulated Navigation</option>
+        </select></div>`;
+      const bodyHtml = q.type === 'simulation' ? renderSimBuilder(q, i) : (()=>{
+        const optsHtml = q.opts.map((opt,oi)=>`<div class="opt-row"><input type="radio" name="correct-${i}" data-q-correct="${i}" value="${oi}" ${q.correct===oi?'checked':''}>
+          <input type="text" data-q-opt="${i}:${oi}" value="${escapeHtml(opt)}"><button class="mini-btn danger" data-q-opt-del="${i}:${oi}" ${q.opts.length<=2?'disabled':''}>✕</button></div>`).join("");
+        return `<div class="field"><label>Options (select correct)</label>${optsHtml}<button class="mini-btn" data-q-opt-add="${i}" style="margin-top:4px;">+ Add option</button></div>
+        <div class="field"><label>Explanation</label><textarea data-q-explain="${i}" style="min-height:55px;">${escapeHtml(q.explain)}</textarea></div>`;
+      })();
       return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1} · EDITING</span>
         <div style="display:flex;align-items:center;gap:10px;"><span id="q-save-status-${i}" style="font-size:11px;color:var(--text-faint);font-family:var(--mono);"></span><button class="mini-btn danger" data-q-del="${i}">Delete</button></div></div>
-        <div class="field"><label>Question</label><textarea data-q-text="${i}" style="min-height:55px;">${escapeHtml(q.q)}</textarea></div>
-        <div class="field"><label>Options (select correct)</label>${optsHtml}<button class="mini-btn" data-q-opt-add="${i}" style="margin-top:4px;">+ Add option</button></div>
-        <div class="field"><label>Explanation</label><textarea data-q-explain="${i}" style="min-height:55px;">${escapeHtml(q.explain)}</textarea></div>
+        ${typeSelectHtml}
+        <div class="field"><label>${q.type==='simulation'?'Instruction (e.g. "What do you click to access this page?")':'Question'}</label><textarea data-q-text="${i}" style="min-height:55px;">${escapeHtml(q.q)}</textarea></div>
+        ${bodyHtml}
         <div class="nav-buttons"><div></div><button class="btn primary" data-q-done="${i}">Done</button></div>
       </div>`;
     }
-    return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1}${q.q?' · '+escapeHtml(q.q.slice(0,50))+(q.q.length>50?'…':''):''}</span>
+    const typeTag = q.type==='simulation' ? ' · SIMULATION' : '';
+    return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1}${typeTag}${q.q?' · '+escapeHtml(q.q.slice(0,50))+(q.q.length>50?'…':''):''}</span>
       <div class="mini-tools">
         <button class="mini-btn" data-q-up="${i}" ${i===0?'disabled':''}>↑</button>
         <button class="mini-btn" data-q-down="${i}" ${i===d.quiz.length-1?'disabled':''}>↓</button>
@@ -4383,7 +4529,7 @@ function wireEditorEvents(){
     if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
     clearTimeout(quizAutosaveTimers[q.id]);
     quizAutosaveTimers[q.id] = setTimeout(async ()=>{
-      const { error } = await supabase.from("quiz_questions").update({ question:q.q, options:q.opts, correct_index:q.correct, explanation:q.explain }).eq("id", q.id);
+      const { error } = await supabase.from("quiz_questions").update({ question:q.q, options:q.opts, correct_index:q.correct, explanation:q.explain, question_type:q.type, sim_screens:q.simScreens }).eq("id", q.id);
       const el = document.getElementById(`q-save-status-${i}`);
       if(el){
         if(error){ el.textContent = "Couldn't save: " + error.message; el.style.color = "var(--red)"; }
@@ -4391,6 +4537,55 @@ function wireEditorEvents(){
       }
     }, 600);
   }
+  scheduleQuizAutosaveGlobal = scheduleQuizAutosave;
+  root.querySelectorAll("[data-q-type]").forEach(el=> el.addEventListener("change", e=>{
+    const i=+el.dataset.qType; d.quiz[i].type=e.target.value;
+    if(d.quiz[i].type==='simulation' && !d.quiz[i].simScreens) d.quiz[i].simScreens=[];
+    scheduleQuizAutosave(i); renderEditor();
+  }));
+  root.querySelectorAll("[data-sim-add-screen]").forEach(el=> el.addEventListener("click", ()=>{
+    const qi=+el.dataset.simAddScreen;
+    d.quiz[qi].simScreens.push({ id:'scr'+Date.now()+Math.random().toString(36).slice(2,7), image:null, zones:[] });
+    scheduleQuizAutosave(qi); renderEditor();
+  }));
+  root.querySelectorAll("[data-sim-screen-del]").forEach(el=> el.addEventListener("click", ()=>{
+    const [qi,si]=el.dataset.simScreenDel.split(":").map(Number);
+    const removedId = d.quiz[qi].simScreens[si].id;
+    d.quiz[qi].simScreens.splice(si,1);
+    // Any zone that pointed at the removed screen now just completes the simulation instead.
+    d.quiz[qi].simScreens.forEach(scr=> (scr.zones||[]).forEach(z=>{ if(z.targetScreenId===removedId) z.targetScreenId=null; }));
+    scheduleQuizAutosave(qi); renderEditor();
+  }));
+  root.querySelectorAll("[data-sim-upload]").forEach(el=> el.addEventListener("change", async ()=>{
+    const file = el.files[0]; if(!file) return;
+    const [qi,si]=el.dataset.simUpload.split(":").map(Number);
+    const dataUrl = await compressImageFile(file);
+    d.quiz[qi].simScreens[si].image = dataUrl;
+    scheduleQuizAutosave(qi); renderEditor();
+  }));
+  root.querySelectorAll("[data-sim-zone-del]").forEach(el=> el.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    const [qi,si,zi]=el.dataset.simZoneDel.split(":").map(Number);
+    d.quiz[qi].simScreens[si].zones.splice(zi,1);
+    scheduleQuizAutosave(qi); renderEditor();
+  }));
+  root.querySelectorAll("[data-sim-zone]").forEach(el=> el.addEventListener("click", (e)=>{
+    if(e.target.closest("[data-sim-zone-del]")) return;
+    const [qi,si,zi]=el.getAttribute("data-sim-zone").split(":").map(Number);
+    openSimZoneTargetModal(d, qi, si, zi, ()=>{ scheduleQuizAutosave(qi); renderEditor(); });
+  }));
+  root.querySelectorAll("[data-sim-canvas]").forEach(canvas=>{
+    const [qi,si] = canvas.getAttribute("data-sim-canvas").split(":").map(Number);
+    canvas.addEventListener("mousedown", (e)=>{
+      if(e.target.closest(".sim-zone")) return; // clicking an existing zone, not drawing a new one
+      const rect = canvas.getBoundingClientRect();
+      const previewEl = document.createElement("div");
+      previewEl.style.cssText = "position:absolute;border:2px solid var(--amber);background:#f5a62333;pointer-events:none;";
+      canvas.appendChild(previewEl);
+      _simZoneDrawing = { qi, si, rect, startX:e.clientX, startY:e.clientY, previewEl, draftModule:d };
+      e.preventDefault();
+    });
+  });
   root.querySelectorAll("[data-q-text]").forEach(el=> el.addEventListener("input", e=>{ const i=+el.dataset.qText; d.quiz[i].q=e.target.value; scheduleQuizAutosave(i); }));
   root.querySelectorAll("[data-q-explain]").forEach(el=> el.addEventListener("input", e=>{ const i=+el.dataset.qExplain; d.quiz[i].explain=e.target.value; scheduleQuizAutosave(i); }));
   root.querySelectorAll("[data-q-opt]").forEach(el=> el.addEventListener("input", e=>{ const [qi,oi]=el.dataset.qOpt.split(":").map(Number); d.quiz[qi].opts[oi]=e.target.value; scheduleQuizAutosave(qi); }));
@@ -4439,10 +4634,10 @@ function wireEditorEvents(){
   }));
   document.getElementById("add-question").addEventListener("click", async ()=>{
     const blank = blankQuestion();
-    const { data, error } = await supabase.from("quiz_questions").insert({ module_id: editingExistingId, sort_order: d.quiz.length, question: blank.q, options: blank.opts, correct_index: blank.correct, explanation: blank.explain }).select().single();
+    const { data, error } = await supabase.from("quiz_questions").insert({ module_id: editingExistingId, sort_order: d.quiz.length, question: blank.q, options: blank.opts, correct_index: blank.correct, explanation: blank.explain, question_type: blank.type, sim_screens: blank.simScreens }).select().single();
     if(error){ alert("Couldn't add question: " + error.message); return; }
     logEdit("created", "module_quiz_question", `${d.title} — ${blank.q}`);
-    d.quiz.push({ id:data.id, q:data.question, opts:data.options, correct:data.correct_index, explain:data.explanation });
+    d.quiz.push({ id:data.id, q:data.question, opts:data.options, correct:data.correct_index, explain:data.explanation, type:data.question_type||'multiple_choice', simScreens:data.sim_screens||[] });
     expandedQuestionIdx = d.quiz.length-1;
     renderEditor();
   });
