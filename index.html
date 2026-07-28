@@ -203,7 +203,7 @@
   .admin-menu-panel button:hover{ background:#1c2740; color:var(--text); }
   html.theme-light .admin-menu-panel button:hover{ background:#eef1f8; }
 
-  .overlay{ position:fixed; inset:0; background:#050810cc; backdrop-filter:blur(3px); display:flex; align-items:center; justify-content:center; z-index:200; padding:20px; }
+  .overlay{ position:fixed; inset:0; background:#050810cc; backdrop-filter:blur(3px); display:flex; align-items:center; justify-content:center; z-index:900; padding:20px; }
   .modal{ background:var(--panel); border:1px solid var(--stroke); border-radius:14px; padding:26px; width:100%; max-width:440px; max-height:85vh; overflow-y:auto; }
   .modal.wide{ max-width:640px; }
   .modal h3{ margin:0 0 6px; font-size:17px; } .modal p.sub{ color:var(--text-dim); font-size:13px; margin:0 0 18px; }
@@ -279,7 +279,7 @@
   .chat-bubble-meta{ font-family:var(--mono); font-size:10px; color:var(--text-faint); margin-bottom:4px; }
   .chat-bubble-body p{ margin:0 0 6px; } .chat-bubble-body p:last-child{ margin-bottom:0; }
 
-  .app-toast{ position:fixed; bottom:24px; right:24px; max-width:320px; background:var(--panel); border:1px solid var(--cyan); border-radius:10px; padding:14px 16px; font-size:13px; color:var(--text); box-shadow:0 12px 30px #00000066; z-index:300; cursor:pointer; animation:toast-in .25s ease; }
+  .app-toast{ position:fixed; bottom:24px; right:24px; max-width:320px; background:var(--panel); border:1px solid var(--cyan); border-radius:10px; padding:14px 16px; font-size:13px; color:var(--text); box-shadow:0 12px 30px #00000066; z-index:750; cursor:pointer; animation:toast-in .25s ease; }
   html.theme-light .app-toast{ background:#fff; }
   .app-toast.out{ animation:toast-out .3s ease forwards; }
   @keyframes toast-in{ from{ transform:translateY(20px); opacity:0; } to{ transform:translateY(0); opacity:1; } }
@@ -298,7 +298,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r21";
+const BUILD_VERSION = "2026-07-27T00:00Z-r22";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
