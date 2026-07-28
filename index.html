@@ -286,7 +286,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r4";
+const BUILD_VERSION = "2026-07-27T00:00Z-r5";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -857,8 +857,8 @@ async function logout(){
 function renderShell(inner){
   const inModulesFlow = ["lesson","quiz","results","editor"].includes(view);
   const inQuizFlow = ["quiz-take","quiz-result-standalone","quiz-builder","quiz-sent-detail"].includes(view);
-  const crumbLabel = inModulesFlow ? "TRAINING MODULES" : inQuizFlow ? "QUIZZES" : ((view==="analyze"||view==="quiz-analyze") ? "TEAMS" : "HOME");
-  const crumbTarget = inModulesFlow ? "dashboard" : inQuizFlow ? "quizzes" : ((view==="analyze"||view==="quiz-analyze") ? "team" : "home");
+  const crumbLabel = inModulesFlow ? "TRAINING MODULES" : inQuizFlow ? "QUIZZES" : (view==="module-analyze-detail") ? "ANALYZE" : ((view==="analyze"||view==="quiz-analyze") ? "TEAMS" : "HOME");
+  const crumbTarget = inModulesFlow ? "dashboard" : inQuizFlow ? "quizzes" : (view==="module-analyze-detail") ? "analyze" : ((view==="analyze"||view==="quiz-analyze") ? "team" : "home");
   const section = view==="home" ? "home" : ["dashboard","lesson","quiz","results","editor"].includes(view) ? "modules" : view==="reference" ? "reference" : view==="notes" ? "notes" : null;
 
   root.innerHTML = `
@@ -900,7 +900,7 @@ function renderShell(inner){
         <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
       </div>
     </header>
-    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes"||view==="guest-features") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':view==='quiz-analyze'?'QUIZ ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='quiz-sent-detail'?'SENT QUIZ':view==='edit-log'?'EDIT LOG':''))}`}</nav>`}
+    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes"||view==="guest-features") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':view==='quiz-analyze'?'QUIZ ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='quiz-sent-detail'?'SENT QUIZ':view==='edit-log'?'EDIT LOG':view==='module-analyze-detail'?'MODULE PERFORMANCE':''))}`}</nav>`}
     <div class="top-nav">
       <button class="top-nav-btn ${section==='home'?'active':''}" id="nav-home">${T('nav.dashboard','Dashboard')}</button>
       <button class="top-nav-btn ${section==='modules'?'active':''}" id="nav-modules">${T('nav.modules','Training Modules')}</button>
@@ -2527,8 +2527,18 @@ async function openAnalyze(){
     return { id:m.id, title:m.title, avgCompletion, masteredCount, startedCount };
   });
 
-  const questionTally = {};
+  // Only count each person's most recent attempt per module — matching what
+  // showAttemptDetail shows ("their latest attempt"). Counting every historical
+  // attempt made "missed" numbers disagree with someone's current, corrected
+  // standing after a retake.
+  const latestAttemptByUserModule = {};
   (allAttempts||[]).forEach(a=>{
+    const key = a.user_id + "::" + a.module_id;
+    const existing = latestAttemptByUserModule[key];
+    if(!existing || new Date(a.created_at) > new Date(existing.created_at)) latestAttemptByUserModule[key] = a;
+  });
+  const questionTally = {};
+  Object.values(latestAttemptByUserModule).forEach(a=>{
     (a.answers||[]).forEach(ans=>{
       const key = a.module_id + "::" + ans.question;
       if(!questionTally[key]) questionTally[key] = { moduleId:a.module_id, question:ans.question, total:0, missed:0 };
@@ -2549,11 +2559,12 @@ async function openAnalyze(){
 
 function renderAnalyze(){
   const moduleRows = ANALYZE_MODULE_STATS.map(m=>`
-    <tr>
+    <tr class="team-row-main" data-analyze-module="${m.id}" style="cursor:pointer;">
       <td>${escapeHtml(m.title)}</td>
       <td style="min-width:150px;"><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="flex:1;"><div style="width:${m.avgCompletion}%"></div></div><span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${m.avgCompletion}%</span></div></td>
       <td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${m.masteredCount}/${ANALYZE_TOTALS.totalPeople}</td>
       <td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${m.startedCount}/${ANALYZE_TOTALS.totalPeople}</td>
+      <td style="text-align:center;color:var(--text-faint);">▸</td>
     </tr>`).join("");
 
   const missedHtml = ANALYZE_MISSED_QUESTIONS.length ? ANALYZE_MISSED_QUESTIONS.map(q=>`
@@ -2575,15 +2586,104 @@ function renderAnalyze(){
       </div>
     </div>
     <div class="card" style="margin-top:16px;">
-      <h2 style="margin-bottom:14px;">Module performance</h2>
-      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Module</th><th>Avg. completion</th><th>Mastered</th><th>Started</th></tr></thead><tbody>${moduleRows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;">No modules yet.</td></tr>`}</tbody></table></div>
+      <h2 style="margin-bottom:4px;">Module performance</h2>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 14px;">Click a module to see everyone who's attempted it — up to 3 attempts each — and which questions they missed on any given attempt.</p>
+      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Module</th><th>Avg. completion</th><th>Mastered</th><th>Started</th><th></th></tr></thead><tbody>${moduleRows || `<tr><td colspan="5" style="color:var(--text-faint);font-size:13px;">No modules yet.</td></tr>`}</tbody></table></div>
     </div>
     <div class="card" style="margin-top:16px;">
       <h2 style="margin-bottom:4px;">Most commonly missed questions</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">Across every attempt, everyone. A high miss rate usually means the content needs a second look, not the reps.</p>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">Based on everyone's latest attempt only — a question someone got wrong but later corrected on a retake doesn't count here. A high miss rate usually means the content needs a second look, not the reps.</p>
       ${missedHtml}
     </div>
   `);
+  root.querySelectorAll("[data-analyze-module]").forEach(el=> el.addEventListener("click", ()=> openModuleAnalyzeDetail(el.getAttribute("data-analyze-module"))));
+}
+
+let moduleAnalyzeDetailModule = null;
+let moduleAnalyzeDetailRoster = [];
+let moduleAnalyzeDetailExpandedPerson = null;
+let moduleAnalyzeDetailExpandedAttempt = null;
+
+async function openModuleAnalyzeDetail(moduleId){
+  const m = modById(moduleId);
+  if(!m){ alert("Couldn't find that module."); return; }
+  const { data: attempts } = await supabase.from("quiz_attempts").select("*").eq("module_id", moduleId).order("created_at", { ascending:true });
+  const { data: allProfiles } = await supabase.from("profiles").select("id,name");
+  const byUser = {};
+  (attempts||[]).forEach(a=>{
+    if(!byUser[a.user_id]) byUser[a.user_id] = [];
+    byUser[a.user_id].push(a);
+  });
+  moduleAnalyzeDetailModule = m;
+  moduleAnalyzeDetailRoster = Object.keys(byUser).map(uid=>{
+    const person = (allProfiles||[]).find(p=>p.id===uid);
+    const userAttempts = byUser[uid];
+    const best = Math.max(...userAttempts.map(a=>a.score||0));
+    return { id:uid, name: person?person.name:'Unknown', attempts:userAttempts, best, total: userAttempts[0]?.total || m.quiz.length };
+  }).sort((a,b)=> a.name.localeCompare(b.name));
+  moduleAnalyzeDetailExpandedPerson = null;
+  moduleAnalyzeDetailExpandedAttempt = null;
+  view = "module-analyze-detail"; render();
+}
+
+function renderAttemptMissedQuestions(a){
+  const missed = (a.answers||[]).filter(x=>!x.is_correct);
+  if(!missed.length) return `<p style="color:var(--green);font-size:13px;">No missed questions on this attempt — clean sweep.</p>`;
+  return missed.map(x=>`
+    <div class="sub-card">
+      <div style="font-size:13.5px;margin-bottom:6px;color:var(--text);">${escapeHtml(x.question)}</div>
+      <div style="font-size:12.5px;color:var(--red);margin-bottom:2px;">Their answer: ${escapeHtml(x.options[x.selected] ?? '(no answer)')}</div>
+      <div style="font-size:12.5px;color:var(--green);">Correct answer: ${escapeHtml(x.options[x.correct])}</div>
+    </div>`).join("");
+}
+
+function renderModuleAnalyzeDetail(){
+  const m = moduleAnalyzeDetailModule;
+  if(!m){ view="analyze"; render(); return; }
+  const rows = moduleAnalyzeDetailRoster.map(r=>{
+    const expanded = moduleAnalyzeDetailExpandedPerson === r.id;
+    const mainRow = `<tr class="team-row-main" data-manalyze-toggle="${r.id}" style="cursor:pointer;">
+      <td>${escapeHtml(r.name)}</td>
+      <td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${r.best}/${r.total} best</td>
+      <td style="font-family:var(--mono);font-size:12px;color:var(--text-faint);white-space:nowrap;">${r.attempts.length} attempt${r.attempts.length===1?'':'s'}</td>
+      <td style="text-align:center;color:var(--text-faint);">${expanded?'▾':'▸'}</td>
+    </tr>`;
+    const detailRow = expanded ? `<tr class="team-row-detail"><td colspan="4">
+      <div style="display:flex;flex-direction:column;gap:8px;padding:10px 4px 16px;">
+        ${r.attempts.map((a,i)=>{
+          const attemptExpanded = moduleAnalyzeDetailExpandedAttempt === a.id;
+          return `<div>
+            <button class="mini-btn" data-manalyze-attempt="${r.id}:${a.id}" style="width:100%;text-align:left;">Attempt ${i+1}: ${a.score}/${a.total} · ${new Date(a.created_at).toLocaleString()} ${attemptExpanded?'▾':'▸'}</button>
+            ${attemptExpanded ? `<div style="padding:10px 4px 4px;">${renderAttemptMissedQuestions(a)}</div>` : ""}
+          </div>`;
+        }).join("")}
+      </div>
+    </td></tr>` : "";
+    return mainRow + detailRow;
+  }).join("");
+
+  renderShell(`
+    <div class="card">
+      <div class="k-label">MODULE PERFORMANCE</div>
+      <h2 style="margin-bottom:4px;">${escapeHtml(m.title)}</h2>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Everyone who's attempted this module's quiz — up to 3 attempts each. Click a person, then an attempt, to see exactly which questions were missed on that attempt.</p>
+      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Best score</th><th>Attempts</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No attempts yet.</td></tr>`}</tbody></table></div>
+      <div class="nav-buttons"><button class="btn" id="manalyze-back">← Back to Analyze</button><div></div></div>
+    </div>
+  `);
+  document.getElementById("manalyze-back").addEventListener("click", ()=>{ view="analyze"; render(); });
+  root.querySelectorAll("[data-manalyze-toggle]").forEach(el=> el.addEventListener("click", ()=>{
+    const uid = el.getAttribute("data-manalyze-toggle");
+    moduleAnalyzeDetailExpandedPerson = (moduleAnalyzeDetailExpandedPerson===uid) ? null : uid;
+    moduleAnalyzeDetailExpandedAttempt = null;
+    render();
+  }));
+  root.querySelectorAll("[data-manalyze-attempt]").forEach(el=> el.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    const [, attemptId] = el.getAttribute("data-manalyze-attempt").split(":");
+    moduleAnalyzeDetailExpandedAttempt = (moduleAnalyzeDetailExpandedAttempt===attemptId) ? null : attemptId;
+    render();
+  }));
 }
 
 let QUIZ_ANALYZE_ROWS = [];
@@ -5048,6 +5148,7 @@ function render(){
   else if(view==="quiz-builder") renderQuizBuilder();
   else if(view==="quiz-analyze") renderQuizAnalyze();
   else if(view==="edit-log") renderEditLog();
+  else if(view==="module-analyze-detail") renderModuleAnalyzeDetail();
   else if(view==="quiz-sent-detail") renderQuizSentDetail();
 }
 
