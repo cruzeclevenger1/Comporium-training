@@ -291,7 +291,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r17";
+const BUILD_VERSION = "2026-07-27T00:00Z-r18";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -356,6 +356,7 @@ let quizAnswers = []; let quizRevealed = []; let quizIdx = 0;
 let quizActiveIndices = []; // indices into m.quiz actually being shown this session
 let quizSimScreenIndex = {}; // session-relative quizIdx -> current screen index, for simulation questions
 let quizSimMisclicks = {}; // session-relative quizIdx -> misclick count, resets each new quiz attempt
+let simWarningDismissed = false; // "don't show again" for the Simulated Navigation warning popup
 let quizCarriedAnswers = {}; // originalIndex -> answer detail, for missed-only retakes (previously-correct questions, not being retaken)
 
 let draftModule = null; let editingExistingId = null;
@@ -516,6 +517,7 @@ async function loadProfile(){
   if(guestMode) return;
   const { data } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
   profile = data;
+  simWarningDismissed = !!(profile && profile.sim_warning_dismissed);
 }
 
 /* ============================================================
@@ -1255,7 +1257,10 @@ function renderQuiz(){
       }
     };
     const trigger = document.getElementById("sim-play-inline-trigger");
-    if(trigger) trigger.addEventListener("click", ()=> openSimPlayFullscreen(q, quizIdx, handleZoneClick));
+    if(trigger) trigger.addEventListener("click", ()=>{
+      const proceed = ()=> openSimPlayFullscreen(q, quizIdx, handleZoneClick);
+      if(simWarningDismissed) proceed(); else showSimWarningModal(proceed);
+    });
     document.getElementById("quiz-next").addEventListener("click", ()=>{ if(isLast){ finishQuiz(); } else { quizIdx++; render(); } });
   } else {
     if(!revealed) root.querySelectorAll(".opt").forEach(el=> el.addEventListener("click", ()=>{ quizAnswers[quizIdx]=parseInt(el.getAttribute("data-idx")); render(); }));
@@ -3632,6 +3637,24 @@ function renderSimZonesHtml(screens, si, qi){
       <span style="position:absolute;bottom:2px;left:2px;background:#000000cc;color:var(--cyan);font-size:10px;padding:1px 4px;border-radius:3px;font-family:var(--mono);white-space:nowrap;">${escapeHtml(targetLabel)}</span>
     </div>`;
   }).join("");
+}
+
+function showSimWarningModal(onProceed){
+  openModal(`
+    <h3>⚠ Simulated Navigation</h3>
+    <p class="sub">You are about to start a Simulated Navigation question. Click the right buttons to navigate to the finish, or you get a strike. 3 strikes, and you must restart the quiz.</p>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text-dim);margin-top:10px;"><input type="checkbox" id="sim-warning-dontshow"> Don't show this again</label>
+    <div class="modal-actions"><button class="btn primary" id="sim-warning-ok">Start</button></div>
+  `);
+  document.getElementById("sim-warning-ok").addEventListener("click", async ()=>{
+    const dontShow = document.getElementById("sim-warning-dontshow").checked;
+    closeModal();
+    if(dontShow){
+      simWarningDismissed = true;
+      await Promise.resolve(supabase.from("profiles").update({ sim_warning_dismissed:true }).eq("id", session.user.id)).catch(()=>{});
+    }
+    onProceed();
+  });
 }
 
 function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
