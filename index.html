@@ -255,6 +255,12 @@
   .sim-screen-canvas .sim-canvas-hint{ position:absolute; top:8px; left:8px; background:#000000cc; color:var(--amber); font-size:11px; font-family:var(--mono); padding:4px 9px; border-radius:5px; pointer-events:none; opacity:0; transition:opacity .12s; z-index:3; }
   .sim-screen-canvas:hover .sim-canvas-hint{ opacity:1; }
   .sim-zone, .sim-zone *{ cursor:pointer !important; }
+  .interactive-pic-embed{ display:inline-block; position:relative; margin:8px 4px; border-radius:8px; overflow:hidden; vertical-align:bottom; max-width:100%; border:1px solid var(--stroke); }
+  .ip-embed-overlay{ background:#0e1626; padding:8px 10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .ip-embed-badge{ font-size:11px; color:var(--cyan); font-family:var(--mono); margin-right:auto; }
+  .ip-embed-play-overlay{ position:absolute; bottom:0; left:0; right:0; background:linear-gradient(to top, #000000cc, transparent); color:var(--cyan); font-size:12px; font-family:var(--mono); padding:20px 10px 8px; text-align:center; }
+  .ip-play-hotspot{ position:absolute; border:3px solid var(--red); border-radius:4px; background:#e74c3c22; cursor:pointer; transition:border-color .2s, background .2s; box-shadow:0 0 10px #e74c3c88; }
+  .ip-play-hotspot.ip-read{ border-color:var(--green); background:#2ecc7122; box-shadow:0 0 10px #2ecc7188; }
   .feedback-fab:hover{ border-color:var(--cyan); color:var(--cyan); }
   .update-banner{ position:fixed; top:0; left:0; right:0; z-index:600; background:var(--cyan); color:#04141a; font-family:var(--sans); font-size:13.5px; font-weight:600; padding:10px 16px; display:flex; align-items:center; justify-content:center; gap:16px; box-shadow:0 4px 16px #00000055; flex-wrap:wrap; }
   .update-banner button{ background:#04141a; color:var(--cyan); border:none; border-radius:6px; padding:6px 14px; font-size:12.5px; font-weight:700; cursor:pointer; font-family:var(--sans); }
@@ -291,7 +297,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r19";
+const BUILD_VERSION = "2026-07-27T00:00Z-r20";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -341,6 +347,8 @@ let session = null;
 let profile = null;         // { id, name, role }
 let MODULES = [];           // [{id,title,short,ledColor,lessons:[...],quiz:[...]}]
 let progressMap = {};       // { moduleId: {best,total,lastScore,attempts} }
+let INTERACTIVE_PICTURES = {}; // id -> { id, lessonId, image, hotspots:[{id,x,y,w,h,title,body}] }
+let myInteractivePicProgress = {}; // interactivePictureId -> Set of read hotspot ids
 let dismissedModulePopups = new Set(); // moduleIds this user chose "don't show again" for
 
 let view = "loading";       // loading | auth | dashboard | lesson | quiz | results | editor | team
@@ -513,6 +521,13 @@ async function loadEverything(){
 
   const { data: dismissals } = await supabase.from("module_popup_dismissals").select("module_id").eq("user_id", session.user.id);
   dismissedModulePopups = new Set((dismissals||[]).map(d=>d.module_id));
+
+  const { data: ipics } = await supabase.from("interactive_pictures").select("*");
+  INTERACTIVE_PICTURES = {};
+  (ipics||[]).forEach(ip=>{ INTERACTIVE_PICTURES[ip.id] = { id:ip.id, lessonId:ip.lesson_id, image:ip.image, hotspots:ip.hotspots||[] }; });
+  const { data: ipProgress } = await supabase.from("interactive_picture_progress").select("*").eq("user_id", session.user.id);
+  myInteractivePicProgress = {};
+  (ipProgress||[]).forEach(p=>{ myInteractivePicProgress[p.interactive_picture_id] = new Set(p.read_hotspot_ids||[]); });
 }
 
 async function loadProfile(){
@@ -972,6 +987,7 @@ function renderShell(inner){
   // That makes this the one guaranteed place to catch and fix any raw/oversized
   // images, rather than relying on callers to remember to trigger it themselves.
   normalizePastedImages(root);
+  normalizeInteractivePicEmbeds(root);
 }
 
 /* ============================================================
@@ -1128,6 +1144,18 @@ function renderDashboard(){
 /* ============================================================
    LESSON / QUIZ / RESULTS
    ============================================================ */
+function lessonInteractivePicsComplete(lesson){
+  if(!lesson || !lesson.body) return true;
+  const matches = [...lesson.body.matchAll(/data-interactive-pic-id="([^"]+)"/g)];
+  if(!matches.length) return true;
+  return matches.every(m=>{
+    const ip = INTERACTIVE_PICTURES[m[1]];
+    if(!ip || !ip.hotspots.length) return true;
+    const readSet = myInteractivePicProgress[m[1]] || new Set();
+    return ip.hotspots.every(h=>readSet.has(h.id));
+  });
+}
+
 function renderLesson(){
   const m = modById(currentModId); if(!m){ view="dashboard"; render(); return; }
   lastModuleContext = { view:"lesson", modId: currentModId, lessonIdx: currentLessonIdx };
@@ -1140,11 +1168,17 @@ function renderLesson(){
   const attemptsUsed = (progressMap[m.id] && progressMap[m.id].attempts) || 0;
   const attemptsExhausted = hasQuiz && attemptsUsed >= MAX_QUIZ_ATTEMPTS && !canEditContent();
   const quizTab = hasQuiz ? `<button class="lesson-tab quiz" id="go-quiz" ${attemptsExhausted?'disabled':''}>${attemptsExhausted?'QUIZ · NO ATTEMPTS LEFT':'TAKE QUIZ →'}</button>` : "";
+  const picsComplete = lessonInteractivePicsComplete(lesson);
+  const nextDisabled = !picsComplete;
+  const nextBtnHtml = isLast
+    ? (hasQuiz ? (attemptsExhausted ? `<button class="btn primary" id="back-to-modules-btn">Back to Training Modules →</button>` : `<button class="btn primary" id="to-quiz-btn" ${nextDisabled?'disabled':''}>Start module quiz →</button>`) : `<button class="btn primary" id="back-to-modules-btn" ${nextDisabled?'disabled':''}>Back to Training Modules →</button>`)
+    : `<button class="btn primary" id="next-lesson" ${nextDisabled?'disabled':''}>Next lesson →</button>`;
   renderShell(`
     <div class="lesson-nav">${tabs}${editBtn}${quizTab}</div>
     <div class="card"><div class="k-label">${escapeHtml(lesson.label)}</div><h2>${escapeHtml(lesson.title)}</h2><div class="body">${lesson.body}</div>
+      ${nextDisabled ? `<p style="color:var(--amber);font-size:13px;margin-top:14px;">⚠ Finish exploring the interactive picture above — click every red box until it's green — before you can continue.</p>` : ''}
       <div class="nav-buttons"><button class="btn" id="prev-lesson" ${currentLessonIdx===0?'disabled':''}>← Previous</button>
-      ${isLast ? (hasQuiz ? (attemptsExhausted ? `<button class="btn primary" id="back-to-modules-btn">Back to Training Modules →</button>` : `<button class="btn primary" id="to-quiz-btn">Start module quiz →</button>`) : `<button class="btn primary" id="back-to-modules-btn">Back to Training Modules →</button>`) : `<button class="btn primary" id="next-lesson">Next lesson →</button>`}</div>
+      ${nextBtnHtml}</div>
       <div class="nav-buttons" style="margin-top:8px;"><button class="mini-btn" id="comment-lesson">💬 Comment</button><div></div></div>
     </div>`);
   root.querySelectorAll(".lesson-tab[data-idx]").forEach(el=> el.addEventListener("click", ()=>{ currentLessonIdx=parseInt(el.getAttribute("data-idx")); render(); }));
@@ -4029,6 +4063,7 @@ function richEditorHtml(id, initialHtml){
       <button type="button" data-cmd="unlink" title="Remove link">Unlink</button>
       <button type="button" data-cmd="image" title="Insert image">🖼</button>
       <input type="file" accept="image/*" style="display:none" id="${id}-file">
+      ${id.startsWith('lesson-rte-') ? `<button type="button" data-cmd="interactivePic" title="Add Interactive Picture">🖼✛ Add Interactive Picture</button><input type="file" accept="image/*" style="display:none" id="${id}-ipic-file">` : ''}
       <div class="rte-sep"></div>
       <button type="button" data-cmd="clearFormat" title="Clear formatting">Tx</button>
     </div>
@@ -4103,6 +4138,27 @@ function wireRichEditor(id){
       editorEl.focus();
       const cmd = btn.getAttribute("data-cmd");
       if(cmd === "image"){ document.getElementById(`${id}-file`).click(); return; }
+      if(cmd === "interactivePic"){
+        const ipFileInput = document.getElementById(`${id}-ipic-file`);
+        ipFileInput.onchange = async ()=>{
+          const file = ipFileInput.files[0]; if(!file) return;
+          ipFileInput.value = "";
+          const lessonIdxMatch = id.match(/^lesson-rte-(\d+)$/);
+          if(!lessonIdxMatch) return;
+          const lesson = draftModule.lessons[+lessonIdxMatch[1]];
+          if(!lesson || !lesson.id){ alert("Save the lesson first, then add an interactive picture."); return; }
+          const dataUrl = await compressImageFile(file);
+          const ipId = 'ip'+Date.now()+Math.random().toString(36).slice(2,8);
+          const { error } = await supabase.from("interactive_pictures").insert({ id:ipId, lesson_id:lesson.id, image:dataUrl, hotspots:[] });
+          if(error){ alert("Couldn't create interactive picture: " + error.message); return; }
+          INTERACTIVE_PICTURES[ipId] = { id:ipId, lessonId:lesson.id, image:dataUrl, hotspots:[] };
+          document.execCommand("insertHTML", false, `<div class="interactive-pic-embed" contenteditable="false" data-interactive-pic-id="${ipId}">&nbsp;</div>&nbsp;`);
+          editorEl.dispatchEvent(new Event("input", { bubbles:true }));
+          openInteractivePicConfigFullscreen(ipId);
+        };
+        ipFileInput.click();
+        return;
+      }
       if(cmd === "clearFormat"){ clearFormatting(editorEl); return; }
       if(cmd === "link"){
         saveCurrentRange();
@@ -4313,6 +4369,214 @@ document.addEventListener("mouseup", (e)=>{
   if(onZoneAdded) onZoneAdded(newIdx); else renderEditor();
 });
 let scheduleQuizAutosaveGlobal = ()=>{}; // reassigned by wireEditorEvents each time it runs, so the shared drag handler above can trigger a save
+
+let _ipBoxDrawing = null;
+document.addEventListener("mousemove", (e)=>{
+  if(!_ipBoxDrawing) return;
+  const { rect, startX, startY, previewEl } = _ipBoxDrawing;
+  const x1 = Math.min(startX, e.clientX), x2 = Math.max(startX, e.clientX);
+  const y1 = Math.min(startY, e.clientY), y2 = Math.max(startY, e.clientY);
+  previewEl.style.left = (x1 - rect.left) + "px";
+  previewEl.style.top = (y1 - rect.top) + "px";
+  previewEl.style.width = (x2-x1) + "px";
+  previewEl.style.height = (y2-y1) + "px";
+});
+document.addEventListener("mouseup", (e)=>{
+  if(!_ipBoxDrawing) return;
+  const { rect, startX, startY, previewEl, onBoxAdded } = _ipBoxDrawing;
+  _ipBoxDrawing = null;
+  previewEl.remove();
+  const x1 = Math.min(startX, e.clientX), x2 = Math.max(startX, e.clientX);
+  const y1 = Math.min(startY, e.clientY), y2 = Math.max(startY, e.clientY);
+  const wPx = x2-x1, hPx = y2-y1;
+  if(wPx < 10 || hPx < 10) return;
+  const xPct = ((x1-rect.left)/rect.width)*100, yPct = ((y1-rect.top)/rect.height)*100;
+  const wPct = (wPx/rect.width)*100, hPct = (hPx/rect.height)*100;
+  const box = { id:'hs'+Date.now()+Math.random().toString(36).slice(2,7), x:Math.round(xPct*10)/10, y:Math.round(yPct*10)/10, w:Math.round(wPct*10)/10, h:Math.round(hPct*10)/10, title:"", body:"" };
+  if(onBoxAdded) onBoxAdded(box);
+});
+
+function openHotspotEditModal(ip, hi, onSaved){
+  const h = ip.hotspots[hi];
+  openModal(`
+    <h3>Hotspot details</h3>
+    <p class="sub">This is what trainees see when they click this area.</p>
+    <div class="field"><label>Title</label><input type="text" id="ip-hotspot-title" value="${escapeHtml(h.title||'')}" placeholder="e.g. Account Status"></div>
+    <div class="field"><label>Description</label><textarea id="ip-hotspot-body" style="min-height:90px;" placeholder="What should they learn about this area?">${escapeHtml(h.body||'')}</textarea></div>
+    <div class="modal-actions"><button class="btn" id="ip-hotspot-cancel">Cancel</button><button class="btn primary" id="ip-hotspot-save">Save</button></div>
+  `);
+  document.getElementById("ip-hotspot-cancel").addEventListener("click", closeModal);
+  document.getElementById("ip-hotspot-save").addEventListener("click", ()=>{
+    h.title = document.getElementById("ip-hotspot-title").value.trim();
+    h.body = document.getElementById("ip-hotspot-body").value.trim();
+    closeModal();
+    onSaved();
+  });
+}
+
+function openInteractivePicConfigFullscreen(ipId){
+  const ip = INTERACTIVE_PICTURES[ipId];
+  if(!ip){ alert("Couldn't find that interactive picture."); return; }
+  const overlay = document.createElement("div");
+  overlay.id = "ip-config-overlay";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;";
+  document.body.appendChild(overlay);
+
+  let saveTimer = null;
+  function scheduleSave(){
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async ()=>{ await supabase.from("interactive_pictures").update({ hotspots: ip.hotspots }).eq("id", ipId); }, 500);
+  }
+
+  function draw(){
+    const boxesHtml = ip.hotspots.map((h,hi)=>`
+      <div class="sim-zone" data-ip-box="${hi}" style="position:absolute;left:${h.x}%;top:${h.y}%;width:${h.w}%;height:${h.h}%;border:2px dashed var(--red);cursor:pointer;">
+        <button class="sim-zone-del" data-ip-box-del="${hi}" style="position:absolute;top:-10px;right:-10px;width:18px;height:18px;border-radius:50%;background:#c0392bdd;color:#fff;font-size:11px;line-height:18px;text-align:center;cursor:pointer;border:none;">✕</button>
+        <span style="position:absolute;bottom:2px;left:2px;background:#000000cc;color:var(--red);font-size:10px;padding:1px 4px;border-radius:3px;font-family:var(--mono);white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(h.title||'(untitled)')}</span>
+      </div>`).join("");
+    overlay.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:1200px;margin-bottom:14px;">
+        <span style="color:var(--text-dim);font-family:var(--mono);font-size:12px;">INTERACTIVE PICTURE · ${ip.hotspots.length} hotspot${ip.hotspots.length===1?'':'s'} — drag to add one</span>
+        <button class="btn primary" id="ip-config-done">Done</button>
+      </div>
+      <div class="sim-screen-canvas" data-ip-canvas style="max-width:min(94vw,1200px);max-height:80vh;">
+        <img src="${ip.image}" style="max-width:min(94vw,1200px);max-height:80vh;display:block;pointer-events:none;user-select:none;" draggable="false">
+        <div class="sim-canvas-hint">✛ Drag to add a hotspot</div>
+        ${boxesHtml}
+      </div>`;
+    document.getElementById("ip-config-done").addEventListener("click", ()=>{ scheduleSave(); overlay.remove(); if(view==="editor") renderEditor(); });
+    const canvas = overlay.querySelector("[data-ip-canvas]");
+    canvas.addEventListener("mousedown", (e)=>{
+      if(e.target.closest(".sim-zone")) return;
+      const rect = canvas.getBoundingClientRect();
+      const previewEl = document.createElement("div");
+      previewEl.style.cssText = "position:absolute;border:2px solid var(--amber);background:#f5a62333;pointer-events:none;";
+      canvas.appendChild(previewEl);
+      _ipBoxDrawing = { rect, startX:e.clientX, startY:e.clientY, previewEl, onBoxAdded:(box)=>{
+        ip.hotspots.push(box);
+        scheduleSave();
+        draw();
+        openHotspotEditModal(ip, ip.hotspots.length-1, ()=>{ scheduleSave(); draw(); });
+      }};
+      e.preventDefault();
+    });
+    overlay.querySelectorAll("[data-ip-box-del]").forEach(el=> el.addEventListener("click",(e)=>{
+      e.stopPropagation();
+      const hi = +el.getAttribute("data-ip-box-del");
+      ip.hotspots.splice(hi,1);
+      scheduleSave();
+      draw();
+    }));
+    overlay.querySelectorAll("[data-ip-box]").forEach(el=> el.addEventListener("click",(e)=>{
+      if(e.target.closest("[data-ip-box-del]")) return;
+      const hi = +el.getAttribute("data-ip-box");
+      openHotspotEditModal(ip, hi, ()=>{ scheduleSave(); draw(); });
+    }));
+  }
+  draw();
+}
+
+async function openInteractivePicViewer(ipId){
+  const ip = INTERACTIVE_PICTURES[ipId];
+  if(!ip){ alert("Couldn't load this interactive picture."); return; }
+  if(!myInteractivePicProgress[ipId]) myInteractivePicProgress[ipId] = new Set();
+  const readSet = myInteractivePicProgress[ipId];
+
+  const overlay = document.createElement("div");
+  overlay.id = "ip-viewer-overlay";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f5;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;";
+  document.body.appendChild(overlay);
+
+  function draw(){
+    const total = ip.hotspots.length;
+    const done = ip.hotspots.filter(h=>readSet.has(h.id)).length;
+    const allDone = total>0 && done>=total;
+    const boxesHtml = ip.hotspots.map((h,hi)=>`<div class="ip-play-hotspot ${readSet.has(h.id)?'ip-read':'ip-unread'}" data-ip-hotspot="${hi}" style="position:absolute;left:${h.x}%;top:${h.y}%;width:${h.w}%;height:${h.h}%;"></div>`).join("");
+    overlay.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:1300px;margin-bottom:14px;">
+        <span style="color:${allDone?'var(--green)':'var(--text-dim)'};font-family:var(--mono);font-size:12px;">${done}/${total} read${allDone?' — all done!':''}</span>
+        <button class="btn ${allDone?'primary':''}" id="ip-viewer-close">${allDone?'Done ✓':'✕ Exit'}</button>
+      </div>
+      <div style="position:relative;display:inline-block;max-width:min(94vw,1300px);max-height:82vh;">
+        <img src="${ip.image}" style="max-width:min(94vw,1300px);max-height:82vh;display:block;user-select:none;border-radius:8px;" draggable="false">
+        ${boxesHtml}
+      </div>
+      ${!allDone ? `<p style="color:var(--text-faint);font-size:12.5px;margin-top:10px;">Click every red box — it turns green once you've read it. All boxes must be green before you can move to the next lesson.</p>` : ''}`;
+    document.getElementById("ip-viewer-close").addEventListener("click", ()=>{ overlay.remove(); render(); });
+    overlay.querySelectorAll("[data-ip-hotspot]").forEach(el=> el.addEventListener("click", ()=>{
+      const hi = +el.getAttribute("data-ip-hotspot");
+      const h = ip.hotspots[hi];
+      const alreadyRead = readSet.has(h.id);
+      openModal(`
+        <h3>${escapeHtml(h.title || "Untitled")}</h3>
+        <p class="sub" style="white-space:pre-wrap;">${escapeHtml(h.body || "")}</p>
+        <div class="modal-actions"><button class="btn primary" id="ip-hotspot-view-ok">Got it</button></div>
+      `);
+      document.getElementById("ip-hotspot-view-ok").addEventListener("click", async ()=>{
+        closeModal();
+        if(!alreadyRead){
+          readSet.add(h.id);
+          draw();
+          await Promise.resolve(supabase.from("interactive_picture_progress").upsert({
+            user_id: session.user.id, interactive_picture_id: ipId, read_hotspot_ids: Array.from(readSet), updated_at: new Date().toISOString()
+          }, { onConflict: "user_id,interactive_picture_id" })).catch(()=>{});
+        }
+      });
+    }));
+  }
+  draw();
+}
+
+function normalizeInteractivePicEmbeds(root){
+  root.querySelectorAll('.interactive-pic-embed[data-interactive-pic-id]').forEach(el=>{
+    const ipId = el.getAttribute('data-interactive-pic-id');
+    const ip = INTERACTIVE_PICTURES[ipId];
+    if(!ip) return;
+    const isEditable = !!el.closest('[contenteditable="true"]');
+    const mode = isEditable ? 'edit' : 'play';
+    if(el.getAttribute('data-ip-hydrated') === mode) return;
+    el.setAttribute('data-ip-hydrated', mode);
+    if(isEditable){
+      el.innerHTML = `
+        <img src="${ip.image}" style="max-width:220px;max-height:140px;border-radius:6px;display:block;">
+        <div class="ip-embed-overlay">
+          <span class="ip-embed-badge">🖼✛ Interactive Picture · ${ip.hotspots.length} hotspot${ip.hotspots.length===1?'':'s'}</span>
+          <button class="mini-btn" data-ip-configure="${ipId}" type="button">Configure</button>
+          <button class="mini-btn danger" data-ip-remove="${ipId}" type="button">Remove</button>
+        </div>`;
+      el.style.cursor = "";
+    } else {
+      const readSet = myInteractivePicProgress[ipId] || new Set();
+      const total = ip.hotspots.length;
+      const done = ip.hotspots.filter(h=>readSet.has(h.id)).length;
+      el.innerHTML = `
+        <img src="${ip.image}" style="max-width:100%;border-radius:8px;display:block;">
+        <div class="ip-embed-play-overlay">⛶ Click to explore${total?` — ${done}/${total} read`:''}</div>`;
+      el.style.cursor = "pointer";
+    }
+  });
+}
+document.addEventListener("click", (e)=>{
+  const configureBtn = e.target.closest("[data-ip-configure]");
+  if(configureBtn){ openInteractivePicConfigFullscreen(configureBtn.getAttribute("data-ip-configure")); return; }
+  const removeBtn = e.target.closest("[data-ip-remove]");
+  if(removeBtn){
+    const ipId = removeBtn.getAttribute("data-ip-remove");
+    if(!confirm("Remove this interactive picture from the lesson? This can't be undone.")) return;
+    const embed = removeBtn.closest(".interactive-pic-embed");
+    if(embed){
+      const editorEl = embed.closest(".rte-body");
+      embed.remove();
+      if(editorEl) editorEl.dispatchEvent(new Event("input", { bubbles:true }));
+    }
+    Promise.resolve(supabase.from("interactive_pictures").delete().eq("id", ipId)).catch(()=>{});
+    delete INTERACTIVE_PICTURES[ipId];
+    return;
+  }
+  const playEmbed = e.target.closest('.interactive-pic-embed[data-ip-hydrated="play"]');
+  if(playEmbed){ openInteractivePicViewer(playEmbed.getAttribute("data-interactive-pic-id")); return; }
+});
+
 
 document.addEventListener("mousedown", (e)=>{
   const handle = e.target.closest(".rte-resize-handle");
