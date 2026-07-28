@@ -286,7 +286,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r7";
+const BUILD_VERSION = "2026-07-27T00:00Z-r8";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -336,6 +336,7 @@ let session = null;
 let profile = null;         // { id, name, role }
 let MODULES = [];           // [{id,title,short,ledColor,lessons:[...],quiz:[...]}]
 let progressMap = {};       // { moduleId: {best,total,lastScore,attempts} }
+let dismissedModulePopups = new Set(); // moduleIds this user chose "don't show again" for
 
 let view = "loading";       // loading | auth | dashboard | lesson | quiz | results | editor | team
 let authMode = "login";     // login | signup
@@ -496,6 +497,9 @@ async function loadEverything(){
   const { data: prog } = await supabase.from("progress").select("*").eq("user_id", session.user.id);
   progressMap = {};
   (prog||[]).forEach(p=>{ progressMap[p.module_id] = { best:p.best_score, total:p.total, lastScore:p.last_score, attempts:p.attempts, lessonsViewed:p.lessons_viewed||[] }; });
+
+  const { data: dismissals } = await supabase.from("module_popup_dismissals").select("module_id").eq("user_id", session.user.id);
+  dismissedModulePopups = new Set((dismissals||[]).map(d=>d.module_id));
 }
 
 async function loadProfile(){
@@ -1047,13 +1051,21 @@ function renderDashboard(){
     if(e.target.closest("[data-edit]")||e.target.closest("[data-del]")||e.target.closest(".drag-handle")) return;
     const id = el.getAttribute("data-mod"); const m = modById(id);
     currentModId = id; currentLessonIdx = resumeLessonIdx(m); view="lesson"; render();
-    if(m && m.popupEnabled){
+    if(m && m.popupEnabled && !dismissedModulePopups.has(m.id)){
       openModal(`
         <h3>${escapeHtml(m.popupTitle || "Heads up")}</h3>
         <p class="sub" style="white-space:pre-wrap;">${escapeHtml(m.popupBody || "")}</p>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text-dim);margin-top:6px;"><input type="checkbox" id="mod-popup-dontshow"> Don't show this again</label>
         <div class="modal-actions"><button class="btn primary" id="mod-popup-close">Got it</button></div>
       `);
-      document.getElementById("mod-popup-close").addEventListener("click", closeModal);
+      document.getElementById("mod-popup-close").addEventListener("click", async ()=>{
+        const dontShow = document.getElementById("mod-popup-dontshow").checked;
+        closeModal();
+        if(dontShow){
+          dismissedModulePopups.add(m.id);
+          await Promise.resolve(supabase.from("module_popup_dismissals").upsert({ user_id: session.user.id, module_id: m.id }, { onConflict: "user_id,module_id" })).catch(()=>{});
+        }
+      });
     }
   }));
   root.querySelectorAll("[data-edit]").forEach(el=> el.addEventListener("click",(e)=>{ e.stopPropagation(); openEditor(el.getAttribute("data-edit")); }));
