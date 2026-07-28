@@ -250,6 +250,11 @@
 
   .guest-banner{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; background:var(--amber-dim); border:1px solid var(--amber); border-radius:10px; padding:10px 16px; margin-bottom:16px; font-size:13px; color:var(--amber); }
   .feedback-fab{ position:fixed; bottom:24px; left:24px; z-index:400; background:var(--panel); border:1px solid var(--stroke); color:var(--text); padding:12px 18px; border-radius:30px; font-family:var(--sans); font-size:13.5px; cursor:pointer; box-shadow:0 8px 24px #000000aa; transition:border-color .15s, color .15s; }
+  .sim-screen-canvas, .sim-screen-canvas img, .sim-screen-canvas *{ cursor:crosshair !important; }
+  .sim-screen-canvas{ position:relative; display:inline-block; max-width:100%; touch-action:none; }
+  .sim-screen-canvas .sim-canvas-hint{ position:absolute; top:8px; left:8px; background:#000000cc; color:var(--amber); font-size:11px; font-family:var(--mono); padding:4px 9px; border-radius:5px; pointer-events:none; opacity:0; transition:opacity .12s; z-index:3; }
+  .sim-screen-canvas:hover .sim-canvas-hint{ opacity:1; }
+  .sim-zone, .sim-zone *{ cursor:pointer !important; }
   .feedback-fab:hover{ border-color:var(--cyan); color:var(--cyan); }
   .update-banner{ position:fixed; top:0; left:0; right:0; z-index:600; background:var(--cyan); color:#04141a; font-family:var(--sans); font-size:13.5px; font-weight:600; padding:10px 16px; display:flex; align-items:center; justify-content:center; gap:16px; box-shadow:0 4px 16px #00000055; flex-wrap:wrap; }
   .update-banner button{ background:#04141a; color:var(--cyan); border:none; border-radius:6px; padding:6px 14px; font-size:12.5px; font-weight:700; cursor:pointer; font-family:var(--sans); }
@@ -286,7 +291,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r14";
+const BUILD_VERSION = "2026-07-27T00:00Z-r15";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1213,8 +1218,14 @@ function renderQuiz(){
     nextDisabled = selected===null;
   }
 
+  const jumpNavHtml = canEdit() ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+    ${quizActiveIndices.map((_,idx)=>`<button class="mini-btn" data-quiz-jump="${idx}" style="${idx===quizIdx?'border-color:var(--amber);color:var(--amber);':''}min-width:34px;">${idx+1}</button>`).join("")}
+    <span style="color:var(--text-faint);font-size:11px;font-family:var(--mono);align-self:center;margin-left:6px;">EDIT MODE · JUMP TO ANY QUESTION</span>
+  </div>` : "";
+
   renderShell(`
     <div class="q-progress">MODULE QUIZ${isMissedRetake?' · RETAKING MISSED QUESTIONS':''} · ${escapeHtml(m.title.toUpperCase())} · QUESTION ${quizIdx+1} OF ${quizActiveIndices.length}</div>
+    ${jumpNavHtml}
     <div class="card"><div class="q-block"><h3>${escapeHtml(q.q)}</h3>${bodyHtml}</div>
       <div class="nav-buttons"><div style="display:flex;gap:10px;"><button class="btn" id="quiz-prev" ${quizIdx===0?'disabled':''}>← Previous</button>${editBtn}</div>
       <button class="btn primary" id="quiz-next" ${nextDisabled?'disabled':''}>${nextLabel}</button></div>
@@ -1241,6 +1252,7 @@ function renderQuiz(){
     document.getElementById("quiz-next").addEventListener("click", ()=>{ if(!revealed){ quizRevealed[quizIdx]=true; render(); } else if(isLast){ finishQuiz(); } else { quizIdx++; render(); } });
   }
   document.getElementById("quiz-prev").addEventListener("click", ()=>{ if(quizIdx>0){ quizIdx--; render(); } });
+  root.querySelectorAll("[data-quiz-jump]").forEach(el=> el.addEventListener("click", ()=>{ quizIdx = +el.getAttribute("data-quiz-jump"); render(); }));
   const editModQ=document.getElementById("edit-mod-q"); if(editModQ) editModQ.addEventListener("click", ()=>openEditor(m.id));
   document.getElementById("flag-question").addEventListener("click", ()=> openFeedbackModal("flag", `${m.title} — Q${quizIdx+1}: ${q.q}`));
 }
@@ -3609,8 +3621,9 @@ function renderSimBuilder(q, qi){
     return `<div class="sub-card" style="margin-bottom:10px;">
       <div class="sub-card-head"><span class="tag">SCREEN ${si+1}</span><button class="mini-btn danger" data-sim-screen-del="${qi}:${si}">Delete screen</button></div>
       ${screen.image ? `
-        <div class="sim-screen-canvas" data-sim-canvas="${qi}:${si}" style="position:relative;display:inline-block;max-width:100%;cursor:crosshair;touch-action:none;">
+        <div class="sim-screen-canvas" data-sim-canvas="${qi}:${si}">
           <img src="${screen.image}" style="max-width:100%;display:block;pointer-events:none;user-select:none;" draggable="false">
+          <div class="sim-canvas-hint">✛ Drag to add a button</div>
           ${zonesHtml}
         </div>
         <p class="hint">Drag on the image to draw a clickable zone, then pick where it leads. The zone stays invisible to trainees.</p>
