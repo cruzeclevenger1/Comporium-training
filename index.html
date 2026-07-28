@@ -286,7 +286,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r10";
+const BUILD_VERSION = "2026-07-27T00:00Z-r11";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -2716,13 +2716,14 @@ function renderModuleAnalyzeDetail(){
   if(!m){ view="analyze"; render(); return; }
   const rows = moduleAnalyzeDetailRoster.map(r=>{
     const expanded = moduleAnalyzeDetailExpandedPerson === r.id;
-    const mainRow = `<tr class="team-row-main" data-manalyze-toggle="${r.id}" style="cursor:pointer;">
-      <td>${escapeHtml(r.name)}</td>
-      <td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${r.best}/${r.total} best</td>
-      <td style="font-family:var(--mono);font-size:12px;color:var(--text-faint);white-space:nowrap;">${r.attempts.length} attempt${r.attempts.length===1?'':'s'}</td>
-      <td style="text-align:center;color:var(--text-faint);">${expanded?'▾':'▸'}</td>
+    const mainRow = `<tr class="team-row-main" style="cursor:pointer;">
+      <td data-manalyze-toggle="${r.id}">${escapeHtml(r.name)}</td>
+      <td data-manalyze-toggle="${r.id}" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${r.best}/${r.total} best</td>
+      <td data-manalyze-toggle="${r.id}" style="font-family:var(--mono);font-size:12px;color:var(--text-faint);white-space:nowrap;">${r.attempts.length} attempt${r.attempts.length===1?'':'s'}</td>
+      <td><button class="mini-btn danger" data-manalyze-reset="${r.id}" data-manalyze-reset-name="${escapeHtml(r.name)}">Reset attempts</button></td>
+      <td data-manalyze-toggle="${r.id}" style="text-align:center;color:var(--text-faint);">${expanded?'▾':'▸'}</td>
     </tr>`;
-    const detailRow = expanded ? `<tr class="team-row-detail"><td colspan="4">
+    const detailRow = expanded ? `<tr class="team-row-detail"><td colspan="5">
       <div style="display:flex;flex-direction:column;gap:8px;padding:10px 4px 16px;">
         ${r.attempts.map((a,i)=>{
           const attemptExpanded = moduleAnalyzeDetailExpandedAttempt === a.id;
@@ -2740,12 +2741,24 @@ function renderModuleAnalyzeDetail(){
     <div class="card">
       <div class="k-label">MODULE PERFORMANCE</div>
       <h2 style="margin-bottom:4px;">${escapeHtml(m.title)}</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Everyone who's attempted this module's quiz — up to 3 attempts each. Click a person, then an attempt, to see exactly which questions were missed on that attempt.</p>
-      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Best score</th><th>Attempts</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No attempts yet.</td></tr>`}</tbody></table></div>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Everyone who's attempted this module's quiz — up to 3 attempts each. Click a person, then an attempt, to see exactly which questions were missed on that attempt. "Reset attempts" clears their history so they can take it fresh.</p>
+      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Best score</th><th>Attempts</th><th></th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="5" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No attempts yet.</td></tr>`}</tbody></table></div>
       <div class="nav-buttons"><button class="btn" id="manalyze-back">← Back to Analyze</button><div></div></div>
     </div>
   `);
   document.getElementById("manalyze-back").addEventListener("click", ()=>{ view="analyze"; render(); });
+  root.querySelectorAll("[data-manalyze-reset]").forEach(el=> el.addEventListener("click", async (e)=>{
+    e.stopPropagation();
+    const uid = el.getAttribute("data-manalyze-reset");
+    const name = el.getAttribute("data-manalyze-reset-name");
+    if(!confirm(`Reset all quiz attempts for ${name} on "${m.title}"? This clears their attempt count, score, and history — they'll be able to take it fresh, up to 3 more times. Their lesson-reading progress is not affected.`)) return;
+    const { error: delErr } = await supabase.from("quiz_attempts").delete().eq("user_id", uid).eq("module_id", m.id);
+    if(delErr){ alert("Couldn't reset: " + delErr.message); return; }
+    await supabase.from("progress").update({ best_score:0, last_score:0, attempts:0 }).eq("user_id", uid).eq("module_id", m.id);
+    logEdit("reset", "module_quiz_attempts", `${m.title} — ${name}`);
+    showToast("Attempts reset.");
+    await openModuleAnalyzeDetail(m.id);
+  }));
   root.querySelectorAll("[data-manalyze-toggle]").forEach(el=> el.addEventListener("click", ()=>{
     const uid = el.getAttribute("data-manalyze-toggle");
     moduleAnalyzeDetailExpandedPerson = (moduleAnalyzeDetailExpandedPerson===uid) ? null : uid;
