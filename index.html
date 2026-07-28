@@ -286,7 +286,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r5";
+const BUILD_VERSION = "2026-07-27T00:00Z-r7";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -488,6 +488,7 @@ async function loadEverything(){
   const { data: quiz } = await supabase.from("quiz_questions").select("*").order("sort_order");
   MODULES = (mods||[]).map(m=>({
     id:m.id, title:m.title, short:m.short, ledColor:m.led_color,
+    popupEnabled: !!m.popup_enabled, popupTitle: m.popup_title||"", popupBody: m.popup_body||"",
     lessons:(lessons||[]).filter(l=>l.module_id===m.id).map(l=>({id:l.id,label:l.label,title:l.title,body:l.body})),
     quiz:(quiz||[]).filter(q=>q.module_id===m.id).map(q=>({id:q.id,q:q.question,opts:q.options,correct:q.correct_index,explain:q.explanation}))
   }));
@@ -1046,6 +1047,14 @@ function renderDashboard(){
     if(e.target.closest("[data-edit]")||e.target.closest("[data-del]")||e.target.closest(".drag-handle")) return;
     const id = el.getAttribute("data-mod"); const m = modById(id);
     currentModId = id; currentLessonIdx = resumeLessonIdx(m); view="lesson"; render();
+    if(m && m.popupEnabled){
+      openModal(`
+        <h3>${escapeHtml(m.popupTitle || "Heads up")}</h3>
+        <p class="sub" style="white-space:pre-wrap;">${escapeHtml(m.popupBody || "")}</p>
+        <div class="modal-actions"><button class="btn primary" id="mod-popup-close">Got it</button></div>
+      `);
+      document.getElementById("mod-popup-close").addEventListener("click", closeModal);
+    }
   }));
   root.querySelectorAll("[data-edit]").forEach(el=> el.addEventListener("click",(e)=>{ e.stopPropagation(); openEditor(el.getAttribute("data-edit")); }));
   root.querySelectorAll("[data-del]").forEach(el=> el.addEventListener("click", async (e)=>{
@@ -2618,8 +2627,13 @@ async function openModuleAnalyzeDetail(moduleId){
   moduleAnalyzeDetailRoster = Object.keys(byUser).map(uid=>{
     const person = (allProfiles||[]).find(p=>p.id===uid);
     const userAttempts = byUser[uid];
-    const best = Math.max(...userAttempts.map(a=>a.score||0));
-    return { id:uid, name: person?person.name:'Unknown', attempts:userAttempts, best, total: userAttempts[0]?.total || m.quiz.length };
+    const bestAttempt = userAttempts.reduce((best, a)=>{
+      if(!best) return a;
+      if((a.score||0) > (best.score||0)) return a;
+      if((a.score||0) === (best.score||0) && new Date(a.created_at) > new Date(best.created_at)) return a;
+      return best;
+    }, null);
+    return { id:uid, name: person?person.name:'Unknown', attempts:userAttempts, best: bestAttempt.score||0, total: bestAttempt.total || m.quiz.length };
   }).sort((a,b)=> a.name.localeCompare(b.name));
   moduleAnalyzeDetailExpandedPerson = null;
   moduleAnalyzeDetailExpandedAttempt = null;
@@ -4179,6 +4193,13 @@ function renderEditor(){
       </div>
       <div class="field"><label>Module title</label><input type="text" id="mod-title" value="${escapeHtml(d.title)}"></div>
       <div class="field"><label>Short description</label><textarea id="mod-short" style="min-height:55px;">${escapeHtml(d.short)}</textarea></div>
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;"><input type="checkbox" id="mod-popup-enabled" ${d.popupEnabled?'checked':''}> Show a popup when someone starts this module</label>
+      </div>
+      ${d.popupEnabled ? `
+      <div class="field"><label>Popup title</label><input type="text" id="mod-popup-title" value="${escapeHtml(d.popupTitle||'')}" placeholder="e.g. Heads up"></div>
+      <div class="field"><label>Popup message</label><textarea id="mod-popup-body" style="min-height:70px;" placeholder="What should they see before starting this module?">${escapeHtml(d.popupBody||'')}</textarea></div>
+      ` : ''}
       <div class="editor-section"><div class="editor-section-head"><h3>Lessons</h3></div>${lessonsHtml||'<p style="color:var(--text-faint);font-size:13px;">No lessons yet.</p>'}<button class="dashed-btn" id="add-lesson">+ Add lesson</button></div>
       <div class="editor-section"><div class="editor-section-head"><h3>Quiz questions</h3></div>${quizHtml||'<p style="color:var(--text-faint);font-size:13px;">No questions yet.</p>'}<button class="dashed-btn" id="add-question">+ Add question</button></div>
       <div class="nav-buttons"><div style="display:flex;gap:10px;"><button class="btn danger" id="editor-delete">Delete module</button></div>
@@ -4200,7 +4221,7 @@ function wireEditorEvents(){
     if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
     clearTimeout(modAutosaveTimer);
     modAutosaveTimer = setTimeout(async ()=>{
-      const { error } = await supabase.from("modules").update({ title:d.title, short:d.short }).eq("id", editingExistingId);
+      const { error } = await supabase.from("modules").update({ title:d.title, short:d.short, popup_enabled:d.popupEnabled, popup_title:d.popupTitle, popup_body:d.popupBody }).eq("id", editingExistingId);
       const el = document.getElementById("mod-save-status");
       if(el){
         if(error){ el.textContent = "Couldn't save: " + error.message; el.style.color = "var(--red)"; }
@@ -4210,6 +4231,11 @@ function wireEditorEvents(){
   }
   document.getElementById("mod-title").addEventListener("input", e=>{ d.title=e.target.value; scheduleModAutosave(); });
   document.getElementById("mod-short").addEventListener("input", e=>{ d.short=e.target.value; scheduleModAutosave(); });
+  document.getElementById("mod-popup-enabled").addEventListener("change", e=>{ d.popupEnabled=e.target.checked; scheduleModAutosave(); renderEditor(); });
+  const popupTitleEl = document.getElementById("mod-popup-title");
+  if(popupTitleEl) popupTitleEl.addEventListener("input", e=>{ d.popupTitle=e.target.value; scheduleModAutosave(); });
+  const popupBodyEl = document.getElementById("mod-popup-body");
+  if(popupBodyEl) popupBodyEl.addEventListener("input", e=>{ d.popupBody=e.target.value; scheduleModAutosave(); });
 
   function scheduleLessonAutosave(i){
     const l = d.lessons[i];
