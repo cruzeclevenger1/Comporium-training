@@ -286,7 +286,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r9";
+const BUILD_VERSION = "2026-07-27T00:00Z-r10";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -346,6 +346,7 @@ let authInfo = "";
 let currentModId = null;
 let currentLessonIdx = 0;
 let lastModuleContext = null; // { view, modId, lessonIdx } — lets the Training Modules nav tab resume where the person left off
+const MAX_QUIZ_ATTEMPTS = 3;
 let quizAnswers = []; let quizRevealed = []; let quizIdx = 0;
 let quizActiveIndices = []; // indices into m.quiz actually being shown this session
 let quizCarriedAnswers = {}; // originalIndex -> answer detail, for missed-only retakes (previously-correct questions, not being retaken)
@@ -1125,12 +1126,14 @@ function renderLesson(){
   const isLast = currentLessonIdx === m.lessons.length-1;
   const editBtn = canEdit() ? `<button class="lesson-tab" id="edit-mod" style="border-color:var(--amber);color:var(--amber);">✎ Edit module</button>` : "";
   const hasQuiz = m.quiz.length > 0;
-  const quizTab = hasQuiz ? `<button class="lesson-tab quiz" id="go-quiz">TAKE QUIZ →</button>` : "";
+  const attemptsUsed = (progressMap[m.id] && progressMap[m.id].attempts) || 0;
+  const attemptsExhausted = hasQuiz && attemptsUsed >= MAX_QUIZ_ATTEMPTS;
+  const quizTab = hasQuiz ? `<button class="lesson-tab quiz" id="go-quiz" ${attemptsExhausted?'disabled':''}>${attemptsExhausted?'QUIZ · NO ATTEMPTS LEFT':'TAKE QUIZ →'}</button>` : "";
   renderShell(`
     <div class="lesson-nav">${tabs}${editBtn}${quizTab}</div>
     <div class="card"><div class="k-label">${escapeHtml(lesson.label)}</div><h2>${escapeHtml(lesson.title)}</h2><div class="body">${lesson.body}</div>
       <div class="nav-buttons"><button class="btn" id="prev-lesson" ${currentLessonIdx===0?'disabled':''}>← Previous</button>
-      ${isLast ? (hasQuiz ? `<button class="btn primary" id="to-quiz-btn">Start module quiz →</button>` : `<button class="btn primary" id="back-to-modules-btn">Back to Training Modules →</button>`) : `<button class="btn primary" id="next-lesson">Next lesson →</button>`}</div>
+      ${isLast ? (hasQuiz ? (attemptsExhausted ? `<button class="btn primary" id="back-to-modules-btn">Back to Training Modules →</button>` : `<button class="btn primary" id="to-quiz-btn">Start module quiz →</button>`) : `<button class="btn primary" id="back-to-modules-btn">Back to Training Modules →</button>`) : `<button class="btn primary" id="next-lesson">Next lesson →</button>`}</div>
       <div class="nav-buttons" style="margin-top:8px;"><button class="mini-btn" id="comment-lesson">💬 Comment</button><div></div></div>
     </div>`);
   root.querySelectorAll(".lesson-tab[data-idx]").forEach(el=> el.addEventListener("click", ()=>{ currentLessonIdx=parseInt(el.getAttribute("data-idx")); render(); }));
@@ -1145,6 +1148,8 @@ function renderLesson(){
 
 async function startQuiz(mode){
   const m = modById(currentModId);
+  const priorAttempts = (progressMap[m.id] && progressMap[m.id].attempts) || 0;
+  if(priorAttempts >= MAX_QUIZ_ATTEMPTS){ alert(`You've used all ${MAX_QUIZ_ATTEMPTS} attempts for this quiz.`); return; }
   quizCarriedAnswers = {};
   if(mode === "missed"){
     const { data: attempts } = await supabase.from("quiz_attempts").select("*").eq("user_id", session.user.id).eq("module_id", m.id).order("created_at", { ascending:false }).limit(1);
@@ -1223,14 +1228,19 @@ function renderResults(){
   lastModuleContext = { view:"results", modId: currentModId, lessonIdx: currentLessonIdx };
   const leds = Array.from({length:5}).map((_,i)=>{ const lit = i < Math.round((s.lastScore/s.total)*5); const color = p===100?"on-green":p>=60?"on-amber":"on-red"; return `<span class="led ${lit?color:''}"></span>`; }).join("");
   const verdict = p===100?"Fully registered. This module is locked in.":p>=60?"Mostly holding — worth a second pass before it's live-call ready.":"Signal's not there yet. Revisit the lessons and retake when ready.";
-  const hasMissed = s.lastScore < s.total;
+  const attemptsUsed = s.attempts || 0;
+  const attemptsExhausted = attemptsUsed >= MAX_QUIZ_ATTEMPTS;
+  const hasMissed = s.lastScore < s.total && !attemptsExhausted;
+  const attemptsLine = `<p style="font-family:var(--mono);font-size:13px;margin-top:14px;color:${attemptsExhausted?'var(--red)':'var(--text-dim)'};">${attemptsUsed}/${MAX_QUIZ_ATTEMPTS} attempts${attemptsExhausted ? ' — No attempts left' : ' — Try again?'}</p>`;
   renderShell(`
     <div class="card result-hero"><div class="k-label">QUIZ RESULT · ${escapeHtml(m.title.toUpperCase())}</div>
       <div class="big-score">${s.lastScore}/${s.total}</div><div class="led-array">${leds}</div><div class="verdict">${escapeHtml(verdict)}</div>
-      ${hasMissed ? `<label style="display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text-dim);margin-top:14px;"><input type="checkbox" id="retake-missed-toggle"> Retake missed questions only — questions you already got right won't count against you</label>` : ""}
-      <div class="nav-buttons" style="justify-content:center;gap:14px;margin-top:${hasMissed?'6':'0'}px;"><button class="btn" id="retake">Retake quiz</button><button class="btn" id="review">Review lessons</button><button class="btn primary" id="back-dash">Back to dashboard</button></div>
+      ${attemptsLine}
+      ${hasMissed ? `<label style="display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text-dim);margin-top:10px;"><input type="checkbox" id="retake-missed-toggle"> Retake missed questions only — questions you already got right won't count against you</label>` : ""}
+      <div class="nav-buttons" style="justify-content:center;gap:14px;margin-top:14px;"><button class="btn" id="retake" ${attemptsExhausted?'disabled':''}>Retake quiz</button><button class="btn" id="review">Review lessons</button><button class="btn primary" id="back-dash">Back to dashboard</button></div>
     </div>`);
-  document.getElementById("retake").addEventListener("click", ()=>{
+  const retakeBtn = document.getElementById("retake");
+  if(!attemptsExhausted) retakeBtn.addEventListener("click", ()=>{
     const toggle = document.getElementById("retake-missed-toggle");
     startQuiz(toggle && toggle.checked ? "missed" : "full");
   });
