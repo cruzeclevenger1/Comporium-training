@@ -291,7 +291,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r18";
+const BUILD_VERSION = "2026-07-27T00:00Z-r19";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -357,6 +357,8 @@ let quizActiveIndices = []; // indices into m.quiz actually being shown this ses
 let quizSimScreenIndex = {}; // session-relative quizIdx -> current screen index, for simulation questions
 let quizSimMisclicks = {}; // session-relative quizIdx -> misclick count, resets each new quiz attempt
 let simWarningDismissed = false; // "don't show again" for the Simulated Navigation warning popup
+let quizIsTestRun = false; // true when a content editor takes a quiz while in edit mode — doesn't count as a real attempt
+let quizTestRunResult = null; // { lastScore, total } — used to show results for a test run without touching saved progress
 let quizCarriedAnswers = {}; // originalIndex -> answer detail, for missed-only retakes (previously-correct questions, not being retaken)
 
 let draftModule = null; let editingExistingId = null;
@@ -1136,7 +1138,7 @@ function renderLesson(){
   const editBtn = canEdit() ? `<button class="lesson-tab" id="edit-mod" style="border-color:var(--amber);color:var(--amber);">✎ Edit module</button>` : "";
   const hasQuiz = m.quiz.length > 0;
   const attemptsUsed = (progressMap[m.id] && progressMap[m.id].attempts) || 0;
-  const attemptsExhausted = hasQuiz && attemptsUsed >= MAX_QUIZ_ATTEMPTS;
+  const attemptsExhausted = hasQuiz && attemptsUsed >= MAX_QUIZ_ATTEMPTS && !canEditContent();
   const quizTab = hasQuiz ? `<button class="lesson-tab quiz" id="go-quiz" ${attemptsExhausted?'disabled':''}>${attemptsExhausted?'QUIZ · NO ATTEMPTS LEFT':'TAKE QUIZ →'}</button>` : "";
   renderShell(`
     <div class="lesson-nav">${tabs}${editBtn}${quizTab}</div>
@@ -1159,8 +1161,10 @@ async function startQuiz(mode){
   const m = modById(currentModId);
   quizSimScreenIndex = {};
   quizSimMisclicks = {};
+  quizIsTestRun = canEditContent() && editMode;
+  quizTestRunResult = null;
   const priorAttempts = (progressMap[m.id] && progressMap[m.id].attempts) || 0;
-  if(priorAttempts >= MAX_QUIZ_ATTEMPTS){ alert(`You've used all ${MAX_QUIZ_ATTEMPTS} attempts for this quiz.`); return; }
+  if(priorAttempts >= MAX_QUIZ_ATTEMPTS && !canEditContent()){ alert(`You've used all ${MAX_QUIZ_ATTEMPTS} attempts for this quiz.`); return; }
   quizCarriedAnswers = {};
   if(mode === "missed"){
     const { data: attempts } = await supabase.from("quiz_attempts").select("*").eq("user_id", session.user.id).eq("module_id", m.id).order("created_at", { ascending:false }).limit(1);
@@ -1285,6 +1289,14 @@ async function finishQuiz(){
   });
   Object.keys(quizCarriedAnswers).forEach(idxStr=>{ answerDetail[+idxStr] = quizCarriedAnswers[idxStr]; });
   const correctCount = answerDetail.reduce((acc,a)=> acc + (a && a.is_correct ? 1 : 0), 0);
+
+  if(quizIsTestRun){
+    // Testing content in edit mode — doesn't count as a real attempt, nothing gets saved.
+    quizTestRunResult = { lastScore: correctCount, total: m.quiz.length };
+    view = "results"; render();
+    return;
+  }
+
   const prior = progressMap[m.id];
   const record = { best: Math.max(correctCount, prior?prior.best:0), total: m.quiz.length, lastScore: correctCount, attempts: (prior?prior.attempts:0)+1, lessonsViewed: prior&&prior.lessonsViewed ? prior.lessonsViewed : [] };
   progressMap[m.id] = record;
@@ -1299,14 +1311,34 @@ async function finishQuiz(){
 }
 
 function renderResults(){
-  const m = modById(currentModId); const s = progressMap[m.id]; const p = pct(s);
+  const m = modById(currentModId);
   lastModuleContext = { view:"results", modId: currentModId, lessonIdx: currentLessonIdx };
+
+  if(quizIsTestRun && quizTestRunResult){
+    const s = quizTestRunResult;
+    const p = s.total ? Math.round((s.lastScore/s.total)*100) : 0;
+    const leds = Array.from({length:5}).map((_,i)=>{ const lit = i < Math.round((s.lastScore/s.total)*5); const color = p===100?"on-green":p>=60?"on-amber":"on-red"; return `<span class="led ${lit?color:''}"></span>`; }).join("");
+    renderShell(`
+      <div class="card result-hero"><div class="k-label">TEST RUN · ${escapeHtml(m.title.toUpperCase())}</div>
+        <div class="big-score">${s.lastScore}/${s.total}</div><div class="led-array">${leds}</div>
+        <p style="color:var(--amber);font-size:13px;margin-top:14px;">⚠ Test run — nothing was saved. This doesn't count as a real attempt.</p>
+        <div class="nav-buttons" style="justify-content:center;gap:14px;margin-top:14px;"><button class="btn" id="retake">Retake quiz</button><button class="btn" id="review">Review lessons</button><button class="btn primary" id="back-dash">Back to dashboard</button></div>
+      </div>`);
+    document.getElementById("retake").addEventListener("click", ()=> startQuiz("full"));
+    document.getElementById("review").addEventListener("click", ()=>{ currentLessonIdx=0; view="lesson"; render(); });
+    document.getElementById("back-dash").addEventListener("click", ()=>{ view="dashboard"; render(); });
+    return;
+  }
+
+  const s = progressMap[m.id]; const p = pct(s);
   const leds = Array.from({length:5}).map((_,i)=>{ const lit = i < Math.round((s.lastScore/s.total)*5); const color = p===100?"on-green":p>=60?"on-amber":"on-red"; return `<span class="led ${lit?color:''}"></span>`; }).join("");
   const verdict = p===100?"Fully registered. This module is locked in.":p>=60?"Mostly holding — worth a second pass before it's live-call ready.":"Signal's not there yet. Revisit the lessons and retake when ready.";
   const attemptsUsed = s.attempts || 0;
-  const attemptsExhausted = attemptsUsed >= MAX_QUIZ_ATTEMPTS;
+  const attemptsExhausted = attemptsUsed >= MAX_QUIZ_ATTEMPTS && !canEditContent();
   const hasMissed = s.lastScore < s.total && !attemptsExhausted;
-  const attemptsLine = `<p style="font-family:var(--mono);font-size:13px;margin-top:14px;color:${attemptsExhausted?'var(--red)':'var(--text-dim)'};">${attemptsUsed}/${MAX_QUIZ_ATTEMPTS} attempts${attemptsExhausted ? ' — No attempts left' : ' — Try again?'}</p>`;
+  const attemptsLine = canEditContent()
+    ? `<p style="font-family:var(--mono);font-size:13px;margin-top:14px;color:var(--text-dim);">Unlimited attempts (content editor)</p>`
+    : `<p style="font-family:var(--mono);font-size:13px;margin-top:14px;color:${attemptsExhausted?'var(--red)':'var(--text-dim)'};">${attemptsUsed}/${MAX_QUIZ_ATTEMPTS} attempts${attemptsExhausted ? ' — No attempts left' : ' — Try again?'}</p>`;
   renderShell(`
     <div class="card result-hero"><div class="k-label">QUIZ RESULT · ${escapeHtml(m.title.toUpperCase())}</div>
       <div class="big-score">${s.lastScore}/${s.total}</div><div class="led-array">${leds}</div><div class="verdict">${escapeHtml(verdict)}</div>
