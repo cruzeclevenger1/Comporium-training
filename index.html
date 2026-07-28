@@ -249,7 +249,7 @@
   .lightbox-hint{ position:absolute; bottom:22px; left:50%; transform:translateX(-50%); color:#ffffff99; font-family:var(--mono); font-size:11px; letter-spacing:.03em; }
 
   .guest-banner{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; background:var(--amber-dim); border:1px solid var(--amber); border-radius:10px; padding:10px 16px; margin-bottom:16px; font-size:13px; color:var(--amber); }
-  .feedback-fab{ position:fixed; bottom:24px; right:24px; z-index:400; background:var(--panel); border:1px solid var(--stroke); color:var(--text); padding:12px 18px; border-radius:30px; font-family:var(--sans); font-size:13.5px; cursor:pointer; box-shadow:0 8px 24px #000000aa; transition:border-color .15s, color .15s; }
+  .feedback-fab{ position:fixed; bottom:24px; left:24px; z-index:400; background:var(--panel); border:1px solid var(--stroke); color:var(--text); padding:12px 18px; border-radius:30px; font-family:var(--sans); font-size:13.5px; cursor:pointer; box-shadow:0 8px 24px #000000aa; transition:border-color .15s, color .15s; }
   .feedback-fab:hover{ border-color:var(--cyan); color:var(--cyan); }
   .update-banner{ position:fixed; top:0; left:0; right:0; z-index:600; background:var(--cyan); color:#04141a; font-family:var(--sans); font-size:13.5px; font-weight:600; padding:10px 16px; display:flex; align-items:center; justify-content:center; gap:16px; box-shadow:0 4px 16px #00000055; flex-wrap:wrap; }
   .update-banner button{ background:#04141a; color:var(--cyan); border:none; border-radius:6px; padding:6px 14px; font-size:12.5px; font-weight:700; cursor:pointer; font-family:var(--sans); }
@@ -286,7 +286,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r8";
+const BUILD_VERSION = "2026-07-27T00:00Z-r9";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -347,6 +347,8 @@ let currentModId = null;
 let currentLessonIdx = 0;
 let lastModuleContext = null; // { view, modId, lessonIdx } — lets the Training Modules nav tab resume where the person left off
 let quizAnswers = []; let quizRevealed = []; let quizIdx = 0;
+let quizActiveIndices = []; // indices into m.quiz actually being shown this session
+let quizCarriedAnswers = {}; // originalIndex -> answer detail, for missed-only retakes (previously-correct questions, not being retaken)
 
 let draftModule = null; let editingExistingId = null;
 let expandedLessonIdx = null; let expandedQuestionIdx = null;
@@ -1141,19 +1143,47 @@ function renderLesson(){
   document.getElementById("comment-lesson").addEventListener("click", ()=> openFeedbackModal("comment", `${m.title} — ${lesson.title}`));
 }
 
-function startQuiz(){ const m=modById(currentModId); quizAnswers=new Array(m.quiz.length).fill(null); quizRevealed=new Array(m.quiz.length).fill(false); quizIdx=0; view="quiz"; render(); }
+async function startQuiz(mode){
+  const m = modById(currentModId);
+  quizCarriedAnswers = {};
+  if(mode === "missed"){
+    const { data: attempts } = await supabase.from("quiz_attempts").select("*").eq("user_id", session.user.id).eq("module_id", m.id).order("created_at", { ascending:false }).limit(1);
+    const lastAttempt = attempts && attempts[0];
+    if(lastAttempt && lastAttempt.answers && lastAttempt.answers.length === m.quiz.length){
+      const missedIdx = [];
+      m.quiz.forEach((q,i)=>{
+        const priorAns = lastAttempt.answers[i];
+        if(priorAns && priorAns.is_correct){
+          quizCarriedAnswers[i] = { question:q.q, options:q.opts, selected:priorAns.selected, correct:q.correct, is_correct:true };
+        } else {
+          missedIdx.push(i);
+        }
+      });
+      quizActiveIndices = missedIdx.length ? missedIdx : m.quiz.map((_,i)=>i);
+    } else {
+      quizActiveIndices = m.quiz.map((_,i)=>i); // no usable prior attempt — fall back to full quiz
+    }
+  } else {
+    quizActiveIndices = m.quiz.map((_,i)=>i);
+  }
+  quizAnswers = new Array(quizActiveIndices.length).fill(null);
+  quizRevealed = new Array(quizActiveIndices.length).fill(false);
+  quizIdx = 0; view = "quiz"; render();
+}
 
 function renderQuiz(){
   const m = modById(currentModId); if(!m||!m.quiz.length){ view="lesson"; render(); return; }
   lastModuleContext = { view:"quiz", modId: currentModId, lessonIdx: currentLessonIdx };
-  const q = m.quiz[quizIdx]; const revealed = quizRevealed[quizIdx]; const selected = quizAnswers[quizIdx];
+  const realIdx = quizActiveIndices[quizIdx];
+  const q = m.quiz[realIdx]; const revealed = quizRevealed[quizIdx]; const selected = quizAnswers[quizIdx];
+  const isMissedRetake = quizActiveIndices.length < m.quiz.length;
   const opts = q.opts.map((opt,i)=>{ let cls="opt"; if(revealed){ cls+=" disabled"; if(i===q.correct) cls+=" correct"; else if(i===selected) cls+=" wrong"; } else if(i===selected){ cls+=" selected"; }
     return `<div class="${cls}" data-idx="${i}"><div class="dot"></div><span class="txt">${escapeHtml(opt)}</span></div>`; }).join("");
   const explain = revealed ? `<div class="explain"><strong>${selected===q.correct?'Correct.':'Not quite.'}</strong> ${escapeHtml(q.explain)}</div>` : "";
-  const isLast = quizIdx === m.quiz.length-1;
+  const isLast = quizIdx === quizActiveIndices.length-1;
   const editBtn = canEdit() ? `<button class="btn" id="edit-mod-q" style="border-color:var(--amber);color:var(--amber);">✎ Edit module</button>` : "";
   renderShell(`
-    <div class="q-progress">MODULE QUIZ · ${escapeHtml(m.title.toUpperCase())} · QUESTION ${quizIdx+1} OF ${m.quiz.length}</div>
+    <div class="q-progress">MODULE QUIZ${isMissedRetake?' · RETAKING MISSED QUESTIONS':''} · ${escapeHtml(m.title.toUpperCase())} · QUESTION ${quizIdx+1} OF ${quizActiveIndices.length}</div>
     <div class="card"><div class="q-block"><h3>${escapeHtml(q.q)}</h3>${opts}</div>${explain}
       <div class="nav-buttons"><div style="display:flex;gap:10px;"><button class="btn" id="quiz-prev" ${quizIdx===0?'disabled':''}>← Previous</button>${editBtn}</div>
       <button class="btn primary" id="quiz-next" ${selected===null?'disabled':''}>${isLast?(revealed?'See results →':'Check answer'):(revealed?'Next question →':'Check answer')}</button></div>
@@ -1168,7 +1198,13 @@ function renderQuiz(){
 
 async function finishQuiz(){
   const m = modById(currentModId);
-  const correctCount = quizAnswers.reduce((acc,ans,i)=> acc+(ans===m.quiz[i].correct?1:0),0);
+  const answerDetail = new Array(m.quiz.length);
+  quizActiveIndices.forEach((realIdx, i)=>{
+    const q = m.quiz[realIdx];
+    answerDetail[realIdx] = { question:q.q, options:q.opts, selected:quizAnswers[i], correct:q.correct, is_correct: quizAnswers[i]===q.correct };
+  });
+  Object.keys(quizCarriedAnswers).forEach(idxStr=>{ answerDetail[+idxStr] = quizCarriedAnswers[idxStr]; });
+  const correctCount = answerDetail.reduce((acc,a)=> acc + (a && a.is_correct ? 1 : 0), 0);
   const prior = progressMap[m.id];
   const record = { best: Math.max(correctCount, prior?prior.best:0), total: m.quiz.length, lastScore: correctCount, attempts: (prior?prior.attempts:0)+1, lessonsViewed: prior&&prior.lessonsViewed ? prior.lessonsViewed : [] };
   progressMap[m.id] = record;
@@ -1176,9 +1212,6 @@ async function finishQuiz(){
     user_id: session.user.id, module_id: m.id, best_score: record.best, total: record.total, last_score: record.lastScore, attempts: record.attempts, lessons_viewed: record.lessonsViewed, updated_at: new Date().toISOString()
   }, { onConflict: "user_id,module_id" });
 
-  const answerDetail = m.quiz.map((q,i)=>({
-    question: q.q, options: q.opts, selected: quizAnswers[i], correct: q.correct, is_correct: quizAnswers[i]===q.correct
-  }));
   await supabase.from("quiz_attempts").insert({
     user_id: session.user.id, module_id: m.id, score: correctCount, total: m.quiz.length, answers: answerDetail
   });
@@ -1190,12 +1223,17 @@ function renderResults(){
   lastModuleContext = { view:"results", modId: currentModId, lessonIdx: currentLessonIdx };
   const leds = Array.from({length:5}).map((_,i)=>{ const lit = i < Math.round((s.lastScore/s.total)*5); const color = p===100?"on-green":p>=60?"on-amber":"on-red"; return `<span class="led ${lit?color:''}"></span>`; }).join("");
   const verdict = p===100?"Fully registered. This module is locked in.":p>=60?"Mostly holding — worth a second pass before it's live-call ready.":"Signal's not there yet. Revisit the lessons and retake when ready.";
+  const hasMissed = s.lastScore < s.total;
   renderShell(`
     <div class="card result-hero"><div class="k-label">QUIZ RESULT · ${escapeHtml(m.title.toUpperCase())}</div>
       <div class="big-score">${s.lastScore}/${s.total}</div><div class="led-array">${leds}</div><div class="verdict">${escapeHtml(verdict)}</div>
-      <div class="nav-buttons" style="justify-content:center;gap:14px;"><button class="btn" id="retake">Retake quiz</button><button class="btn" id="review">Review lessons</button><button class="btn primary" id="back-dash">Back to dashboard</button></div>
+      ${hasMissed ? `<label style="display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text-dim);margin-top:14px;"><input type="checkbox" id="retake-missed-toggle"> Retake missed questions only — questions you already got right won't count against you</label>` : ""}
+      <div class="nav-buttons" style="justify-content:center;gap:14px;margin-top:${hasMissed?'6':'0'}px;"><button class="btn" id="retake">Retake quiz</button><button class="btn" id="review">Review lessons</button><button class="btn primary" id="back-dash">Back to dashboard</button></div>
     </div>`);
-  document.getElementById("retake").addEventListener("click", startQuiz);
+  document.getElementById("retake").addEventListener("click", ()=>{
+    const toggle = document.getElementById("retake-missed-toggle");
+    startQuiz(toggle && toggle.checked ? "missed" : "full");
+  });
   document.getElementById("review").addEventListener("click", ()=>{ currentLessonIdx=0; view="lesson"; render(); });
   document.getElementById("back-dash").addEventListener("click", ()=>{ view="dashboard"; render(); });
 }
