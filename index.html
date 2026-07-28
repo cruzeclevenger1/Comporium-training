@@ -258,7 +258,8 @@
   .interactive-pic-embed{ display:inline-block; position:relative; margin:8px 4px; border-radius:8px; overflow:hidden; vertical-align:bottom; max-width:100%; border:1px solid var(--stroke); }
   .ip-embed-overlay{ background:#0e1626; padding:8px 10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .ip-embed-badge{ font-size:11px; color:var(--cyan); font-family:var(--mono); margin-right:auto; }
-  .ip-embed-play-overlay{ position:absolute; bottom:0; left:0; right:0; background:linear-gradient(to top, #000000cc, transparent); color:var(--cyan); font-size:12px; font-family:var(--mono); padding:20px 10px 8px; text-align:center; }
+  .ip-embed-play-overlay{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:#00000055; border-radius:8px; }
+  .ip-embed-play-overlay span{ background:#000000cc; color:var(--cyan); padding:8px 16px; border-radius:20px; font-size:13px; font-family:var(--mono); }
   .ip-play-hotspot{ position:absolute; border:3px solid var(--red); border-radius:4px; background:#e74c3c22; cursor:pointer; transition:border-color .2s, background .2s; box-shadow:0 0 10px #e74c3c88; }
   .ip-play-hotspot.ip-read{ border-color:var(--green); background:#2ecc7122; box-shadow:0 0 10px #2ecc7188; }
   .feedback-fab:hover{ border-color:var(--cyan); color:var(--cyan); }
@@ -297,7 +298,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r20";
+const BUILD_VERSION = "2026-07-27T00:00Z-r21";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -4551,7 +4552,7 @@ function normalizeInteractivePicEmbeds(root){
       const done = ip.hotspots.filter(h=>readSet.has(h.id)).length;
       el.innerHTML = `
         <img src="${ip.image}" style="max-width:100%;border-radius:8px;display:block;">
-        <div class="ip-embed-play-overlay">⛶ Click to explore${total?` — ${done}/${total} read`:''}</div>`;
+        <div class="ip-embed-play-overlay"><span>⛶ Click for fullscreen${total?` — ${done}/${total} read`:''}</span></div>`;
       el.style.cursor = "pointer";
     }
   });
