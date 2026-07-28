@@ -291,7 +291,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r15";
+const BUILD_VERSION = "2026-07-27T00:00Z-r16";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1202,7 +1202,8 @@ function renderQuiz(){
       bodyHtml = `<p style="color:var(--text-faint);">This simulation hasn't been set up yet.</p>`;
     } else {
       const zonesHtml = (screen.zones||[]).map((z,zi)=>`<div class="sim-play-zone" data-sim-play-zone="${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;cursor:pointer;"></div>`).join("");
-      bodyHtml = `<div style="position:relative;display:inline-block;max-width:100%;">
+      bodyHtml = `<div style="margin-bottom:10px;"><button class="mini-btn" id="sim-play-fullscreen-btn">⛶ Fullscreen</button></div>
+      <div style="position:relative;display:inline-block;max-width:100%;">
         <img src="${screen.image}" style="max-width:100%;display:block;user-select:none;border-radius:8px;" draggable="false">
         ${zonesHtml}
       </div>${selected ? `<p style="color:var(--green);font-size:13px;margin-top:12px;">✓ Done — you found it.</p>` : ""}`;
@@ -1233,19 +1234,25 @@ function renderQuiz(){
     </div>`);
 
   if(isSim){
-    root.querySelectorAll("[data-sim-play-zone]").forEach(el=> el.addEventListener("click", ()=>{
-      const zi = +el.getAttribute("data-sim-play-zone");
+    const handleZoneClick = (zi)=>{
       const screens = q.simScreens;
       const screen = screens[quizSimScreenIndex[quizIdx]];
       const zone = screen.zones[zi];
       if(zone.targetScreenId){
         const nextScreenIdx = screens.findIndex(s=>s.id===zone.targetScreenId);
-        if(nextScreenIdx>=0){ quizSimScreenIndex[quizIdx] = nextScreenIdx; render(); }
+        if(nextScreenIdx>=0){ quizSimScreenIndex[quizIdx] = nextScreenIdx; return true; }
+        return false;
       } else {
         quizAnswers[quizIdx] = "done";
-        render();
+        return true;
       }
+    };
+    root.querySelectorAll("[data-sim-play-zone]").forEach(el=> el.addEventListener("click", ()=>{
+      const zi = +el.getAttribute("data-sim-play-zone");
+      if(handleZoneClick(zi)) render();
     }));
+    const fsBtn = document.getElementById("sim-play-fullscreen-btn");
+    if(fsBtn) fsBtn.addEventListener("click", ()=> openSimPlayFullscreen(q, quizIdx, handleZoneClick));
     document.getElementById("quiz-next").addEventListener("click", ()=>{ if(isLast){ finishQuiz(); } else { quizIdx++; render(); } });
   } else {
     if(!revealed) root.querySelectorAll(".opt").forEach(el=> el.addEventListener("click", ()=>{ quizAnswers[quizIdx]=parseInt(el.getAttribute("data-idx")); render(); }));
@@ -2463,6 +2470,7 @@ let ANALYZE_TOTALS = { totalPeople:0, notStarted:0, totalAttempts:0, totalFlags:
    Separate from Training Module quizzes entirely.
    ============================================================ */
 let QUIZZES = [];
+let quizAlertActive = false; // drives the red/green dot on the Home "Quizzes" card
 let quizListSectionOpen = { pending:true, completed:false, sent:false, sentCompleted:false };
 let currentQuizId = null;
 let quizTakeAnswers = {};
@@ -2524,6 +2532,10 @@ async function loadStandaloneQuizzes(){
       isRecipient, isFullyComplete
     };
   });
+
+  const hasPending = QUIZZES.some(q=> q.isRecipient && !q.myAttempt);
+  const hasUngraded = managePerm && allAttempts.some(a=> !a.graded);
+  quizAlertActive = hasPending || hasUngraded;
 }
 
 /* ============================================================
@@ -3607,26 +3619,107 @@ function openSimZoneTargetModal(d, qi, si, zi, onSaved){
   });
 }
 
+function renderSimZonesHtml(screens, si, qi){
+  const screen = screens[si];
+  return (screen.zones||[]).map((z,zi)=>{
+    const targetScreenIdx = z.targetScreenId ? screens.findIndex(s=>s.id===z.targetScreenId) : -1;
+    const targetLabel = targetScreenIdx>=0 ? `→ Screen ${targetScreenIdx+1}` : "→ Finish";
+    return `<div class="sim-zone" data-sim-zone="${qi}:${si}:${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;border:2px dashed var(--cyan);cursor:pointer;">
+      <button class="sim-zone-del" data-sim-zone-del="${qi}:${si}:${zi}" style="position:absolute;top:-10px;right:-10px;width:18px;height:18px;border-radius:50%;background:#c0392bdd;color:#fff;font-size:11px;line-height:18px;text-align:center;cursor:pointer;border:none;">✕</button>
+      <span style="position:absolute;bottom:2px;left:2px;background:#000000cc;color:var(--cyan);font-size:10px;padding:1px 4px;border-radius:3px;font-family:var(--mono);white-space:nowrap;">${escapeHtml(targetLabel)}</span>
+    </div>`;
+  }).join("");
+}
+
+function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
+  const overlay = document.createElement("div");
+  overlay.id = "sim-play-fullscreen-overlay";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f5;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;";
+  document.body.appendChild(overlay);
+
+  function draw(){
+    const screens = q.simScreens;
+    const screen = screens[quizSimScreenIndex[quizIdx]];
+    const zonesHtml = (screen.zones||[]).map((z,zi)=>`<div class="sim-play-zone" data-sim-play-zone-fs="${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;cursor:pointer;"></div>`).join("");
+    overlay.innerHTML = `
+      <div style="display:flex;justify-content:flex-end;width:100%;max-width:1300px;margin-bottom:14px;">
+        <button class="btn" id="sim-play-fullscreen-close">✕ Exit fullscreen</button>
+      </div>
+      <div style="position:relative;display:inline-block;max-width:min(94vw,1300px);max-height:82vh;">
+        <img src="${screen.image}" style="max-width:min(94vw,1300px);max-height:82vh;display:block;user-select:none;border-radius:8px;" draggable="false">
+        ${zonesHtml}
+      </div>`;
+    document.getElementById("sim-play-fullscreen-close").addEventListener("click", ()=>{ overlay.remove(); render(); });
+    overlay.querySelectorAll("[data-sim-play-zone-fs]").forEach(el=> el.addEventListener("click", ()=>{
+      const zi = +el.getAttribute("data-sim-play-zone-fs");
+      if(!handleZoneClick(zi)) return;
+      if(quizAnswers[quizIdx] === "done"){ overlay.remove(); render(); } else { draw(); }
+    }));
+  }
+  draw();
+}
+
+function openSimEditFullscreen(qi, si){
+  const overlay = document.createElement("div");
+  overlay.id = "sim-fullscreen-overlay";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;";
+  document.body.appendChild(overlay);
+
+  function draw(){
+    const screens = draftModule.quiz[qi].simScreens;
+    const screen = screens[si];
+    const zonesHtml = renderSimZonesHtml(screens, si, qi);
+    overlay.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:1200px;margin-bottom:14px;">
+        <span style="color:var(--text-dim);font-family:var(--mono);font-size:12px;">SCREEN ${si+1} · EDITING FULLSCREEN — drag to add a button</span>
+        <button class="btn primary" id="sim-fullscreen-close">Done</button>
+      </div>
+      <div class="sim-screen-canvas" data-sim-canvas-fs style="max-width:min(94vw,1200px);max-height:80vh;">
+        <img src="${screen.image}" style="max-width:min(94vw,1200px);max-height:80vh;display:block;pointer-events:none;user-select:none;" draggable="false">
+        <div class="sim-canvas-hint">✛ Drag to add a button</div>
+        ${zonesHtml}
+      </div>`;
+    document.getElementById("sim-fullscreen-close").addEventListener("click", ()=>{ overlay.remove(); renderEditor(); });
+    const canvas = overlay.querySelector("[data-sim-canvas-fs]");
+    canvas.addEventListener("mousedown", (e)=>{
+      if(e.target.closest(".sim-zone")) return;
+      const rect = canvas.getBoundingClientRect();
+      const previewEl = document.createElement("div");
+      previewEl.style.cssText = "position:absolute;border:2px solid var(--amber);background:#f5a62333;pointer-events:none;";
+      canvas.appendChild(previewEl);
+      _simZoneDrawing = { qi, si, rect, startX:e.clientX, startY:e.clientY, previewEl, draftModule,
+        onZoneAdded: (newIdx)=>{ draw(); openSimZoneTargetModal(draftModule, qi, si, newIdx, ()=>{ scheduleQuizAutosaveGlobal(qi); draw(); }); } };
+      e.preventDefault();
+    });
+    overlay.querySelectorAll("[data-sim-zone-del]").forEach(el=> el.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const [, , zi] = el.getAttribute("data-sim-zone-del").split(":").map(Number);
+      draftModule.quiz[qi].simScreens[si].zones.splice(zi,1);
+      scheduleQuizAutosaveGlobal(qi);
+      draw();
+    }));
+    overlay.querySelectorAll("[data-sim-zone]").forEach(el=> el.addEventListener("click", (e)=>{
+      if(e.target.closest("[data-sim-zone-del]")) return;
+      const [, , zi] = el.getAttribute("data-sim-zone").split(":").map(Number);
+      openSimZoneTargetModal(draftModule, qi, si, zi, ()=>{ scheduleQuizAutosaveGlobal(qi); draw(); });
+    }));
+  }
+  draw();
+}
+
 function renderSimBuilder(q, qi){
   const screens = q.simScreens || [];
   const screensHtml = screens.map((screen, si)=>{
-    const zonesHtml = (screen.zones||[]).map((z,zi)=>{
-      const targetScreenIdx = z.targetScreenId ? screens.findIndex(s=>s.id===z.targetScreenId) : -1;
-      const targetLabel = targetScreenIdx>=0 ? `→ Screen ${targetScreenIdx+1}` : "→ Finish";
-      return `<div class="sim-zone" data-sim-zone="${qi}:${si}:${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;border:2px dashed var(--cyan);cursor:pointer;">
-        <button class="sim-zone-del" data-sim-zone-del="${qi}:${si}:${zi}" style="position:absolute;top:-10px;right:-10px;width:18px;height:18px;border-radius:50%;background:#c0392bdd;color:#fff;font-size:11px;line-height:18px;text-align:center;cursor:pointer;border:none;">✕</button>
-        <span style="position:absolute;bottom:2px;left:2px;background:#000000cc;color:var(--cyan);font-size:10px;padding:1px 4px;border-radius:3px;font-family:var(--mono);white-space:nowrap;">${escapeHtml(targetLabel)}</span>
-      </div>`;
-    }).join("");
+    const zonesHtml = renderSimZonesHtml(screens, si, qi);
     return `<div class="sub-card" style="margin-bottom:10px;">
-      <div class="sub-card-head"><span class="tag">SCREEN ${si+1}</span><button class="mini-btn danger" data-sim-screen-del="${qi}:${si}">Delete screen</button></div>
+      <div class="sub-card-head"><span class="tag">SCREEN ${si+1}</span><div style="display:flex;gap:8px;">${screen.image?`<button class="mini-btn" data-sim-fullscreen="${qi}:${si}">⛶ Fullscreen</button>`:''}<button class="mini-btn danger" data-sim-screen-del="${qi}:${si}">Delete screen</button></div></div>
       ${screen.image ? `
         <div class="sim-screen-canvas" data-sim-canvas="${qi}:${si}">
           <img src="${screen.image}" style="max-width:100%;display:block;pointer-events:none;user-select:none;" draggable="false">
           <div class="sim-canvas-hint">✛ Drag to add a button</div>
           ${zonesHtml}
         </div>
-        <p class="hint">Drag on the image to draw a clickable zone, then pick where it leads. The zone stays invisible to trainees.</p>
+        <p class="hint">Drag on the image to draw a clickable zone, then pick where it leads. The zone stays invisible to trainees. Too small to place accurately? Use Fullscreen above.</p>
       ` : `<input type="file" accept="image/*" data-sim-upload="${qi}:${si}">`}
     </div>`;
   }).join("");
@@ -4114,7 +4207,7 @@ document.addEventListener("mousemove", (e)=>{
 });
 document.addEventListener("mouseup", (e)=>{
   if(!_simZoneDrawing) return;
-  const { qi, si, rect, startX, startY, previewEl, draftModule } = _simZoneDrawing;
+  const { qi, si, rect, startX, startY, previewEl, draftModule: dm, onZoneAdded } = _simZoneDrawing;
   _simZoneDrawing = null;
   previewEl.remove();
   const x1 = Math.min(startX, e.clientX), x2 = Math.max(startX, e.clientX);
@@ -4124,15 +4217,12 @@ document.addEventListener("mouseup", (e)=>{
   const xPct = ((x1-rect.left)/rect.width)*100, yPct = ((y1-rect.top)/rect.height)*100;
   const wPct = (wPx/rect.width)*100, hPct = (hPx/rect.height)*100;
   const zone = { x:Math.round(xPct*10)/10, y:Math.round(yPct*10)/10, w:Math.round(wPct*10)/10, h:Math.round(hPct*10)/10, targetScreenId:null };
-  const screen = draftModule.quiz[qi].simScreens[si];
+  const screen = dm.quiz[qi].simScreens[si];
   if(!screen.zones) screen.zones = [];
   screen.zones.push(zone);
   const newIdx = screen.zones.length-1;
-  // These two globals are set by whichever page is currently using this shared
-  // drawing mechanism — right now that's only the module quiz editor.
   scheduleQuizAutosaveGlobal(qi);
-  renderEditor();
-  openSimZoneTargetModal(draftModule, qi, si, newIdx, ()=>{ scheduleQuizAutosaveGlobal(qi); renderEditor(); });
+  if(onZoneAdded) onZoneAdded(newIdx); else renderEditor();
 });
 let scheduleQuizAutosaveGlobal = ()=>{}; // reassigned by wireEditorEvents each time it runs, so the shared drag handler above can trigger a save
 
@@ -4561,6 +4651,10 @@ function wireEditorEvents(){
     d.quiz[qi].simScreens.push({ id:'scr'+Date.now()+Math.random().toString(36).slice(2,7), image:null, zones:[] });
     scheduleQuizAutosave(qi); renderEditor();
   }));
+  root.querySelectorAll("[data-sim-fullscreen]").forEach(el=> el.addEventListener("click", ()=>{
+    const [qi,si]=el.dataset.simFullscreen.split(":").map(Number);
+    openSimEditFullscreen(qi, si);
+  }));
   root.querySelectorAll("[data-sim-screen-del]").forEach(el=> el.addEventListener("click", ()=>{
     const [qi,si]=el.dataset.simScreenDel.split(":").map(Number);
     const removedId = d.quiz[qi].simScreens[si].id;
@@ -4595,7 +4689,8 @@ function wireEditorEvents(){
       const previewEl = document.createElement("div");
       previewEl.style.cssText = "position:absolute;border:2px solid var(--amber);background:#f5a62333;pointer-events:none;";
       canvas.appendChild(previewEl);
-      _simZoneDrawing = { qi, si, rect, startX:e.clientX, startY:e.clientY, previewEl, draftModule:d };
+      _simZoneDrawing = { qi, si, rect, startX:e.clientX, startY:e.clientY, previewEl, draftModule:d,
+        onZoneAdded: (newIdx)=>{ renderEditor(); openSimZoneTargetModal(d, qi, si, newIdx, ()=>{ scheduleQuizAutosave(qi); renderEditor(); }); } };
       e.preventDefault();
     });
   });
@@ -4956,8 +5051,8 @@ function renderHome(){
         <div class="meta"><span>${T('home.card.notes.tag','PRIVATE TO YOU')}</span></div>
       </div>
       <div class="mod-card" id="go-quizzes-card">
-        <div class="row-top"><div><h3>${T('home.card.quizzes.title','Quizzes')}</h3><p class="sub">${T('home.card.quizzes.sub','One-off quizzes sent out by admins — separate from your training modules.')}</p></div><div class="led-strip"><span class="led" style="background:var(--red);border-color:var(--red);box-shadow:0 0 8px var(--red);"></span></div></div>
-        <div class="meta"><span>${QUIZZES.filter(q=>q.sent).length} SENT TO YOU</span></div>
+        <div class="row-top"><div><h3>${T('home.card.quizzes.title','Quizzes')}</h3><p class="sub">${T('home.card.quizzes.sub','One-off quizzes sent out by admins — separate from your training modules.')}</p></div><div class="led-strip"><span class="led" style="background:${quizAlertActive?'var(--red)':'var(--green)'};border-color:${quizAlertActive?'var(--red)':'var(--green)'};box-shadow:0 0 8px ${quizAlertActive?'var(--red)':'var(--green)'};"></span></div></div>
+        <div class="meta"><span>${quizAlertActive ? 'ACTION NEEDED' : 'ALL CAUGHT UP'}</span></div>
       </div>
     </div>
   `);
