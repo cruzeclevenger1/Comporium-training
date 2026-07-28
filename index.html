@@ -95,6 +95,8 @@
   footer.foot{ margin-top:60px; text-align:center; font-family:var(--mono); font-size:11px; color:var(--text-faint); }
   .field{ margin-bottom:16px; } .field label{ display:block; font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--text-faint); margin-bottom:6px; }
   .field input[type=text],.field input[type=email],.field input[type=password],.field textarea{ width:100%; background:#0e1626; border:1px solid var(--stroke); border-radius:8px; color:var(--text); padding:10px 12px; font-size:13.5px; line-height:1.6; font-family:var(--sans); resize:vertical; }
+  .search-input{ background:#0e1626; border:1px solid var(--stroke); border-radius:8px; color:var(--text); padding:9px 12px; font-size:13px; font-family:var(--sans); }
+  .search-input:focus{ border-color:var(--cyan); }
   .field textarea{ font-family:var(--mono); font-size:12.5px; min-height:110px; }
   .field input:focus,.field textarea:focus{ border-color:var(--cyan); } .field .hint{ font-size:11px; color:var(--text-faint); margin-top:5px; }
   .editor-section{ margin-top:30px; } .editor-section-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
@@ -129,6 +131,7 @@
   html.theme-light .sub-card{ background:#eef1f8; }
   html.theme-light .export-textarea{ background:#eef1f8; color:#1b6b52; }
   html.theme-light .field input[type=text], html.theme-light .field input[type=email], html.theme-light .field input[type=password], html.theme-light .field textarea{ background:#eef1f8; }
+  html.theme-light .search-input{ background:#eef1f8; }
   html.theme-light .btn{ background:#eef1f8; }
   html.theme-light .btn.primary{ background:linear-gradient(155deg,#d8f3ea,#c3ecd9); }
   html.theme-light .btn.danger{ background:linear-gradient(155deg,#fadada,#f6c6c6); }
@@ -283,7 +286,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r3";
+const BUILD_VERSION = "2026-07-27T00:00Z-r4";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1478,7 +1481,7 @@ function renderTeam(){
       ${teamsSectionOpen.people ? `
         <div style="margin-top:14px;">
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
-            <input type="text" id="team-search-people" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" style="width:180px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
+            <input type="text" id="team-search-people" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" class="search-input" style="width:180px;">
             <select id="team-filter-people" style="width:auto;">
               <option value="">All teams</option>
               <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
@@ -1497,7 +1500,7 @@ function renderTeam(){
       ${teamsSectionOpen.modules ? `
         <div style="margin-top:14px;">
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
-            <input type="text" id="team-search-modules" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" style="width:180px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
+            <input type="text" id="team-search-modules" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" class="search-input" style="width:180px;">
             <select id="team-filter-modules" style="width:auto;">
               <option value="">All teams</option>
               <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
@@ -1524,7 +1527,7 @@ function renderTeam(){
       ${teamsSectionOpen.quizzes ? `
         <div style="margin-top:14px;">
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
-            <input type="text" id="team-search-quizzes" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" style="width:180px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
+            <input type="text" id="team-search-quizzes" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" class="search-input" style="width:180px;">
             <select id="team-filter-quizzes" style="width:auto;">
               <option value="">All teams</option>
               <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
@@ -1746,10 +1749,17 @@ async function showStandaloneQuizAttemptDetail(userId, quizId, holderId, personN
       ${!ans.is_correct?`<div style="font-size:13px;color:var(--green);">Correct answer: ${escapeHtml(correctText)}</div>`:''}
     </div>`;
   }).join("");
+  const longAnswerAnswersForScore = (attempt.answers||[]).filter(a=>a.type==="long_answer");
+  const longAnswerCorrectForScore = longAnswerAnswersForScore.filter(a=>a.is_correct===true).length;
+  const totalQForScore = (attempt.mc_total||0) + longAnswerAnswersForScore.length;
+  const totalCorrectForScore = (attempt.mc_score||0) + longAnswerCorrectForScore;
+  const pctForScore = totalQForScore ? Math.round((totalCorrectForScore/totalQForScore)*100) : null;
   holder.innerHTML = `
     <div class="card">
       <div class="k-label">QUIZ SUBMISSION · ${escapeHtml(personName)} · ${escapeHtml(quiz?quiz.title:'')}</div>
-      ${attempt.mc_total ? `<h2 style="margin-bottom:16px;">${attempt.mc_score}/${attempt.mc_total} correct</h2>` : `<h2 style="margin-bottom:16px;">Submitted</h2>`}
+      ${needsGrading
+        ? (attempt.mc_total ? `<h2 style="margin-bottom:16px;">${attempt.mc_score}/${attempt.mc_total} multiple choice correct so far</h2>` : `<h2 style="margin-bottom:16px;">Submitted</h2>`)
+        : (totalQForScore ? `<h2 style="margin-bottom:16px;">${totalCorrectForScore}/${totalQForScore} correct <span style="color:var(--text-faint);font-size:14px;font-weight:400;">(${pctForScore}%)</span></h2>` : `<h2 style="margin-bottom:16px;">Submitted</h2>`)}
       ${needsGrading ? `<p style="color:var(--amber);font-size:13px;margin-bottom:16px;">⚠ This submission has long-answer questions that need grading before it's finalized.</p>` : ""}
       ${rows || `<p style="color:var(--text-faint);font-size:13px;">No answers recorded.</p>`}
       ${needsGrading ? `<div class="nav-buttons"><div></div><button class="btn primary" id="finalize-grading">Finalize grading</button></div>` : ""}
@@ -1808,24 +1818,28 @@ function renderQuizzesList(){
   const pending = myQuizzes.filter(q=> !q.myAttempt);
   const completed = myQuizzes.filter(q=> !!q.myAttempt);
   const sentQuizzes = canManageQuizzes ? QUIZZES : [];
+  const activeSent = sentQuizzes.filter(q=> !(q.sent && q.isFullyComplete));
+  const fullyCompleteSent = sentQuizzes.filter(q=> q.sent && q.isFullyComplete);
 
   function quizCard(q, forManagement){
     let tag;
     if(!q.sent){ tag = `<span class="status-pill">Draft</span>`; }
-    else if(forManagement){ tag = `<span class="status-pill done">Sent</span>`; }
+    else if(forManagement){ tag = q.isFullyComplete ? `<span class="status-pill done">Fully completed</span>` : `<span class="status-pill done">Sent</span>`; }
     else if(q.myAttempt){
       if(q.myAttempt.graded){
         const longAnswerAnswers = (q.myAttempt.answers||[]).filter(a=>a.type==="long_answer");
         const longAnswerCorrect = longAnswerAnswers.filter(a=>a.is_correct===true).length;
         const totalQ = (q.myAttempt.mc_total||0) + longAnswerAnswers.length;
         const totalCorrect = (q.myAttempt.mc_score||0) + longAnswerCorrect;
-        tag = totalQ ? `<span class="status-pill done">${totalCorrect}/${totalQ} correct</span>` : `<span class="status-pill done">Completed</span>`;
+        tag = totalQ ? `<span class="status-pill done">${totalCorrect}/${totalQ} (${Math.round((totalCorrect/totalQ)*100)}%)</span>` : `<span class="status-pill done">Completed</span>`;
       } else {
         tag = `<span class="status-pill progress">Awaiting grading</span>`;
       }
     }
     else { tag = `<span class="status-pill">Not started</span>`; }
-    return `<div class="mod-card" data-quiz-open="${q.id}" data-quiz-manage="${forManagement?'1':'0'}">
+    const deleteBtn = forManagement ? `<button class="mini-btn danger" data-quiz-delete="${q.id}" style="position:absolute;top:12px;right:12px;">Delete</button>` : "";
+    return `<div class="mod-card" data-quiz-open="${q.id}" data-quiz-manage="${forManagement?'1':'0'}" style="position:relative;">
+      ${deleteBtn}
       <div class="row-top"><div><h3>${escapeHtml(q.title)}</h3><p class="sub">${q.questions.length} question${q.questions.length===1?'':'s'} · from ${escapeHtml(q.createdByName||'an admin')}</p></div></div>
       <div class="meta"><span>${tag}</span></div>
     </div>`;
@@ -1856,14 +1870,29 @@ function renderQuizzesList(){
     </div>
     ${canManageQuizzes ? `
     <div class="card" style="margin-top:16px;">
-      ${sectionHeader('sent', 'Sent Quizzes', sentQuizzes.length)}
-      ${quizListSectionOpen.sent ? `<p style="color:var(--text-dim);font-size:13.5px;margin:14px 0;">Every quiz you've created or sent. Click a sent quiz to see who's completed it and grade long-answer responses. Click a draft to keep editing it.</p><div class="grid">${sentQuizzes.map(q=>quizCard(q,true)).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here yet.</p>'}</div>` : ""}
+      ${sectionHeader('sent', 'Sent Quizzes', activeSent.length)}
+      ${quizListSectionOpen.sent ? `<p style="color:var(--text-dim);font-size:13.5px;margin:14px 0;">Every quiz you've created or sent, not yet fully complete. Click a sent quiz to see who's completed it and grade long-answer responses. Click a draft to keep editing it. Deleting a quiz here removes it — and everyone's completed results — everywhere.</p><div class="grid">${activeSent.map(q=>quizCard(q,true)).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here yet.</p>'}</div>` : ""}
+    </div>
+    <div class="card" style="margin-top:16px;">
+      ${sectionHeader('sentCompleted', 'Fully Completed', fullyCompleteSent.length)}
+      ${quizListSectionOpen.sentCompleted ? `<p style="color:var(--text-dim);font-size:13.5px;margin:14px 0;">Everyone eligible has completed and been fully graded on these.</p><div class="grid">${fullyCompleteSent.map(q=>quizCard(q,true)).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here yet.</p>'}</div>` : ""}
     </div>` : ""}
     ${addBtn}
   `);
   root.querySelectorAll("[data-quiz-section-toggle]").forEach(el=> el.addEventListener("click", ()=>{
     const key = el.getAttribute("data-quiz-section-toggle");
     quizListSectionOpen[key] = !quizListSectionOpen[key];
+    render();
+  }));
+  root.querySelectorAll("[data-quiz-delete]").forEach(el=> el.addEventListener("click", async (e)=>{
+    e.stopPropagation();
+    const id = el.getAttribute("data-quiz-delete");
+    const q = QUIZZES.find(x=>x.id===id);
+    if(!confirm(`Delete "${q?q.title:'this quiz'}"? This removes it — and everyone's completed results — for good.`)) return;
+    const { error } = await supabase.from("standalone_quizzes").delete().eq("id", id);
+    if(error){ alert("Couldn't delete: " + error.message); return; }
+    logEdit("deleted", "standalone_quiz", q?q.title:'');
+    await loadStandaloneQuizzes();
     render();
   }));
   root.querySelectorAll("[data-quiz-open]").forEach(el=> el.addEventListener("click", async ()=>{
@@ -1937,7 +1966,10 @@ function renderQuizSentDetail(){
 
   renderShell(`
     <div class="card">
-      <div class="k-label">SENT QUIZ</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div class="k-label">SENT QUIZ</div>
+        <button class="mini-btn danger" id="sent-detail-delete">Delete quiz</button>
+      </div>
       <h2 style="margin-bottom:4px;">${escapeHtml(quiz.title)}</h2>
       <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">${completedCount}/${quizSentDetailRoster.length} completed. Click a completed person to see their answers and grade any long-answer responses.</p>
       <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="3" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one is eligible for this quiz yet.</td></tr>`}</tbody></table></div>
@@ -1945,6 +1977,15 @@ function renderQuizSentDetail(){
     </div>
   `);
   document.getElementById("sent-detail-back").addEventListener("click", ()=>{ view="quizzes"; render(); });
+  document.getElementById("sent-detail-delete").addEventListener("click", async ()=>{
+    if(!confirm(`Delete "${quiz.title}"? This removes it — and everyone's completed results — for good.`)) return;
+    const { error } = await supabase.from("standalone_quizzes").delete().eq("id", quiz.id);
+    if(error){ alert("Couldn't delete: " + error.message); return; }
+    logEdit("deleted", "standalone_quiz", quiz.title);
+    quizSentDetailQuiz = null;
+    await loadStandaloneQuizzes();
+    view = "quizzes"; render();
+  });
   root.querySelectorAll("[data-sent-detail-toggle]").forEach(el=> el.addEventListener("click", async ()=>{
     const uid = el.getAttribute("data-sent-detail-toggle");
     const r = quizSentDetailRoster.find(x=>x.id===uid);
@@ -1972,7 +2013,7 @@ function renderQuizTake(){
     if(qq.type === "long_answer"){
       return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1} · LONG ANSWER</span></div>
         <div style="font-size:14px;margin-bottom:10px;color:var(--text);">${escapeHtml(qq.question)}</div>
-        <textarea data-quiz-longanswer="${qq.id}" placeholder="Type your answer…" style="min-height:100px;width:100%;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:10px;font-family:var(--sans);font-size:14px;">${escapeHtml(quizTakeAnswers[qq.id]||"")}</textarea>
+        <div class="field"><textarea data-quiz-longanswer="${qq.id}" placeholder="Type your answer…" style="min-height:100px;">${escapeHtml(quizTakeAnswers[qq.id]||"")}</textarea></div>
       </div>`;
     }
     const opts = (qq.options||[]).map((opt,oi)=>`<div class="opt-row"><input type="radio" name="qtake-${qq.id}" data-quiz-mc="${qq.id}" value="${oi}" ${quizTakeAnswers[qq.id]===oi?'checked':''}> <span>${escapeHtml(opt)}</span></div>`).join("");
@@ -2063,7 +2104,7 @@ function renderQuizResultStandalone(){
       <div class="k-label">QUIZ SUBMITTED</div>
       <h2 style="margin-bottom:6px;">${escapeHtml(q.title)}</h2>
       ${a.graded
-        ? `<p style="color:var(--text-dim);font-size:14px;margin-bottom:16px;">${totalCorrect}/${totalQ} correct</p>`
+        ? `<p style="color:var(--text-dim);font-size:14px;margin-bottom:16px;">${totalCorrect}/${totalQ} correct (${totalQ ? Math.round((totalCorrect/totalQ)*100) : 0}%)</p>`
         : (a.mc_total ? `<p style="color:var(--text-dim);font-size:14px;margin-bottom:16px;">${a.mc_score}/${a.mc_total} multiple choice correct so far</p>` : "")}
       ${!a.graded ? `<p style="color:var(--amber);font-size:13px;margin-bottom:16px;">⏳ Your long-answer responses are waiting to be graded. Your final score will update once that's done.</p>` : ""}
       ${rows}
@@ -2293,7 +2334,7 @@ let ANALYZE_TOTALS = { totalPeople:0, notStarted:0, totalAttempts:0, totalFlags:
    Separate from Training Module quizzes entirely.
    ============================================================ */
 let QUIZZES = [];
-let quizListSectionOpen = { pending:true, completed:false, sent:false };
+let quizListSectionOpen = { pending:true, completed:false, sent:false, sentCompleted:false };
 let currentQuizId = null;
 let quizTakeAnswers = {};
 let quizBuilderDraft = null;
@@ -2309,6 +2350,22 @@ async function loadStandaloneQuizzes(){
   const myTeamIds = new Set((myTeamMemberships||[]).map(m=>m.team_id));
   const myRecipientQuizIds = new Set((myRecipientRows||[]).map(r=>r.quiz_id));
 
+  // Only quiz-managers need completion status across everyone, not just themselves —
+  // fetched in bulk (4 queries total) rather than per-quiz, to stay cheap regardless
+  // of how many quizzes exist.
+  const managePerm = canCreateQuizzes();
+  let allAttempts = [], allTeamMembers = [], allRecipients = [], allProfileIds = [];
+  if(managePerm){
+    const [aAttempts, aTeamMembers, aRecipients, aProfiles] = await Promise.all([
+      supabase.from("standalone_quiz_attempts").select("quiz_id,user_id,graded"),
+      supabase.from("team_members").select("team_id,user_id"),
+      supabase.from("standalone_quiz_recipients").select("quiz_id,user_id"),
+      supabase.from("profiles").select("id")
+    ]);
+    allAttempts = aAttempts.data || []; allTeamMembers = aTeamMembers.data || [];
+    allRecipients = aRecipients.data || []; allProfileIds = (aProfiles.data || []).map(p=>p.id);
+  }
+
   QUIZZES = (quizzes||[]).map(q=>{
     // Broad visibility (via RLS) lets any quiz-manager see every quiz, for
     // management purposes. That's NOT the same as "this quiz is actually
@@ -2319,12 +2376,23 @@ async function loadStandaloneQuizzes(){
       else if(q.audience_type === "team") isRecipient = myTeamIds.has(q.team_id);
       else if(q.audience_type === "specific") isRecipient = myRecipientQuizIds.has(q.id);
     }
+    let isFullyComplete = false;
+    if(managePerm && q.sent){
+      let eligibleIds;
+      if(q.audience_type === "everyone") eligibleIds = allProfileIds;
+      else if(q.audience_type === "team") eligibleIds = allTeamMembers.filter(m=>m.team_id===q.team_id).map(m=>m.user_id);
+      else eligibleIds = allRecipients.filter(r=>r.quiz_id===q.id).map(r=>r.user_id);
+      isFullyComplete = eligibleIds.length > 0 && eligibleIds.every(uid=>{
+        const att = allAttempts.find(a=>a.quiz_id===q.id && a.user_id===uid);
+        return att && att.graded;
+      });
+    }
     return {
       id:q.id, title:q.title, createdBy:q.created_by, createdByName:q.created_by_name,
       audienceType:q.audience_type, teamId:q.team_id, sent:q.sent, createdAt:q.created_at,
       questions:(questions||[]).filter(qq=>qq.quiz_id===q.id).map(qq=>({ id:qq.id, type:qq.question_type, question:qq.question, options:qq.options||[], correct:qq.correct_index, explain:qq.explanation||"" })),
       myAttempt: (myAttempts||[]).find(a=>a.quiz_id===q.id) || null,
-      isRecipient
+      isRecipient, isFullyComplete
     };
   });
 }
@@ -2335,11 +2403,14 @@ async function loadStandaloneQuizzes(){
 let EDIT_LOG_ROWS = [];
 let editLogTypeFilter = "";
 let editLogSearchQuery = "";
+let editLogPage = 1;
+let editLogPageSize = 25;
 
 async function openEditLog(){
-  const { data, error } = await supabase.from("edit_log").select("*").order("created_at", { ascending:false }).limit(300);
+  const { data, error } = await supabase.from("edit_log").select("*").order("created_at", { ascending:false }).limit(2000);
   if(error){ alert("Couldn't load the edit log: " + error.message); return; }
   EDIT_LOG_ROWS = data || [];
+  editLogPage = 1;
   view = "edit-log"; render();
 }
 
@@ -2357,7 +2428,13 @@ function renderEditLog(){
     rows = rows.filter(r=> (r.entity_label||"").toLowerCase().includes(q) || (r.actor_name||"").toLowerCase().includes(q));
   }
 
-  const rowsHtml = rows.map(r=>{
+  const totalPages = Math.max(1, Math.ceil(rows.length / editLogPageSize));
+  if(editLogPage > totalPages) editLogPage = totalPages;
+  if(editLogPage < 1) editLogPage = 1;
+  const startIdx = (editLogPage - 1) * editLogPageSize;
+  const pageRows = rows.slice(startIdx, startIdx + editLogPageSize);
+
+  const rowsHtml = pageRows.map(r=>{
     const typeLabel = EDIT_LOG_TYPE_LABELS[r.entity_type] || r.entity_type;
     const actionColor = EDIT_LOG_ACTION_COLORS[r.action] || "var(--text-dim)";
     const when = new Date(r.created_at).toLocaleString();
@@ -2374,23 +2451,43 @@ function renderEditLog(){
     <div class="card">
       <div class="k-label">ADMIN</div>
       <h2 style="margin-bottom:4px;">Edit Log</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Every change to modules, lessons, module quizzes, the reference guide, and standalone quizzes — including who made it and when. Showing the most recent 300 entries.</p>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
-        <input type="text" id="edit-log-search" data-no-enter-submit placeholder="Search by name or person…" value="${escapeHtml(editLogSearchQuery)}" style="width:220px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:9px 12px;font-size:13px;">
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Every change to modules, lessons, module quizzes, the reference guide, and standalone quizzes — including who made it and when.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
+        <input type="text" id="edit-log-search" data-no-enter-submit placeholder="Search by name or person…" value="${escapeHtml(editLogSearchQuery)}" class="search-input" style="width:220px;">
         <select id="edit-log-filter" style="width:auto;">
           <option value="">All types</option>
           ${Object.entries(EDIT_LOG_TYPE_LABELS).map(([k,v])=>`<option value="${k}" ${editLogTypeFilter===k?'selected':''}>${v}</option>`).join("")}
         </select>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+          <span style="color:var(--text-faint);font-size:12.5px;">Per page:</span>
+          <select id="edit-log-pagesize" style="width:auto;">
+            <option value="25" ${editLogPageSize===25?'selected':''}>25</option>
+            <option value="50" ${editLogPageSize===50?'selected':''}>50</option>
+            <option value="100" ${editLogPageSize===100?'selected':''}>100</option>
+          </select>
+        </div>
       </div>
       <div style="overflow-x:auto;"><table class="team"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Type</th><th>What</th></tr></thead><tbody>${rowsHtml || `<tr><td colspan="5" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No matching entries.</td></tr>`}</tbody></table></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:16px;flex-wrap:wrap;gap:10px;">
+        <span style="color:var(--text-faint);font-size:12.5px;">${rows.length ? `Showing ${startIdx+1}–${Math.min(startIdx+editLogPageSize, rows.length)} of ${rows.length}` : "No entries"}</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="mini-btn" id="edit-log-prev" ${editLogPage<=1?'disabled':''}>← Prev</button>
+          <span style="color:var(--text-dim);font-size:12.5px;font-family:var(--mono);">Page ${editLogPage} of ${totalPages}</span>
+          <button class="mini-btn" id="edit-log-next" ${editLogPage>=totalPages?'disabled':''}>Next →</button>
+        </div>
+      </div>
     </div>
   `);
 
-  document.getElementById("edit-log-filter").addEventListener("change", (e)=>{ editLogTypeFilter = e.target.value; render(); });
+  document.getElementById("edit-log-filter").addEventListener("change", (e)=>{ editLogTypeFilter = e.target.value; editLogPage = 1; render(); });
+  document.getElementById("edit-log-pagesize").addEventListener("change", (e)=>{ editLogPageSize = +e.target.value; editLogPage = 1; render(); });
+  document.getElementById("edit-log-prev").addEventListener("click", ()=>{ if(editLogPage>1){ editLogPage--; render(); } });
+  document.getElementById("edit-log-next").addEventListener("click", ()=>{ if(editLogPage<totalPages){ editLogPage++; render(); } });
   const searchEl = document.getElementById("edit-log-search");
   let editLogSearchDebounce = null;
   searchEl.addEventListener("input", (e)=>{
     editLogSearchQuery = e.target.value;
+    editLogPage = 1;
     clearTimeout(editLogSearchDebounce);
     editLogSearchDebounce = setTimeout(()=>{
       render();
@@ -2981,14 +3078,14 @@ function setupRealtime(){
     .on("postgres_changes", { event:"INSERT", schema:"public", table:"messages", filter:"audience=eq.all" }, (payload)=>{
       if(payload.new.sender_id === session.user.id) return;
       showToast("📣 " + stripHtml(payload.new.body).slice(0,90), openNotifications);
-      if(view==="notifications" || view==="chat") refreshMessagingView(); else loadAllNotifications();
+      if(view==="notifications" || view==="chat") refreshMessagingView(); else loadAllNotifications().then(render);
     }).subscribe();
   realtimeChannels.push(chAnnounce);
 
   const chToMe = supabase.channel("rt-to-me-"+session.user.id)
     .on("postgres_changes", { event:"INSERT", schema:"public", table:"messages", filter:`recipient_id=eq.${session.user.id}` }, (payload)=>{
       showToast("💬 " + escapeHtml(payload.new.sender_name) + ": " + stripHtml(payload.new.body).slice(0,70), ()=>openChat());
-      if(view==="notifications" || view==="chat") refreshMessagingView(); else loadAllNotifications();
+      if(view==="notifications" || view==="chat") refreshMessagingView(); else loadAllNotifications().then(render);
     }).subscribe();
   realtimeChannels.push(chToMe);
 
@@ -2997,7 +3094,7 @@ function setupRealtime(){
       .on("postgres_changes", { event:"INSERT", schema:"public", table:"messages", filter:"audience=eq.admins" }, (payload)=>{
         if(payload.new.thread_id || payload.new.sender_id === session.user.id) return;
         showToast("🚩 New item waiting in the admin inbox", openNotifications);
-        if(view==="notifications" || view==="chat") refreshMessagingView(); else loadAllNotifications();
+        if(view==="notifications" || view==="chat") refreshMessagingView(); else loadAllNotifications().then(render);
       }).subscribe();
     realtimeChannels.push(chAdmin);
   }
@@ -3006,7 +3103,7 @@ function setupRealtime(){
   // the other participant would never see it disappear until they refresh.
   const chDeletes = supabase.channel("rt-deletes-"+session.user.id)
     .on("postgres_changes", { event:"DELETE", schema:"public", table:"messages" }, ()=>{
-      if(view==="notifications" || view==="chat") refreshMessagingView(); else loadAllNotifications();
+      if(view==="notifications" || view==="chat") refreshMessagingView(); else loadAllNotifications().then(render);
     }).subscribe();
   realtimeChannels.push(chDeletes);
 }
@@ -3346,10 +3443,31 @@ function removeFeedbackButton(){
   const btn = document.getElementById("feedback-fab");
   if(btn) btn.remove();
 }
+function getCurrentPageContext(){
+  if(currentModId){
+    const m = modById(currentModId);
+    if(m){
+      if(view==="lesson"){
+        const lesson = m.lessons[currentLessonIdx];
+        return `Module: ${m.title}${lesson?' — Lesson: '+lesson.title:''}`;
+      }
+      if(view==="quiz") return `Module: ${m.title} — Quiz`;
+      if(view==="results") return `Module: ${m.title} — Quiz Results`;
+      return `Module: ${m.title}`;
+    }
+  }
+  if(view==="quiz-take" || view==="quiz-result-standalone"){
+    const q = QUIZZES.find(x=>x.id===currentQuizId);
+    return q ? `Quiz: ${q.title}` : "Quizzes";
+  }
+  const viewLabels = { home:"Home", dashboard:"Training Modules", reference:"Reference Guide", notes:"My Notes", quizzes:"Quizzes", team:"Teams", settings:"Settings", notifications:"Notifications", chat:"Chat", analyze:"Analyze" };
+  return viewLabels[view] || view;
+}
 function openFeedbackSubmitModal(){
+  const context = getCurrentPageContext();
   openModal(`
     <h3>Send feedback</h3>
-    <p class="sub">This is completely anonymous — nobody, including admins, can see who sent it. There's no name or account attached to it at all.</p>
+    <p class="sub">This is completely anonymous — nobody, including admins, can see who sent it. There's no name or account attached to it at all. We'll just note you were on "${escapeHtml(context)}" so admins have some context.</p>
     <div class="field"><textarea id="feedback-input" placeholder="What's on your mind?" style="min-height:120px;"></textarea></div>
     <div class="modal-actions"><button class="btn" id="feedback-cancel">Cancel</button><button class="btn primary" id="feedback-submit">Send</button></div>
   `);
@@ -3359,7 +3477,7 @@ function openFeedbackSubmitModal(){
     if(!text) return;
     const btn = document.getElementById("feedback-submit");
     btn.disabled = true; btn.textContent = "Sending…";
-    const { error } = await supabase.from("feedback").insert({ body: text });
+    const { error } = await supabase.from("feedback").insert({ body: text, page_context: context });
     if(error){ alert("Couldn't send feedback: " + error.message); btn.disabled = false; btn.textContent = "Send"; return; }
     closeModal();
     showToast("Thanks — sent anonymously.");
@@ -3369,17 +3487,27 @@ async function openViewFeedbackModal(){
   const { data, error } = await supabase.from("feedback").select("*").order("created_at", { ascending:false });
   if(error){ alert("Couldn't load feedback: " + error.message); return; }
   const rows = (data||[]).map(f=>`
-    <div class="sub-card">
-      <div class="sub-card-head"><span class="tag">${new Date(f.created_at).toLocaleString()}</span></div>
+    <div class="sub-card" data-feedback-row="${f.id}">
+      <div class="sub-card-head"><span class="tag">${new Date(f.created_at).toLocaleString()}${f.page_context?' · '+escapeHtml(f.page_context):''}</span><button class="mini-btn danger" data-feedback-delete="${f.id}">Delete</button></div>
       <div style="font-size:14px;color:var(--text);white-space:pre-wrap;">${escapeHtml(f.body)}</div>
     </div>`).join("");
   openModal(`
     <h3>Feedback</h3>
     <p class="sub">Submitted anonymously — there's no way to trace any of these back to a person.</p>
-    <div style="max-height:420px;overflow-y:auto;">${rows || '<p style="color:var(--text-faint);font-size:13px;">No feedback yet.</p>'}</div>
+    <div id="feedback-list" style="max-height:420px;overflow-y:auto;">${rows || '<p style="color:var(--text-faint);font-size:13px;">No feedback yet.</p>'}</div>
     <div class="modal-actions"><button class="btn primary" id="feedback-view-close">Close</button></div>
   `, true);
   document.getElementById("feedback-view-close").addEventListener("click", closeModal);
+  document.querySelectorAll("[data-feedback-delete]").forEach(btn=> btn.addEventListener("click", async ()=>{
+    const id = btn.getAttribute("data-feedback-delete");
+    if(!confirm("Delete this feedback? This can't be undone.")) return;
+    const { error: delErr } = await supabase.from("feedback").delete().eq("id", id);
+    if(delErr){ alert("Couldn't delete: " + delErr.message); return; }
+    const row = document.querySelector(`[data-feedback-row="${id}"]`);
+    if(row) row.remove();
+    const list = document.getElementById("feedback-list");
+    if(list && !list.children.length) list.innerHTML = '<p style="color:var(--text-faint);font-size:13px;">No feedback yet.</p>';
+  }));
 }
 
 /* ============================================================
@@ -3693,7 +3821,13 @@ document.addEventListener("mousemove", (e)=>{
   const h = Math.max(60, startH + (e.clientY - startY));
   setImageSize(img, w, h);
 });
-document.addEventListener("mouseup", ()=>{ _imgResizeDrag = null; });
+document.addEventListener("mouseup", ()=>{
+  if(_imgResizeDrag){
+    const editorEl = _imgResizeDrag.img.closest(".rte-body");
+    if(editorEl) editorEl.dispatchEvent(new Event("input", { bubbles:true }));
+  }
+  _imgResizeDrag = null;
+});
 // Touch support (tablets, touchscreen laptops) — same logic, different events.
 document.addEventListener("touchstart", (e)=>{
   const handle = e.target.closest(".rte-resize-handle");
@@ -3712,7 +3846,13 @@ document.addEventListener("touchmove", (e)=>{
   const h = Math.max(60, startH + (t.clientY - startY));
   setImageSize(img, w, h);
 }, { passive:true });
-document.addEventListener("touchend", ()=>{ _imgResizeDrag = null; });
+document.addEventListener("touchend", ()=>{
+  if(_imgResizeDrag){
+    const editorEl = _imgResizeDrag.img.closest(".rte-body");
+    if(editorEl) editorEl.dispatchEvent(new Event("input", { bubbles:true }));
+  }
+  _imgResizeDrag = null;
+});
 function normalizePastedImages(editorEl){
   const rawImgs = Array.from(editorEl.querySelectorAll("img")).filter(img =>
     !img.closest(".rte-img-wrap") && !img.classList.contains("brand-mark") && !img.closest("header.top")
@@ -4504,7 +4644,7 @@ function renderReference(){
   renderShell(`
     <div class="ref-layout">
       <div class="ref-sidebar">
-        <input type="text" id="ref-search" data-no-enter-submit placeholder="Search reference guide…" value="${escapeHtml(refSearchQuery)}" style="width:100%;box-sizing:border-box;margin-bottom:10px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:8px 10px;font-size:13px;">
+        <input type="text" id="ref-search" data-no-enter-submit placeholder="Search reference guide…" value="${escapeHtml(refSearchQuery)}" class="search-input" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
         <div class="ref-sidebar-list">${sidebarHtml}</div>${addTopBtn}
       </div>
       <div class="ref-content">${contentHtml}</div>
@@ -4735,7 +4875,7 @@ function renderNotes(){
   renderShell(`
     <div class="ref-layout">
       <div class="ref-sidebar">
-        <input type="text" id="note-search" data-no-enter-submit placeholder="Search notes…" value="${escapeHtml(noteSearchQuery)}" style="width:100%;box-sizing:border-box;margin-bottom:10px;background:#0e1626;border:1px solid var(--stroke);border-radius:8px;color:var(--text);padding:8px 10px;font-size:13px;">
+        <input type="text" id="note-search" data-no-enter-submit placeholder="Search notes…" value="${escapeHtml(noteSearchQuery)}" class="search-input" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
         <div class="ref-sidebar-list">${sidebarHtml}</div><button class="dashed-btn" id="add-note" style="margin-top:10px;">+ Add note</button>
       </div>
       <div class="ref-content">${contentHtml}</div>
