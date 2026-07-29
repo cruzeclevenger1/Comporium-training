@@ -298,7 +298,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r22";
+const BUILD_VERSION = "2026-07-27T00:00Z-r23";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -506,29 +506,58 @@ function canEdit(){ return canEditContent() && editMode; }
    ============================================================ */
 async function loadEverything(){
   if(guestMode) return;
-  const { data: mods } = await supabase.from("modules").select("*").order("sort_order");
-  const { data: lessons } = await supabase.from("lessons").select("*").order("sort_order");
-  const { data: quiz } = await supabase.from("quiz_questions").select("*").order("sort_order");
+  const [modsRes, lessonsRes, quizRes] = await Promise.all([
+    supabase.from("modules").select("*").order("sort_order"),
+    supabase.from("lessons").select("*").order("sort_order"),
+    supabase.from("quiz_questions").select("id,module_id,sort_order,question,options,correct_index,explanation,question_type").order("sort_order")
+  ]);
+  const mods = modsRes.data, lessons = lessonsRes.data, quiz = quizRes.data;
   MODULES = (mods||[]).map(m=>({
     id:m.id, title:m.title, short:m.short, ledColor:m.led_color,
     popupEnabled: !!m.popup_enabled, popupTitle: m.popup_title||"", popupBody: m.popup_body||"",
     lessons:(lessons||[]).filter(l=>l.module_id===m.id).map(l=>({id:l.id,label:l.label,title:l.title,body:l.body})),
-    quiz:(quiz||[]).filter(q=>q.module_id===m.id).map(q=>({id:q.id,q:q.question,opts:q.options,correct:q.correct_index,explain:q.explanation,type:q.question_type||'multiple_choice',simScreens:q.sim_screens||[]}))
+    // sim_screens (Simulated Navigation screenshots) deliberately excluded here — each one can hold
+    // several full-resolution screenshots, and bulk-loading every module's at login was the single
+    // biggest contributor to slow first-page load. Fetched lazily instead, only when actually needed
+    // (starting that quiz, or opening that module in the editor) — see ensureQuizSimScreens().
+    quiz:(quiz||[]).filter(q=>q.module_id===m.id).map(q=>({id:q.id,q:q.question,opts:q.options,correct:q.correct_index,explain:q.explanation,type:q.question_type||'multiple_choice',simScreens:null}))
   }));
 
-  const { data: prog } = await supabase.from("progress").select("*").eq("user_id", session.user.id);
+  const [progRes, dismissalsRes, ipicsRes, ipProgressRes] = await Promise.all([
+    supabase.from("progress").select("*").eq("user_id", session.user.id),
+    supabase.from("module_popup_dismissals").select("module_id").eq("user_id", session.user.id),
+    supabase.from("interactive_pictures").select("id,lesson_id,hotspots"),
+    supabase.from("interactive_picture_progress").select("*").eq("user_id", session.user.id)
+  ]);
+
   progressMap = {};
-  (prog||[]).forEach(p=>{ progressMap[p.module_id] = { best:p.best_score, total:p.total, lastScore:p.last_score, attempts:p.attempts, lessonsViewed:p.lessons_viewed||[] }; });
+  (progRes.data||[]).forEach(p=>{ progressMap[p.module_id] = { best:p.best_score, total:p.total, lastScore:p.last_score, attempts:p.attempts, lessonsViewed:p.lessons_viewed||[] }; });
 
-  const { data: dismissals } = await supabase.from("module_popup_dismissals").select("module_id").eq("user_id", session.user.id);
-  dismissedModulePopups = new Set((dismissals||[]).map(d=>d.module_id));
+  dismissedModulePopups = new Set((dismissalsRes.data||[]).map(d=>d.module_id));
 
-  const { data: ipics } = await supabase.from("interactive_pictures").select("*");
   INTERACTIVE_PICTURES = {};
-  (ipics||[]).forEach(ip=>{ INTERACTIVE_PICTURES[ip.id] = { id:ip.id, lessonId:ip.lesson_id, image:ip.image, hotspots:ip.hotspots||[] }; });
-  const { data: ipProgress } = await supabase.from("interactive_picture_progress").select("*").eq("user_id", session.user.id);
+  (ipicsRes.data||[]).forEach(ip=>{ INTERACTIVE_PICTURES[ip.id] = { id:ip.id, lessonId:ip.lesson_id, image:null, hotspots:ip.hotspots||[] }; });
   myInteractivePicProgress = {};
-  (ipProgress||[]).forEach(p=>{ myInteractivePicProgress[p.interactive_picture_id] = new Set(p.read_hotspot_ids||[]); });
+  (ipProgressRes.data||[]).forEach(p=>{ myInteractivePicProgress[p.interactive_picture_id] = new Set(p.read_hotspot_ids||[]); });
+}
+
+async function ensureQuizSimScreens(m){
+  const simQuestions = m.quiz.filter(q=> q.type==='simulation' && q.simScreens===null);
+  if(!simQuestions.length) return;
+  const ids = simQuestions.map(q=>q.id);
+  const { data } = await supabase.from("quiz_questions").select("id,sim_screens").in("id", ids);
+  (data||[]).forEach(row=>{
+    const q = m.quiz.find(x=>x.id===row.id);
+    if(q) q.simScreens = row.sim_screens || [];
+  });
+}
+
+async function ensureInteractivePicImage(ipId){
+  const ip = INTERACTIVE_PICTURES[ipId];
+  if(!ip || ip.image) return ip; // already have it, or it doesn't exist
+  const { data } = await supabase.from("interactive_pictures").select("image").eq("id", ipId).single();
+  if(data) ip.image = data.image;
+  return ip;
 }
 
 async function loadProfile(){
@@ -793,10 +822,16 @@ async function afterLogin(){
     await supabase.from("profiles").update({ is_first_login:false }).eq("id", session.user.id);
     profile.is_first_login = false;
   }
-  await loadEverything();
-  await loadUiTextOverrides();
-  await loadAllNotifications();
-  await loadStandaloneQuizzes();
+  // These four don't depend on each other's results, only on profile being
+  // loaded — running them in parallel instead of one-after-another cuts
+  // total login time from the sum of all four round trips down to the
+  // slowest single one.
+  await Promise.all([
+    loadEverything(),
+    loadUiTextOverrides(),
+    loadAllNotifications(),
+    loadStandaloneQuizzes()
+  ]);
   setupRealtime();
   view = "home"; render();
   ensureFeedbackButton();
@@ -1194,6 +1229,7 @@ function renderLesson(){
 
 async function startQuiz(mode){
   const m = modById(currentModId);
+  await ensureQuizSimScreens(m);
   quizSimScreenIndex = {};
   quizSimMisclicks = {};
   quizIsTestRun = canEditContent() && editMode;
@@ -2562,22 +2598,6 @@ async function loadStandaloneQuizzes(){
   const myTeamIds = new Set((myTeamMemberships||[]).map(m=>m.team_id));
   const myRecipientQuizIds = new Set((myRecipientRows||[]).map(r=>r.quiz_id));
 
-  // Only quiz-managers need completion status across everyone, not just themselves —
-  // fetched in bulk (4 queries total) rather than per-quiz, to stay cheap regardless
-  // of how many quizzes exist.
-  const managePerm = canCreateQuizzes();
-  let allAttempts = [], allTeamMembers = [], allRecipients = [], allProfileIds = [];
-  if(managePerm){
-    const [aAttempts, aTeamMembers, aRecipients, aProfiles] = await Promise.all([
-      supabase.from("standalone_quiz_attempts").select("quiz_id,user_id,graded"),
-      supabase.from("team_members").select("team_id,user_id"),
-      supabase.from("standalone_quiz_recipients").select("quiz_id,user_id"),
-      supabase.from("profiles").select("id")
-    ]);
-    allAttempts = aAttempts.data || []; allTeamMembers = aTeamMembers.data || [];
-    allRecipients = aRecipients.data || []; allProfileIds = (aProfiles.data || []).map(p=>p.id);
-  }
-
   QUIZZES = (quizzes||[]).map(q=>{
     // Broad visibility (via RLS) lets any quiz-manager see every quiz, for
     // management purposes. That's NOT the same as "this quiz is actually
@@ -2588,29 +2608,52 @@ async function loadStandaloneQuizzes(){
       else if(q.audience_type === "team") isRecipient = myTeamIds.has(q.team_id);
       else if(q.audience_type === "specific") isRecipient = myRecipientQuizIds.has(q.id);
     }
-    let isFullyComplete = false;
-    if(managePerm && q.sent){
-      let eligibleIds;
-      if(q.audience_type === "everyone") eligibleIds = allProfileIds;
-      else if(q.audience_type === "team") eligibleIds = allTeamMembers.filter(m=>m.team_id===q.team_id).map(m=>m.user_id);
-      else eligibleIds = allRecipients.filter(r=>r.quiz_id===q.id).map(r=>r.user_id);
-      isFullyComplete = eligibleIds.length > 0 && eligibleIds.every(uid=>{
-        const att = allAttempts.find(a=>a.quiz_id===q.id && a.user_id===uid);
-        return att && att.graded;
-      });
-    }
     return {
       id:q.id, title:q.title, createdBy:q.created_by, createdByName:q.created_by_name,
       audienceType:q.audience_type, teamId:q.team_id, sent:q.sent, createdAt:q.created_at,
       questions:(questions||[]).filter(qq=>qq.quiz_id===q.id).map(qq=>({ id:qq.id, type:qq.question_type, question:qq.question, options:qq.options||[], correct:qq.correct_index, explain:qq.explanation||"" })),
       myAttempt: (myAttempts||[]).find(a=>a.quiz_id===q.id) || null,
-      isRecipient, isFullyComplete
+      isRecipient, isFullyComplete:false // filled in by the background pass below, for quiz-managers only
     };
   });
 
+  // A reasonable first-pass value so the dashboard LED is correct immediately
+  // for regular users; managers get a more complete answer (including ungraded
+  // submissions) once the background pass below finishes.
+  quizAlertActive = QUIZZES.some(q=> q.isRecipient && !q.myAttempt);
+
+  // Completion status across everyone (not just yourself) is only needed for
+  // quiz-managers, and requires 4 extra bulk queries — not worth blocking
+  // everyone else's login for. Runs after the page is already usable.
+  if(canCreateQuizzes()) loadQuizManagerExtras().catch(()=>{});
+}
+
+async function loadQuizManagerExtras(){
+  const [aAttempts, aTeamMembers, aRecipients, aProfiles] = await Promise.all([
+    supabase.from("standalone_quiz_attempts").select("quiz_id,user_id,graded"),
+    supabase.from("team_members").select("team_id,user_id"),
+    supabase.from("standalone_quiz_recipients").select("quiz_id,user_id"),
+    supabase.from("profiles").select("id")
+  ]);
+  const allAttempts = aAttempts.data || [], allTeamMembers = aTeamMembers.data || [];
+  const allRecipients = aRecipients.data || [], allProfileIds = (aProfiles.data || []).map(p=>p.id);
+
+  QUIZZES.forEach(q=>{
+    if(!q.sent) return;
+    let eligibleIds;
+    if(q.audienceType === "everyone") eligibleIds = allProfileIds;
+    else if(q.audienceType === "team") eligibleIds = allTeamMembers.filter(m=>m.team_id===q.teamId).map(m=>m.user_id);
+    else eligibleIds = allRecipients.filter(r=>r.quiz_id===q.id).map(r=>r.user_id);
+    q.isFullyComplete = eligibleIds.length > 0 && eligibleIds.every(uid=>{
+      const att = allAttempts.find(a=>a.quiz_id===q.id && a.user_id===uid);
+      return att && att.graded;
+    });
+  });
+
   const hasPending = QUIZZES.some(q=> q.isRecipient && !q.myAttempt);
-  const hasUngraded = managePerm && allAttempts.some(a=> !a.graded);
+  const hasUngraded = allAttempts.some(a=> !a.graded);
   quizAlertActive = hasPending || hasUngraded;
+  if(view==="home" || view==="quizzes") render(); // refresh the LED / Sent Quizzes tab now that this landed
 }
 
 /* ============================================================
@@ -4533,9 +4576,21 @@ function normalizeInteractivePicEmbeds(root){
     const ipId = el.getAttribute('data-interactive-pic-id');
     const ip = INTERACTIVE_PICTURES[ipId];
     if(!ip) return;
+    if(el.getAttribute('data-ip-loading')) return; // fetch already in flight for this element
     const isEditable = !!el.closest('[contenteditable="true"]');
     const mode = isEditable ? 'edit' : 'play';
     if(el.getAttribute('data-ip-hydrated') === mode) return;
+
+    if(!ip.image){
+      el.setAttribute('data-ip-loading', '1');
+      el.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text-faint);font-family:var(--mono);font-size:12px;">Loading picture…</div>`;
+      ensureInteractivePicImage(ipId).then(()=>{
+        el.removeAttribute('data-ip-loading');
+        normalizeInteractivePicEmbeds(root);
+      });
+      return;
+    }
+
     el.setAttribute('data-ip-hydrated', mode);
     if(isEditable){
       el.innerHTML = `
@@ -4787,6 +4842,7 @@ function compressImageFile(file, maxDim){
 async function openEditor(id){
   if(id){
     editingExistingId = id;
+    await ensureQuizSimScreens(modById(id));
     draftModule = JSON.parse(JSON.stringify(modById(id)));
     expandedLessonIdx = null; expandedQuestionIdx = null;
     view = "editor"; render();
