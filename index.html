@@ -312,7 +312,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r25";
+const BUILD_VERSION = "2026-07-27T00:00Z-r26";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -523,7 +523,7 @@ async function loadEverything(){
   const [modsRes, lessonsRes, quizRes] = await Promise.all([
     supabase.from("modules").select("*").order("sort_order"),
     supabase.from("lessons").select("*").order("sort_order"),
-    supabase.from("quiz_questions").select("id,module_id,sort_order,question,options,correct_index,explanation,question_type").order("sort_order")
+    supabase.from("quiz_questions").select("id,module_id,sort_order,question,options,correct_index,explanation,question_type,end_goal,final_screen_id").order("sort_order")
   ]);
   const mods = modsRes.data, lessons = lessonsRes.data, quiz = quizRes.data;
   MODULES = (mods||[]).map(m=>({
@@ -534,7 +534,7 @@ async function loadEverything(){
     // several full-resolution screenshots, and bulk-loading every module's at login was the single
     // biggest contributor to slow first-page load. Fetched lazily instead, only when actually needed
     // (starting that quiz, or opening that module in the editor) — see ensureQuizSimScreens().
-    quiz:(quiz||[]).filter(q=>q.module_id===m.id).map(q=>({id:q.id,q:q.question,opts:q.options,correct:q.correct_index,explain:q.explanation,type:q.question_type||'multiple_choice',simScreens:null}))
+    quiz:(quiz||[]).filter(q=>q.module_id===m.id).map(q=>({id:q.id,q:q.question,opts:q.options,correct:q.correct_index,explain:q.explanation,type:q.question_type||'multiple_choice',simScreens:null,endGoal:q.end_goal||'button',finalScreenId:q.final_screen_id||null}))
   }));
 
   const [progRes, dismissalsRes, ipicsRes, ipProgressRes] = await Promise.all([
@@ -598,7 +598,7 @@ function renderAuth(){
         </div>
         ${authError ? `<div class="error-msg">${escapeHtml(authError)}</div>` : ""}
         ${authInfo ? `<div class="info-msg">${escapeHtml(authInfo)}</div>` : ""}
-        ${authMode==='signup' ? `<div class="field"><label>Your name</label><input type="text" id="auth-name" placeholder="Jordan Smith"></div>` : ""}
+        ${authMode==='signup' ? `<div style="display:flex;gap:10px;"><div class="field" style="flex:1;"><label>First name</label><input type="text" id="auth-first-name" placeholder="Jordan"></div><div class="field" style="flex:1;"><label>Last name</label><input type="text" id="auth-last-name" placeholder="Smith"></div></div>` : ""}
         <div class="field"><label>Email</label><input type="email" id="auth-email" placeholder="you@company.com"></div>
         <div class="field"><label>Password</label><input type="password" id="auth-password" placeholder="••••••••"></div>
         <button class="btn primary" id="auth-submit" style="width:100%;">${authMode==='login'?'Log in':'Create account'}</button>
@@ -800,6 +800,12 @@ function renderGuestFeatureList(){
   document.getElementById("guest-features-done").addEventListener("click", ()=>{ view="home"; render(); });
 }
 
+function formatNamePart(str){
+  return str.trim().split(/\s+/).filter(Boolean).map(word=>
+    word.split('-').map(seg => seg.charAt(0).toUpperCase() + seg.slice(1).toLowerCase()).join('-')
+  ).join(' ');
+}
+
 async function submitAuth(){
   authError=""; authInfo="";
   const email = document.getElementById("auth-email").value.trim();
@@ -807,8 +813,10 @@ async function submitAuth(){
   if(!email || !password){ authError = "Enter an email and password."; renderAuth(); return; }
 
   if(authMode==="signup"){
-    const name = document.getElementById("auth-name").value.trim();
-    if(!name){ authError = "Enter your name."; renderAuth(); return; }
+    const firstRaw = document.getElementById("auth-first-name").value.trim();
+    const lastRaw = document.getElementById("auth-last-name").value.trim();
+    if(!firstRaw || !lastRaw){ authError = "Enter your first and last name."; renderAuth(); return; }
+    const name = `${formatNamePart(firstRaw)} ${formatNamePart(lastRaw)}`;
     const { data, error } = await supabase.auth.signUp({ email, password, options:{ data:{ name } } });
     if(error){ authError = error.message; renderAuth(); return; }
     if(data.session){
@@ -1622,11 +1630,10 @@ function renderTeam(){
           <button class="mini-btn" data-perm-toggle="${r.id}">Permissions ${panelOpen?'▾':'▸'}</button>
           ${isDirty ? `<button class="mini-btn" data-role-save="${r.id}" style="color:var(--green);border-color:var(--green-dim);">Save</button>` : ""}
         </div>`;
-    const resetBtn = !isSelf ? `<button class="mini-btn" data-reset-pw="${r.id}" data-reset-name="${escapeHtml(r.name)}">Reset password</button>` : "";
-    const deleteUserBtn = !isSelf ? `<button class="mini-btn danger" data-delete-user="${r.id}" data-delete-name="${escapeHtml(r.name)}">Delete user</button>` : "";
-    const mainRow = `<tr><td>${escapeHtml(r.name)}</td><td>${roleCell}</td><td>${resetBtn}</td><td>${deleteUserBtn}</td></tr>`;
+    const editPersonBtn = !isSelf ? `<button class="mini-btn" data-edit-person="${r.id}" data-edit-person-name="${escapeHtml(r.name)}">Edit</button>` : "";
+    const mainRow = `<tr><td>${escapeHtml(r.name)}</td><td>${roleCell}</td><td>${editPersonBtn}</td></tr>`;
     const panelRow = (!isSelf && panelOpen) ? `
-      <tr class="team-row-detail"><td colspan="4">
+      <tr class="team-row-detail"><td colspan="3">
         <div style="padding:10px 4px 16px;display:flex;flex-direction:column;gap:8px;">
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:editContent" ${currentPerms.editContent?'checked':''}> Can edit modules, lessons and module quizzes</label>
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:createQuizzes" ${currentPerms.createQuizzes?'checked':''}> Can create quizzes</label>
@@ -1755,7 +1762,7 @@ function renderTeam(){
               ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
             </select>
           </div>
-          <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th><th></th><th></th></tr></thead><tbody>${peopleRows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
+          <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th><th></th></tr></thead><tbody>${peopleRows || `<tr><td colspan="3" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
         </div>` : ""}
     </div>` : ""}
 
@@ -1889,16 +1896,12 @@ function renderTeam(){
     delete pendingRoleChanges[id];
     await openTeamProgress();
   }));
-  root.querySelectorAll("[data-reset-pw]").forEach(el=> el.addEventListener("click", (e)=>{
+  root.querySelectorAll("[data-edit-person]").forEach(el=> el.addEventListener("click", (e)=>{
     e.stopPropagation();
-    openPasswordResetModal(el.getAttribute("data-reset-pw"), el.getAttribute("data-reset-name"));
-  }));
-  root.querySelectorAll("[data-delete-user]").forEach(el=> el.addEventListener("click", (e)=>{
-    e.stopPropagation();
-    openDeleteUserModal(el.getAttribute("data-delete-user"), el.getAttribute("data-delete-name"));
+    openEditPersonModal(el.getAttribute("data-edit-person"), el.getAttribute("data-edit-person-name"));
   }));
   root.querySelectorAll("[data-team-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
-    if(e.target.closest("[data-role-select]")||e.target.closest("[data-role-save]")||e.target.closest("[data-reset-pw]")||e.target.closest("[data-delete-user]")) return;
+    if(e.target.closest("[data-role-select]")||e.target.closest("[data-role-save]")||e.target.closest("[data-edit-person]")) return;
     const id = el.getAttribute("data-team-toggle");
     if(teamExpandedRows.has(id)) teamExpandedRows.delete(id); else teamExpandedRows.add(id);
     render();
@@ -3666,63 +3669,75 @@ function openCoachingModal(targetUserId, targetName, context){
   });
 }
 
-function openDeleteUserModal(userId, name){
+function openEditPersonModal(userId, name){
   openModal(`
-    <h3>Delete ${escapeHtml(name)}'s account</h3>
-    <p class="sub">This permanently deletes their account, progress, notes, and messages. This cannot be undone.</p>
-    <div class="modal-error" id="del-user-error" style="display:none;"></div>
-    <div class="field"><label>Type your password to confirm</label><input type="password" id="del-user-password" placeholder="Your current password"></div>
-    <div class="modal-actions"><button class="btn" id="del-user-cancel">Cancel</button><button class="btn danger" id="del-user-confirm">Delete permanently</button></div>
-  `);
-  document.getElementById("del-user-cancel").addEventListener("click", closeModal);
-  document.getElementById("del-user-confirm").addEventListener("click", async ()=>{
-    const pw = document.getElementById("del-user-password").value;
-    const err = document.getElementById("del-user-error");
-    const confirmBtn = document.getElementById("del-user-confirm");
-    if(!pw){ err.textContent = "Enter your password to confirm."; err.style.display="block"; return; }
-    confirmBtn.disabled = true; confirmBtn.textContent = "Checking…";
+    <h3>Edit ${escapeHtml(name)}</h3>
+    <div class="modal-error" id="edit-person-error" style="display:none;"></div>
+
+    <div class="field"><label>Name</label><input type="text" id="edit-person-name" value="${escapeHtml(name)}"></div>
+    <div class="modal-actions" style="margin-bottom:22px;"><div></div><button class="btn primary" id="edit-person-save-name">Save name</button></div>
+
+    <div style="border-top:1px solid var(--stroke);padding-top:16px;margin-bottom:18px;">
+      <label style="font-size:11.5px;color:var(--text-faint);font-family:var(--mono);display:block;margin-bottom:10px;letter-spacing:.05em;">RESET PASSWORD</label>
+      <div class="field"><input type="password" id="edit-person-pw1" placeholder="New password (at least 6 characters)"></div>
+      <div class="field"><input type="password" id="edit-person-pw2" placeholder="Confirm new password"></div>
+      <div class="modal-actions"><div></div><button class="btn" id="edit-person-reset-pw">Reset password</button></div>
+    </div>
+
+    <div style="border-top:1px solid var(--stroke);padding-top:16px;">
+      <label style="font-size:11.5px;color:var(--red);font-family:var(--mono);display:block;margin-bottom:10px;letter-spacing:.05em;">DANGER ZONE</label>
+      <div class="field"><input type="password" id="edit-person-delete-pw" placeholder="Type YOUR password to confirm deletion"></div>
+      <div class="modal-actions"><button class="btn" id="edit-person-cancel">Close</button><button class="btn danger" id="edit-person-delete">Delete account permanently</button></div>
+    </div>
+  `, true);
+
+  document.getElementById("edit-person-cancel").addEventListener("click", closeModal);
+  const err = document.getElementById("edit-person-error");
+  const showErr = (msg)=>{ err.textContent = msg; err.style.display = "block"; };
+
+  document.getElementById("edit-person-save-name").addEventListener("click", async ()=>{
+    const newName = document.getElementById("edit-person-name").value.trim();
+    if(!newName){ showErr("Enter a name."); return; }
+    const btn = document.getElementById("edit-person-save-name");
+    btn.disabled = true; btn.textContent = "Saving…";
+    const { error } = await supabase.from("profiles").update({ name: newName }).eq("id", userId);
+    if(error){ showErr("Couldn't update name: " + error.message); btn.disabled=false; btn.textContent="Save name"; return; }
+    logEdit("updated", "person_name", `${name} → ${newName}`);
+    closeModal();
+    showToast("Name updated.");
+    await openTeamProgress();
+  });
+
+  document.getElementById("edit-person-reset-pw").addEventListener("click", async ()=>{
+    const pw1 = document.getElementById("edit-person-pw1").value;
+    const pw2 = document.getElementById("edit-person-pw2").value;
+    if(pw1.length < 6){ showErr("Password must be at least 6 characters."); return; }
+    if(pw1 !== pw2){ showErr("Passwords don't match."); return; }
+    const btn = document.getElementById("edit-person-reset-pw");
+    btn.disabled = true; btn.textContent = "Resetting…";
+    const { data, error } = await supabase.functions.invoke("admin-reset-password", { body: { userId, newPassword: pw1 } });
+    if(error || (data && data.error)){ showErr("Couldn't reset password: " + (data && data.error ? data.error : error.message)); btn.disabled=false; btn.textContent="Reset password"; return; }
+    showToast("Password updated.");
+    btn.disabled = false; btn.textContent = "Reset password";
+    document.getElementById("edit-person-pw1").value = "";
+    document.getElementById("edit-person-pw2").value = "";
+  });
+
+  document.getElementById("edit-person-delete").addEventListener("click", async ()=>{
+    const pw = document.getElementById("edit-person-delete-pw").value;
+    if(!pw){ showErr("Enter your password to confirm deletion."); return; }
+    if(!confirm(`Really delete ${name}'s account? This permanently deletes their progress, notes, and messages. This cannot be undone.`)) return;
+    const btn = document.getElementById("edit-person-delete");
+    btn.disabled = true; btn.textContent = "Checking…";
     const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({ email: session.user.email, password: pw });
-    if(authErr){
-      err.textContent = "Incorrect password.";
-      err.style.display = "block";
-      confirmBtn.disabled = false; confirmBtn.textContent = "Delete permanently";
-      return;
-    }
+    if(authErr){ showErr("Incorrect password."); btn.disabled=false; btn.textContent="Delete account permanently"; return; }
     session = authData.session;
-    confirmBtn.textContent = "Deleting…";
+    btn.textContent = "Deleting…";
     const { data, error } = await supabase.functions.invoke("admin-delete-user", { body: { userId } });
-    if(error || (data && data.error)){
-      err.textContent = "Couldn't delete: " + (data && data.error ? data.error : error.message);
-      err.style.display = "block";
-      confirmBtn.disabled = false; confirmBtn.textContent = "Delete permanently";
-      return;
-    }
+    if(error || (data && data.error)){ showErr("Couldn't delete: " + (data && data.error ? data.error : error.message)); btn.disabled=false; btn.textContent="Delete account permanently"; return; }
     closeModal();
     alert(`${name}'s account has been deleted.`);
     await openTeamProgress();
-  });
-}
-
-function openPasswordResetModal(userId, name){
-  openModal(`
-    <h3>Reset password</h3>
-    <p class="sub">Set a new password for ${escapeHtml(name)}. They won't be shown their old one.</p>
-    <div class="modal-error" id="pw-modal-error" style="display:none;"></div>
-    <div class="field"><label>New password</label><input type="password" id="pw-modal-1" placeholder="At least 6 characters"></div>
-    <div class="field"><label>Confirm new password</label><input type="password" id="pw-modal-2"></div>
-    <div class="modal-actions"><button class="btn" id="pw-modal-cancel">Cancel</button><button class="btn primary" id="pw-modal-save">Save</button></div>
-  `);
-  document.getElementById("pw-modal-cancel").addEventListener("click", closeModal);
-  document.getElementById("pw-modal-save").addEventListener("click", async ()=>{
-    const pw1 = document.getElementById("pw-modal-1").value;
-    const pw2 = document.getElementById("pw-modal-2").value;
-    const err = document.getElementById("pw-modal-error");
-    if(pw1.length < 6){ err.textContent = "Password must be at least 6 characters."; err.style.display="block"; return; }
-    if(pw1 !== pw2){ err.textContent = "Passwords don't match."; err.style.display="block"; return; }
-    const { data, error } = await supabase.functions.invoke("admin-reset-password", { body: { userId, newPassword: pw1 } });
-    if(error || (data && data.error)){ err.textContent = "Couldn't reset password: " + (data && data.error ? data.error : error.message); err.style.display="block"; return; }
-    closeModal();
-    alert(`Password updated for ${name}.`);
   });
 }
 
@@ -3731,17 +3746,19 @@ function openPasswordResetModal(userId, name){
    ============================================================ */
 function blankModule(){ return { id:null, title:"", short:"", ledColor:"green", lessons:[], quiz:[] }; }
 function blankLesson(){ return { title:"New lesson", label:"Lesson · Untitled", body:"<p>Write the lesson content here.</p>" }; }
-function blankQuestion(){ return { q:"New question", opts:["Option A","Option B"], correct:0, explain:"", type:"multiple_choice", simScreens:[] }; }
+function blankQuestion(){ return { q:"New question", opts:["Option A","Option B"], correct:0, explain:"", type:"multiple_choice", simScreens:[], endGoal:"button", finalScreenId:null }; }
 
 function openSimZoneTargetModal(d, qi, si, zi, onSaved){
-  const screens = d.quiz[qi].simScreens;
+  const q = d.quiz[qi];
+  const screens = q.simScreens;
   const zone = screens[si].zones[zi];
   const options = screens.map((s,idx)=> idx===si ? "" : `<option value="${s.id}" ${zone.targetScreenId===s.id?'selected':''}>Screen ${idx+1}</option>`).join("");
+  const isScreenGoal = q.endGoal === 'screen';
   openModal(`
     <h3>Where does this button lead?</h3>
-    <p class="sub">Pick the next screen, or "Finish" if this is the button that completes the simulation.</p>
+    <p class="sub">${isScreenGoal ? "Pick which screen this button leads to." : 'Pick the next screen, or "Finish" if this is the button that completes the simulation.'}</p>
     <div class="field"><select id="sim-zone-target-select">
-      <option value="" ${!zone.targetScreenId?'selected':''}>Finish (completes the simulation)</option>
+      ${isScreenGoal ? `<option value="" ${!zone.targetScreenId?'selected':''} disabled>— choose a screen —</option>` : `<option value="" ${!zone.targetScreenId?'selected':''}>Finish (completes the simulation)</option>`}
       ${options}
     </select></div>
     <div class="modal-actions"><button class="btn" id="sim-zone-cancel">Cancel</button><button class="btn primary" id="sim-zone-save">Save</button></div>
@@ -3749,6 +3766,7 @@ function openSimZoneTargetModal(d, qi, si, zi, onSaved){
   document.getElementById("sim-zone-cancel").addEventListener("click", closeModal);
   document.getElementById("sim-zone-save").addEventListener("click", ()=>{
     const val = document.getElementById("sim-zone-target-select").value;
+    if(isScreenGoal && !val){ alert("Pick which screen this button leads to."); return; }
     zone.targetScreenId = val || null;
     closeModal();
     onSaved();
@@ -3817,6 +3835,25 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
   function draw(){
     const screens = q.simScreens;
     const screen = screens[quizSimScreenIndex[quizIdx]];
+    const isFinalScreen = q.endGoal === 'screen' && q.finalScreenId === screen.id;
+
+    if(isFinalScreen){
+      overlay.innerHTML = `
+        <div style="display:flex;justify-content:flex-end;width:100%;max-width:1300px;margin-bottom:14px;">
+          <button class="btn" id="sim-play-fullscreen-close">✕ Exit fullscreen</button>
+        </div>
+        <div style="position:relative;display:inline-block;max-width:min(94vw,1300px);max-height:76vh;">
+          <img src="${screen.image}" style="max-width:min(94vw,1300px);max-height:76vh;display:block;user-select:none;border-radius:8px;" draggable="false">
+        </div>
+        <button class="btn primary" id="sim-play-done" style="margin-top:18px;">Done</button>`;
+      document.getElementById("sim-play-fullscreen-close").addEventListener("click", ()=>{ overlay.remove(); render(); });
+      document.getElementById("sim-play-done").addEventListener("click", ()=>{
+        quizAnswers[quizIdx] = "done";
+        overlay.remove(); render();
+      });
+      return;
+    }
+
     const zonesHtml = (screen.zones||[]).map((z,zi)=>`<div class="sim-play-zone" data-sim-play-zone-fs="${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;cursor:pointer;"></div>`).join("");
     overlay.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:1300px;margin-bottom:14px;">
@@ -3893,21 +3930,42 @@ function openSimEditFullscreen(qi, si){
 
 function renderSimBuilder(q, qi){
   const screens = q.simScreens || [];
+  const endGoalHtml = `
+    <div class="field"><label>End goal</label>
+      <select data-q-endgoal="${qi}">
+        <option value="button" ${q.endGoal!=='screen'?'selected':''}>A specific button finishes it</option>
+        <option value="screen" ${q.endGoal==='screen'?'selected':''}>Reaching a specific screen finishes it</option>
+      </select>
+    </div>
+    ${q.endGoal==='screen' ? `
+    <div class="field"><label>Final screen</label>
+      <select data-q-finalscreen="${qi}">
+        <option value="">— choose a screen —</option>
+        ${screens.map((s,si)=>`<option value="${s.id}" ${q.finalScreenId===s.id?'selected':''}>Screen ${si+1}</option>`).join("")}
+      </select>
+      <p class="hint">When someone navigates to this screen, it's shown to them with a "Done" button — no button click needed to finish.</p>
+    </div>` : ''}`;
   const screensHtml = screens.map((screen, si)=>{
-    const zonesHtml = renderSimZonesHtml(screens, si, qi);
+    const isFinal = q.endGoal==='screen' && q.finalScreenId===screen.id;
+    const zonesHtml = isFinal ? '' : renderSimZonesHtml(screens, si, qi);
     return `<div class="sub-card" style="margin-bottom:10px;">
-      <div class="sub-card-head"><span class="tag">SCREEN ${si+1}</span><div style="display:flex;gap:8px;">${screen.image?`<button class="mini-btn" data-sim-fullscreen="${qi}:${si}">⛶ Fullscreen</button>`:''}<button class="mini-btn danger" data-sim-screen-del="${qi}:${si}">Delete screen</button></div></div>
-      ${screen.image ? `
+      <div class="sub-card-head"><span class="tag">SCREEN ${si+1}${isFinal?' · FINAL SCREEN':''}</span><div style="display:flex;gap:8px;">${screen.image&&!isFinal?`<button class="mini-btn" data-sim-fullscreen="${qi}:${si}">⛶ Fullscreen</button>`:''}<button class="mini-btn danger" data-sim-screen-del="${qi}:${si}">Delete screen</button></div></div>
+      ${screen.image ? (isFinal ? `
+        <div style="position:relative;display:inline-block;max-width:100%;">
+          <img src="${screen.image}" style="max-width:100%;border-radius:8px;display:block;" draggable="false">
+        </div>
+        <p class="hint">This is the final screen — no buttons needed here, trainees just see it and click "Done."</p>
+      ` : `
         <div class="sim-screen-canvas" data-sim-canvas="${qi}:${si}">
           <img src="${screen.image}" style="max-width:100%;display:block;pointer-events:none;user-select:none;" draggable="false">
           <div class="sim-canvas-hint">✛ Drag to add a button</div>
           ${zonesHtml}
         </div>
         <p class="hint">Drag on the image to draw a clickable zone, then pick where it leads. The zone stays invisible to trainees. Too small to place accurately? Use Fullscreen above.</p>
-      ` : `<input type="file" accept="image/*" data-sim-upload="${qi}:${si}">`}
+      `) : `<input type="file" accept="image/*" data-sim-upload="${qi}:${si}">`}
     </div>`;
   }).join("");
-  return `<div class="field"><label>Screens (in order)</label>${screensHtml || '<p style="color:var(--text-faint);font-size:13px;">No screens yet.</p>'}<button class="mini-btn" data-sim-add-screen="${qi}" style="margin-top:6px;">+ Add screen</button></div>`;
+  return `${endGoalHtml}<div class="field"><label>Screens (in order)</label>${screensHtml || '<p style="color:var(--text-faint);font-size:13px;">No screens yet.</p>'}<button class="mini-btn" data-sim-add-screen="${qi}" style="margin-top:6px;">+ Add screen</button></div>`;
 }
 /* ============================================================
    DRAG AUTO-SCROLL — activated during any drag-to-reorder gesture
@@ -5059,7 +5117,7 @@ function wireEditorEvents(){
     if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
     clearTimeout(quizAutosaveTimers[q.id]);
     quizAutosaveTimers[q.id] = setTimeout(async ()=>{
-      const { error } = await supabase.from("quiz_questions").update({ question:q.q, options:q.opts, correct_index:q.correct, explanation:q.explain, question_type:q.type, sim_screens:q.simScreens }).eq("id", q.id);
+      const { error } = await supabase.from("quiz_questions").update({ question:q.q, options:q.opts, correct_index:q.correct, explanation:q.explain, question_type:q.type, sim_screens:q.simScreens, end_goal:q.endGoal, final_screen_id:q.finalScreenId }).eq("id", q.id);
       const el = document.getElementById(`q-save-status-${i}`);
       if(el){
         if(error){ el.textContent = "Couldn't save: " + error.message; el.style.color = "var(--red)"; }
@@ -5071,6 +5129,15 @@ function wireEditorEvents(){
   root.querySelectorAll("[data-q-type]").forEach(el=> el.addEventListener("change", e=>{
     const i=+el.dataset.qType; d.quiz[i].type=e.target.value;
     if(d.quiz[i].type==='simulation' && !d.quiz[i].simScreens) d.quiz[i].simScreens=[];
+    scheduleQuizAutosave(i); renderEditor();
+  }));
+  root.querySelectorAll("[data-q-endgoal]").forEach(el=> el.addEventListener("change", e=>{
+    const i=+el.dataset.qEndgoal; d.quiz[i].endGoal=e.target.value;
+    if(e.target.value==='button') d.quiz[i].finalScreenId=null;
+    scheduleQuizAutosave(i); renderEditor();
+  }));
+  root.querySelectorAll("[data-q-finalscreen]").forEach(el=> el.addEventListener("change", e=>{
+    const i=+el.dataset.qFinalscreen; d.quiz[i].finalScreenId=e.target.value||null;
     scheduleQuizAutosave(i); renderEditor();
   }));
   root.querySelectorAll("[data-sim-add-screen]").forEach(el=> el.addEventListener("click", ()=>{
@@ -5676,7 +5743,13 @@ function renderReference(){
   const editBtn = document.getElementById("ref-edit");
   if(editBtn) editBtn.addEventListener("click", ()=>{ refDraft = { title:page.title, body:page.body }; refEditing = true; render(); });
   const doneBtn = document.getElementById("ref-done");
-  if(doneBtn) doneBtn.addEventListener("click", ()=>{ logEdit("updated", "reference_page", page.title); refEditing=false; render(); });
+  if(doneBtn) doneBtn.addEventListener("click", async ()=>{
+    const titleEl = document.getElementById("ref-title");
+    const bodyEl = document.getElementById("ref-body-rte");
+    if(titleEl && bodyEl) await flushRefSave(page.id, titleEl, bodyEl);
+    logEdit("updated", "reference_page", page.title);
+    refEditing=false; render();
+  });
   const deleteBtn = document.getElementById("ref-delete");
   if(deleteBtn) deleteBtn.addEventListener("click", async ()=>{
     if(confirm(`Delete "${page.title}"? This can't be undone.`)){
@@ -5688,25 +5761,28 @@ function renderReference(){
 }
 
 let refSaveTimer = null;
+async function flushRefSave(pageId, titleInput, bodyRte){
+  clearTimeout(refSaveTimer);
+  const title = titleInput.value.trim() || "Untitled page";
+  const body = getCleanEditorHtml(bodyRte);
+  const { error } = await supabase.from("reference_pages").update({ title, body }).eq("id", pageId);
+  const statusElNow = document.getElementById("ref-save-status");
+  if(error){
+    if(statusElNow){ statusElNow.textContent = "Couldn't save: " + error.message; statusElNow.style.color = "var(--red)"; }
+    return false;
+  }
+  const p = REFERENCE_PAGES.find(x=>x.id===pageId);
+  if(p){ p.title = title; p.body = body; }
+  const titleEl = document.querySelector(`[data-ref-select="${pageId}"] .ref-row-title`);
+  if(titleEl) titleEl.textContent = title;
+  if(statusElNow){ statusElNow.textContent = "Saved"; statusElNow.style.color = "var(--green)"; }
+  return true;
+}
 function scheduleRefAutosave(pageId, titleInput, bodyRte){
   const statusEl = document.getElementById("ref-save-status");
   if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
   clearTimeout(refSaveTimer);
-  refSaveTimer = setTimeout(async ()=>{
-    const title = titleInput.value.trim() || "Untitled page";
-    const body = getCleanEditorHtml(bodyRte);
-    const { error } = await supabase.from("reference_pages").update({ title, body }).eq("id", pageId);
-    const statusElNow = document.getElementById("ref-save-status");
-    if(error){
-      if(statusElNow){ statusElNow.textContent = "Couldn't save: " + error.message; statusElNow.style.color = "var(--red)"; }
-      return;
-    }
-    const p = REFERENCE_PAGES.find(x=>x.id===pageId);
-    if(p){ p.title = title; p.body = body; }
-    const titleEl = document.querySelector(`[data-ref-select="${pageId}"] .ref-row-title`);
-    if(titleEl) titleEl.textContent = title;
-    if(statusElNow){ statusElNow.textContent = "Saved"; statusElNow.style.color = "var(--green)"; }
-  }, 700);
+  refSaveTimer = setTimeout(()=>{ flushRefSave(pageId, titleInput, bodyRte); }, 700);
 }
 
 async function reorderRefDrop(draggedId, targetId, pos){
