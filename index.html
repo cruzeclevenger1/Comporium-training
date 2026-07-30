@@ -312,7 +312,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r24";
+const BUILD_VERSION = "2026-07-27T00:00Z-r25";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1090,7 +1090,7 @@ function renderDashboard(){
   const cards = visibleModules.map(m=>{
     const status = moduleStatus(m.id); const s = progressMap[m.id];
     const pillHtml = status==="mastered" ? `<span class="status-pill done">Mastered</span>`
-      : status==="attempted" ? `<span class="status-pill progress">${s.best}/${s.total} correct</span>`
+      : status==="attempted" ? `<span class="status-pill progress">${s.best}/${s.total} (${s.total?Math.round((s.best/s.total)*100):0}%) correct</span>`
       : status==="reading" ? `<span class="status-pill progress">${m.quiz.length ? "Quiz not started" : "In progress"}</span>`
       : `<span class="status-pill">Not started</span>`;
     const on = status!=="new"; const mastered = status==="mastered";
@@ -1130,7 +1130,7 @@ function renderDashboard(){
   root.querySelectorAll(".mod-card").forEach(el=> el.addEventListener("click",(e)=>{
     if(e.target.closest("[data-edit]")||e.target.closest("[data-del]")||e.target.closest(".drag-handle")) return;
     const id = el.getAttribute("data-mod"); const m = modById(id);
-    currentModId = id; currentLessonIdx = resumeLessonIdx(m); view="lesson"; render();
+    currentModId = id; currentLessonIdx = resumeLessonIdx(m); view="lesson"; render(); window.scrollTo(0,0);
     if(m && m.popupEnabled && !dismissedModulePopups.has(m.id)){
       openModal(`
         <h3>${escapeHtml(m.popupTitle || "Heads up")}</h3>
@@ -1233,10 +1233,10 @@ function renderLesson(){
     </div>`);
   root.querySelectorAll(".lesson-tab[data-idx]").forEach(el=> el.addEventListener("click", ()=>{ currentLessonIdx=parseInt(el.getAttribute("data-idx")); render(); }));
   const goQuiz = document.getElementById("go-quiz"); if(goQuiz) goQuiz.addEventListener("click", startQuiz);
-  const prev=document.getElementById("prev-lesson"); if(prev) prev.addEventListener("click", ()=>{ if(currentLessonIdx>0){currentLessonIdx--; render();} });
-  const next=document.getElementById("next-lesson"); if(next) next.addEventListener("click", ()=>{ currentLessonIdx++; render(); });
-  const toQuiz=document.getElementById("to-quiz-btn"); if(toQuiz) toQuiz.addEventListener("click", startQuiz);
-  const backToModules=document.getElementById("back-to-modules-btn"); if(backToModules) backToModules.addEventListener("click", ()=>{ view="dashboard"; render(); });
+  const prev=document.getElementById("prev-lesson"); if(prev) prev.addEventListener("click", ()=>{ if(currentLessonIdx>0){currentLessonIdx--; render(); window.scrollTo(0,0);} });
+  const next=document.getElementById("next-lesson"); if(next) next.addEventListener("click", ()=>{ currentLessonIdx++; render(); window.scrollTo(0,0); });
+  const toQuiz=document.getElementById("to-quiz-btn"); if(toQuiz) toQuiz.addEventListener("click", ()=>{ startQuiz(); window.scrollTo(0,0); });
+  const backToModules=document.getElementById("back-to-modules-btn"); if(backToModules) backToModules.addEventListener("click", ()=>{ view="dashboard"; render(); window.scrollTo(0,0); });
   const editMod=document.getElementById("edit-mod"); if(editMod) editMod.addEventListener("click", ()=>openEditor(m.id));
   document.getElementById("comment-lesson").addEventListener("click", ()=> openFeedbackModal("comment", `${m.title} — ${lesson.title}`));
 }
@@ -1350,12 +1350,12 @@ function renderQuiz(){
       const proceed = ()=> openSimPlayFullscreen(q, quizIdx, handleZoneClick);
       if(simWarningDismissed) proceed(); else showSimWarningModal(proceed);
     });
-    document.getElementById("quiz-next").addEventListener("click", ()=>{ if(isLast){ finishQuiz(); } else { quizIdx++; render(); } });
+    document.getElementById("quiz-next").addEventListener("click", ()=>{ if(isLast){ finishQuiz(); } else { quizIdx++; render(); window.scrollTo(0,0); } });
   } else {
     if(!revealed) root.querySelectorAll(".opt").forEach(el=> el.addEventListener("click", ()=>{ quizAnswers[quizIdx]=parseInt(el.getAttribute("data-idx")); render(); }));
-    document.getElementById("quiz-next").addEventListener("click", ()=>{ if(!revealed){ quizRevealed[quizIdx]=true; render(); } else if(isLast){ finishQuiz(); } else { quizIdx++; render(); } });
+    document.getElementById("quiz-next").addEventListener("click", ()=>{ if(!revealed){ quizRevealed[quizIdx]=true; render(); } else if(isLast){ finishQuiz(); } else { quizIdx++; render(); window.scrollTo(0,0); } });
   }
-  document.getElementById("quiz-prev").addEventListener("click", ()=>{ if(quizIdx>0){ quizIdx--; render(); } });
+  document.getElementById("quiz-prev").addEventListener("click", ()=>{ if(quizIdx>0){ quizIdx--; render(); window.scrollTo(0,0); } });
   root.querySelectorAll("[data-quiz-jump]").forEach(el=> el.addEventListener("click", ()=>{ quizIdx = +el.getAttribute("data-quiz-jump"); render(); }));
   const editModQ=document.getElementById("edit-mod-q"); if(editModQ) editModQ.addEventListener("click", ()=>openEditor(m.id));
   document.getElementById("flag-question").addEventListener("click", ()=> openFeedbackModal("flag", `${m.title} — Q${quizIdx+1}: ${q.q}`));
@@ -1378,7 +1378,7 @@ async function finishQuiz(){
   if(quizIsTestRun){
     // Testing content in edit mode — doesn't count as a real attempt, nothing gets saved.
     quizTestRunResult = { lastScore: correctCount, total: m.quiz.length };
-    view = "results"; render();
+    view = "results"; render(); window.scrollTo(0,0);
     return;
   }
 
@@ -1392,7 +1392,7 @@ async function finishQuiz(){
   await supabase.from("quiz_attempts").insert({
     user_id: session.user.id, module_id: m.id, score: correctCount, total: m.quiz.length, answers: answerDetail
   });
-  view = "results"; render();
+  view = "results"; render(); window.scrollTo(0,0);
 }
 
 function renderResults(){
@@ -1410,8 +1410,8 @@ function renderResults(){
         <div class="nav-buttons" style="justify-content:center;gap:14px;margin-top:14px;"><button class="btn" id="retake">Retake quiz</button><button class="btn" id="review">Review lessons</button><button class="btn primary" id="back-dash">Back to dashboard</button></div>
       </div>`);
     document.getElementById("retake").addEventListener("click", ()=> startQuiz("full"));
-    document.getElementById("review").addEventListener("click", ()=>{ currentLessonIdx=0; view="lesson"; render(); });
-    document.getElementById("back-dash").addEventListener("click", ()=>{ view="dashboard"; render(); });
+    document.getElementById("review").addEventListener("click", ()=>{ currentLessonIdx=0; view="lesson"; render(); window.scrollTo(0,0); });
+    document.getElementById("back-dash").addEventListener("click", ()=>{ view="dashboard"; render(); window.scrollTo(0,0); });
     return;
   }
 
@@ -1436,8 +1436,8 @@ function renderResults(){
     const toggle = document.getElementById("retake-missed-toggle");
     startQuiz(toggle && toggle.checked ? "missed" : "full");
   });
-  document.getElementById("review").addEventListener("click", ()=>{ currentLessonIdx=0; view="lesson"; render(); });
-  document.getElementById("back-dash").addEventListener("click", ()=>{ view="dashboard"; render(); });
+  document.getElementById("review").addEventListener("click", ()=>{ currentLessonIdx=0; view="lesson"; render(); window.scrollTo(0,0); });
+  document.getElementById("back-dash").addEventListener("click", ()=>{ view="dashboard"; render(); window.scrollTo(0,0); });
 }
 
 /* ============================================================
@@ -1485,7 +1485,7 @@ async function loadQuizProgressData(){
     });
     const completedCount = perQuiz.filter(x=>x.completed).length;
     const pct = perQuiz.length ? Math.round((completedCount/perQuiz.length)*100) : 0;
-    return { id:person.id, name:person.name, role:person.role, perQuiz, completedCount, totalCount:perQuiz.length, pct };
+    return { id:person.id, name:person.name, role:person.role, teamIds:person.teamIds, perQuiz, completedCount, totalCount:perQuiz.length, pct };
   });
 }
 
@@ -1552,6 +1552,8 @@ function openTeamManageModal(teamId){
   if(delBtn) delBtn.addEventListener("click", async ()=>{
     if(confirm(`Delete "${team.name}"? This can't be undone.`)){
       await supabase.from("teams").delete().eq("id", team.id);
+      if(teamRosterFilter === team.id) teamRosterFilter = ""; // don't leave the roster filtered on a team that no longer exists
+      QUIZ_PROGRESS_ROWS = null; // team membership changed, force a fresh load next time it's viewed
       closeModal(); await openTeamProgress();
     }
   });
@@ -1653,7 +1655,7 @@ function renderTeam(){
             <span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${pct}%</span>
           </div>
         </td>`;
-      thirdCell = `<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${!focusModule.quiz.length ? "No quiz for this module" : (raw.attempts ? `${raw.best}/${raw.total} correct` : "no attempts yet")}</td>`;
+      thirdCell = `<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${!focusModule.quiz.length ? "No quiz for this module" : (raw.attempts ? `${raw.best}/${raw.total} (${raw.total?Math.round((raw.best/raw.total)*100):0}%) correct` : "no attempts yet")}</td>`;
     } else {
       progressCell = `<td style="min-width:160px;">
           <div style="display:flex;align-items:center;gap:8px;">
@@ -1661,7 +1663,7 @@ function renderTeam(){
             <span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${r.overall}%</span>
           </div>
         </td>`;
-      thirdCell = `<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${r.mastered}/${MODULES.length} mastered</td>`;
+      thirdCell = `<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${r.mastered}/${MODULES.length} (${MODULES.length?Math.round((r.mastered/MODULES.length)*100):0}%) mastered</td>`;
     }
 
     const mainRow = `
@@ -1686,6 +1688,8 @@ function renderTeam(){
     let filteredQuizRows = QUIZ_PROGRESS_ROWS;
     if(teamRosterFilter.startsWith("role:")){
       filteredQuizRows = filteredQuizRows.filter(r=> r.role === teamRosterFilter.slice(5));
+    } else if(teamRosterFilter){
+      filteredQuizRows = filteredQuizRows.filter(r=> (r.teamIds||[]).includes(teamRosterFilter));
     }
     if(teamSearchQuery.trim()){
       const q = teamSearchQuery.trim().toLowerCase();
@@ -1961,7 +1965,7 @@ async function showAttemptDetail(userId, moduleId){
   holder.innerHTML = `
     <div class="card">
       <div class="k-label">LATEST ATTEMPT · ${escapeHtml(person?person.name:'')} · ${escapeHtml(m?m.title:'')}</div>
-      <h2 style="margin-bottom:16px;">${a.score}/${a.total} correct</h2>
+      <h2 style="margin-bottom:16px;">${a.score}/${a.total} (${a.total?Math.round((a.score/a.total)*100):0}%) correct</h2>
       ${missedHtml}
     </div>
   `;
@@ -2053,7 +2057,7 @@ async function showStandaloneQuizAttemptDetail(userId, quizId, holderId, personN
       await Promise.resolve(supabase.from("messages").insert({
         sender_id: session.user.id, sender_name: profile.name, recipient_id: userId,
         audience:"user", type:"reply", claimed_by: session.user.id,
-        body: `<p>Your quiz "<strong>${escapeHtml(quiz?quiz.title:'the quiz')}</strong>" has been graded — ${correctCount}/${longAnswerCount} long-answer question${longAnswerCount===1?'':'s'} correct.</p>`
+        body: `<p>Your quiz "<strong>${escapeHtml(quiz?quiz.title:'the quiz')}</strong>" has been graded — ${correctCount}/${longAnswerCount} (${longAnswerCount?Math.round((correctCount/longAnswerCount)*100):0}%) long-answer question${longAnswerCount===1?'':'s'} correct.</p>`
       })).catch(()=>{});
       showToast("Grading saved.");
       QUIZ_PROGRESS_ROWS = null;
@@ -2232,7 +2236,7 @@ function renderQuizSentDetail(){
         <button class="mini-btn danger" id="sent-detail-delete">Delete quiz</button>
       </div>
       <h2 style="margin-bottom:4px;">${escapeHtml(quiz.title)}</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">${completedCount}/${quizSentDetailRoster.length} completed. Click a completed person to see their answers and grade any long-answer responses.</p>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">${completedCount}/${quizSentDetailRoster.length} (${quizSentDetailRoster.length?Math.round((completedCount/quizSentDetailRoster.length)*100):0}%) completed. Click a completed person to see their answers and grade any long-answer responses.</p>
       <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="3" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one is eligible for this quiz yet.</td></tr>`}</tbody></table></div>
       <div class="nav-buttons"><button class="btn" id="sent-detail-back">← Back to Quizzes</button><div></div></div>
     </div>
@@ -2922,7 +2926,7 @@ function renderModuleAnalyzeDetail(){
     const expanded = moduleAnalyzeDetailExpandedPerson === r.id;
     const mainRow = `<tr class="team-row-main" style="cursor:pointer;">
       <td data-manalyze-toggle="${r.id}">${escapeHtml(r.name)}</td>
-      <td data-manalyze-toggle="${r.id}" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${r.best}/${r.total} best</td>
+      <td data-manalyze-toggle="${r.id}" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${r.best}/${r.total} (${r.total?Math.round((r.best/r.total)*100):0}%) best</td>
       <td data-manalyze-toggle="${r.id}" style="font-family:var(--mono);font-size:12px;color:var(--text-faint);white-space:nowrap;">${r.attempts.length} attempt${r.attempts.length===1?'':'s'}</td>
       <td><button class="mini-btn danger" data-manalyze-reset="${r.id}" data-manalyze-reset-name="${escapeHtml(r.name)}">Reset attempts</button></td>
       <td data-manalyze-toggle="${r.id}" style="text-align:center;color:var(--text-faint);">${expanded?'▾':'▸'}</td>
@@ -3386,7 +3390,7 @@ function renderChat(){
     const editorEl = document.getElementById(`thread-rte-${rootId}`);
     const customFeedback = editorEl ? getCleanEditorHtml(editorEl).trim() : "";
     const correctCount = longAnswerIdxs.filter(i=>grades[i]===true).length;
-    const summaryHtml = `<p>Your long-answer responses for "<strong>${escapeHtml(t.relatedQuizTitle||'the quiz')}</strong>" have been graded: ${correctCount}/${longAnswerIdxs.length} correct.</p>${(customFeedback && customFeedback!=="<br>") ? customFeedback : ""}`;
+    const summaryHtml = `<p>Your long-answer responses for "<strong>${escapeHtml(t.relatedQuizTitle||'the quiz')}</strong>" have been graded: ${correctCount}/${longAnswerIdxs.length} (${longAnswerIdxs.length?Math.round((correctCount/longAnswerIdxs.length)*100):0}%) correct.</p>${(customFeedback && customFeedback!=="<br>") ? customFeedback : ""}`;
 
     const { error: msgErr } = await supabase.from("messages").insert({
       sender_id: session.user.id, sender_name: profile.name,
