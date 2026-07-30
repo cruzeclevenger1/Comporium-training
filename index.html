@@ -312,7 +312,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r26";
+const BUILD_VERSION = "2026-07-27T00:00Z-r27";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5528,8 +5528,6 @@ function renderHome(){
   renderShell(`
     <section class="hero">
       <h1 style="font-size:32px;">${wasFirstLoginThisSession ? T('home.greeting.first','Welcome,') : T('home.greeting','Welcome back,')} ${escapeHtml(profile.name)}</h1>
-      <p style="margin-top:10px;"><strong style="color:var(--text);">${T('home.modules.label','Training Modules')}</strong> — ${T('home.modules.desc','structured lessons and scored quizzes for onboarding and skill-building.')}</p>
-      <p style="margin-top:-6px;"><strong style="color:var(--text);">${T('home.reference.label','Reference Guide')}</strong> — ${T('home.reference.desc','a living knowledge base the whole team can look things up in, anytime.')}</p>
     </section>
     <div class="three-col-grid">
       <div class="mod-card" id="go-modules-card">
