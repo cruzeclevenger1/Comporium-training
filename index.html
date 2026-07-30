@@ -280,6 +280,11 @@
   }
   .loading-label{ font-family:var(--mono); font-size:11.5px; color:var(--text-faint); letter-spacing:.16em; text-transform:uppercase; animation: loading-label-fade 1.3s ease-in-out infinite; }
   @keyframes loading-label-fade{ 0%,100%{ opacity:.5; } 50%{ opacity:1; } }
+  .confetti-piece{ position:fixed; top:-20px; z-index:850; pointer-events:none; animation-name:confetti-fall; animation-timing-function:linear; animation-fill-mode:forwards; }
+  @keyframes confetti-fall{
+    0%{ transform:translateY(0) rotate(0deg); opacity:1; }
+    100%{ transform:translateY(105vh) rotate(720deg); opacity:.35; }
+  }
   .ult-edit-text{ cursor:pointer; border-bottom:1px dashed var(--amber); }
   .ult-edit-text:hover{ background:var(--amber-dim); }
   .lightbox-close:hover{ background:#ffffff22; }
@@ -312,7 +317,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r27";
+const BUILD_VERSION = "2026-07-27T00:00Z-r28";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -381,6 +386,7 @@ let quizSimScreenIndex = {}; // session-relative quizIdx -> current screen index
 let quizSimMisclicks = {}; // session-relative quizIdx -> misclick count, resets each new quiz attempt
 let simWarningDismissed = false; // "don't show again" for the Simulated Navigation warning popup
 let quizIsTestRun = false; // true when a content editor takes a quiz while in edit mode — doesn't count as a real attempt
+let quizJustFinished = false; // set true right when finishQuiz() transitions to results; consumed once, drives the 100% confetti
 let quizTestRunResult = null; // { lastScore, total } — used to show results for a test run without touching saved progress
 let quizCarriedAnswers = {}; // originalIndex -> answer detail, for missed-only retakes (previously-correct questions, not being retaken)
 
@@ -1302,8 +1308,8 @@ function renderQuiz(){
     if(!screen || !screen.image){
       bodyHtml = `<p style="color:var(--text-faint);">This simulation hasn't been set up yet.</p>`;
     } else if(selected){
-      bodyHtml = `<div style="position:relative;display:inline-block;max-width:100%;">
-        <img src="${screen.image}" style="max-width:100%;display:block;user-select:none;border-radius:8px;opacity:.6;" draggable="false">
+      bodyHtml = `<div style="position:relative;display:inline-block;max-width:100%;border-radius:8px;box-shadow:0 0 0 3px var(--green), 0 0 22px 4px #2ecc7155;">
+        <img src="${screen.image}" style="max-width:100%;display:block;user-select:none;border-radius:8px;opacity:.75;" draggable="false">
       </div><p style="color:var(--green);font-size:13px;margin-top:12px;">✓ Done — you found it.</p>`;
     } else {
       bodyHtml = `<p style="color:var(--text-dim);font-size:13.5px;margin-bottom:10px;">This exercise only works in fullscreen. Click the screenshot to begin.</p>
@@ -1386,7 +1392,7 @@ async function finishQuiz(){
   if(quizIsTestRun){
     // Testing content in edit mode — doesn't count as a real attempt, nothing gets saved.
     quizTestRunResult = { lastScore: correctCount, total: m.quiz.length };
-    view = "results"; render(); window.scrollTo(0,0);
+    quizJustFinished = true; view = "results"; render(); window.scrollTo(0,0);
     return;
   }
 
@@ -1400,7 +1406,7 @@ async function finishQuiz(){
   await supabase.from("quiz_attempts").insert({
     user_id: session.user.id, module_id: m.id, score: correctCount, total: m.quiz.length, answers: answerDetail
   });
-  view = "results"; render(); window.scrollTo(0,0);
+  quizJustFinished = true; view = "results"; render(); window.scrollTo(0,0);
 }
 
 function renderResults(){
@@ -1410,6 +1416,7 @@ function renderResults(){
   if(quizIsTestRun && quizTestRunResult){
     const s = quizTestRunResult;
     const p = s.total ? Math.round((s.lastScore/s.total)*100) : 0;
+    if(quizJustFinished){ quizJustFinished = false; if(p===100) launchConfetti(); }
     const leds = Array.from({length:5}).map((_,i)=>{ const lit = i < Math.round((s.lastScore/s.total)*5); const color = p===100?"on-green":p>=60?"on-amber":"on-red"; return `<span class="led ${lit?color:''}"></span>`; }).join("");
     renderShell(`
       <div class="card result-hero"><div class="k-label">TEST RUN · ${escapeHtml(m.title.toUpperCase())}</div>
@@ -1424,6 +1431,7 @@ function renderResults(){
   }
 
   const s = progressMap[m.id]; const p = pct(s);
+  if(quizJustFinished){ quizJustFinished = false; if(p===100) launchConfetti(); }
   const leds = Array.from({length:5}).map((_,i)=>{ const lit = i < Math.round((s.lastScore/s.total)*5); const color = p===100?"on-green":p>=60?"on-amber":"on-red"; return `<span class="led ${lit?color:''}"></span>`; }).join("");
   const verdict = p===100?"Fully registered. This module is locked in.":p>=60?"Mostly holding — worth a second pass before it's live-call ready.":"Signal's not there yet. Revisit the lessons and retake when ready.";
   const attemptsUsed = s.attempts || 0;
@@ -3462,6 +3470,27 @@ function logEdit(action, entityType, entityLabel, details){
   }).then(()=>{}, ()=>{}); // best-effort — never let logging failures affect the actual save
 }
 
+function launchConfetti(){
+  const colors = ['#f5a623','#2ecc71','#00d4ff','#e74c3c','#a78bfa'];
+  const container = document.createElement('div');
+  container.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:850;overflow:hidden;';
+  document.body.appendChild(container);
+  for(let i=0;i<80;i++){
+    const piece = document.createElement('div');
+    piece.className = 'confetti-piece';
+    const size = 6 + Math.random()*6;
+    piece.style.left = (Math.random()*100) + 'vw';
+    piece.style.background = colors[Math.floor(Math.random()*colors.length)];
+    piece.style.width = size + 'px';
+    piece.style.height = (size*1.6) + 'px';
+    piece.style.borderRadius = Math.random()>0.5 ? '50%' : '2px';
+    piece.style.animationDuration = (2.2 + Math.random()*1.6) + 's';
+    piece.style.animationDelay = (Math.random()*0.4) + 's';
+    container.appendChild(piece);
+  }
+  setTimeout(()=> container.remove(), 4200);
+}
+
 function showToast(text, onClickFn){
   const el = document.createElement("div");
   el.className = "app-toast";
@@ -3842,10 +3871,11 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
         <div style="display:flex;justify-content:flex-end;width:100%;max-width:1300px;margin-bottom:14px;">
           <button class="btn" id="sim-play-fullscreen-close">✕ Exit fullscreen</button>
         </div>
-        <div style="position:relative;display:inline-block;max-width:min(94vw,1300px);max-height:76vh;">
+        <div style="position:relative;display:inline-block;max-width:min(94vw,1300px);max-height:76vh;border-radius:12px;box-shadow:0 0 0 3px var(--green), 0 0 34px 6px #2ecc7166;">
           <img src="${screen.image}" style="max-width:min(94vw,1300px);max-height:76vh;display:block;user-select:none;border-radius:8px;" draggable="false">
         </div>
-        <button class="btn primary" id="sim-play-done" style="margin-top:18px;">Done</button>`;
+        <p style="color:var(--green);font-size:13px;margin-top:14px;">✓ You've reached the end — this is the final screen.</p>
+        <button class="btn primary" id="sim-play-done" style="margin-top:8px;">Done</button>`;
       document.getElementById("sim-play-fullscreen-close").addEventListener("click", ()=>{ overlay.remove(); render(); });
       document.getElementById("sim-play-done").addEventListener("click", ()=>{
         quizAnswers[quizIdx] = "done";
