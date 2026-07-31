@@ -322,7 +322,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r35";
+const BUILD_VERSION = "2026-07-27T00:00Z-r36";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1323,7 +1323,7 @@ function renderLesson(){
   const next=document.getElementById("next-lesson"); if(next) next.addEventListener("click", ()=>{ currentLessonIdx++; render(); window.scrollTo(0,0); });
   const toQuiz=document.getElementById("to-quiz-btn"); if(toQuiz) toQuiz.addEventListener("click", ()=>{ startQuiz(); window.scrollTo(0,0); });
   const backToModules=document.getElementById("back-to-modules-btn"); if(backToModules) backToModules.addEventListener("click", ()=>{ view="dashboard"; render(); window.scrollTo(0,0); });
-  const editMod=document.getElementById("edit-mod"); if(editMod) editMod.addEventListener("click", ()=>openEditor(m.id));
+  const editMod=document.getElementById("edit-mod"); if(editMod) editMod.addEventListener("click", ()=>openEditor(m.id, currentLessonIdx));
   document.getElementById("comment-lesson").addEventListener("click", ()=> openFeedbackModal("comment", `${m.title} — ${lesson.title}`));
 }
 
@@ -1443,7 +1443,7 @@ function renderQuiz(){
   }
   document.getElementById("quiz-prev").addEventListener("click", ()=>{ if(quizIdx>0){ quizIdx--; render(); window.scrollTo(0,0); } });
   root.querySelectorAll("[data-quiz-jump]").forEach(el=> el.addEventListener("click", ()=>{ quizIdx = +el.getAttribute("data-quiz-jump"); render(); }));
-  const editModQ=document.getElementById("edit-mod-q"); if(editModQ) editModQ.addEventListener("click", ()=>openEditor(m.id));
+  const editModQ=document.getElementById("edit-mod-q"); if(editModQ) editModQ.addEventListener("click", ()=>openEditor(m.id, undefined, realIdx));
   document.getElementById("flag-question").addEventListener("click", ()=> openFeedbackModal("flag", `${m.title} — Q${quizIdx+1}: ${q.q}`));
 }
 
@@ -5035,12 +5035,13 @@ function compressImageFile(file, maxDim){
   });
 }
 
-async function openEditor(id){
+async function openEditor(id, openToLessonIdx, openToQuestionIdx){
   if(id){
     editingExistingId = id;
     await ensureQuizSimScreens(modById(id));
     draftModule = JSON.parse(JSON.stringify(modById(id)));
-    expandedLessonIdx = null; expandedQuestionIdx = null;
+    expandedLessonIdx = (typeof openToLessonIdx === "number" && draftModule.lessons[openToLessonIdx]) ? openToLessonIdx : null;
+    expandedQuestionIdx = (typeof openToQuestionIdx === "number" && draftModule.quiz[openToQuestionIdx]) ? openToQuestionIdx : null;
     view = "editor"; render();
     return;
   }
