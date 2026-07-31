@@ -255,6 +255,10 @@
   .sim-screen-canvas .sim-canvas-hint{ position:absolute; top:8px; left:8px; background:#000000cc; color:var(--amber); font-size:11px; font-family:var(--mono); padding:4px 9px; border-radius:5px; pointer-events:none; opacity:0; transition:opacity .12s; z-index:3; }
   .sim-screen-canvas:hover .sim-canvas-hint{ opacity:1; }
   .sim-zone, .sim-zone *{ cursor:pointer !important; }
+  .feature-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:9px; }
+  .feature-pill{ background:#0e1626; border:1px solid var(--stroke); border-radius:8px; padding:10px 13px; font-size:13.5px; color:var(--text); }
+  .feature-pill:first-letter{ color:var(--green); }
+  html.theme-light .feature-pill{ background:#eef1f8; }
   .interactive-pic-embed{ display:inline-block; position:relative; margin:8px 4px; border-radius:8px; overflow:hidden; vertical-align:bottom; max-width:100%; border:1px solid var(--stroke); }
   .ip-embed-overlay{ background:#0e1626; padding:8px 10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .ip-embed-badge{ font-size:11px; color:var(--cyan); font-family:var(--mono); margin-right:auto; }
@@ -317,7 +321,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r28";
+const BUILD_VERSION = "2026-07-27T00:00Z-r29";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -585,6 +589,7 @@ async function loadProfile(){
   const { data } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
   profile = data;
   simWarningDismissed = !!(profile && profile.sim_warning_dismissed);
+  dashboardShowCompleted = !!(profile && profile.dashboard_show_completed);
 }
 
 /* ============================================================
@@ -768,39 +773,47 @@ function buildGuestFixtures(customization){
 }
 
 function renderGuestFeatureList(){
-  const section = (title, items)=> `
-    <div class="editor-section">
-      <div class="editor-section-head"><h3>${title}</h3></div>
-      ${items.map(([name,desc])=>`<div class="sub-card"><div style="font-size:14px;color:var(--text);margin-bottom:4px;"><strong>${escapeHtml(name)}</strong></div><div style="font-size:13px;color:var(--text-dim);">${escapeHtml(desc)}</div></div>`).join("")}
-    </div>`;
+  const pill = (text)=> `<div class="feature-pill">✓ ${escapeHtml(text)}</div>`;
+
+  const teamFeatures = [
+    "Structured training modules with scored quizzes",
+    "Searchable Reference Guide with nested pages",
+    "Private notes only you can see",
+    "Standalone quizzes sent straight to you",
+    "Hands-on Simulated Navigation practice",
+    "Click-through Interactive Picture walkthroughs",
+    "Retake only what you missed — nothing else held against you",
+    "Built-in messaging straight to an admin",
+    "Live notifications the moment something's sent",
+    "Real-time progress tracking, always up to date"
+  ];
+  const adminFeatures = [
+    "Full no-code content editor, autosaves as you type",
+    "Granular permissions beyond Admin/Editor/User",
+    "Teams & People management in one place",
+    "One-click password reset & account management",
+    "Module and quiz progress drill-downs, question by question",
+    "Team-wide Analyze — completion rates and common misses",
+    "Targeted announcements & quizzes by team or person",
+    "Full audit trail of every content change",
+    "Fullscreen builder for Simulated Navigation",
+    "Point-and-click Interactive Picture hotspot editor",
+    "Custom, fully controllable Guest Preview sandbox"
+  ];
 
   renderShell(`
     <div class="card">
       <div class="eyebrow">GUEST PREVIEW</div>
       <h1 style="margin-bottom:6px;">Everything this platform can do</h1>
-      <p style="color:var(--text-dim);margin-bottom:10px;">A quick rundown of what your team gets day to day, and what your admins get behind the scenes. Nothing here touches real data — feel free to click into anything after this.</p>
+      <p style="color:var(--text-dim);margin-bottom:22px;">One system for training, testing, and tracking your whole team — click into anything below, nothing here touches real data.</p>
 
-      ${section("For your whole team", [
-        ["Structured Training Modules", "Lessons plus a scored quiz per module, with progress tracked automatically as they read and test."],
-        ["Reference Guide", "A searchable, living knowledge base with nested sub-pages — not just for new hires, for everyone."],
-        ["Private Notes", "A personal notepad for each person that autosaves as they type. Not even admins can see it."],
-        ["Standalone Quizzes", "One-off quizzes sent directly by admins — separate from training modules, supporting both multiple choice and long-answer questions."],
-        ["Built-in messaging", "Flag a confusing question, leave a comment on a lesson, or start a direct conversation — all routed straight to an admin."],
-        ["Live notifications", "Announcements and new quizzes show up instantly, with a \"what you missed\" digest on login."]
-      ])}
+      <div class="editor-section-head"><h3>For your whole team</h3></div>
+      <div class="feature-grid">${teamFeatures.map(pill).join("")}</div>
 
-      ${section("For admins", [
-        ["Full content editor", "Create and edit modules, lessons, and quizzes directly in the browser — no code, autosaves as you type."],
-        ["Granular permissions", "Beyond Admin/Editor/User — grant any custom mix of editing content, creating quizzes, and managing people."],
-        ["Teams & People", "Group people into cohorts, reset passwords, manage roles, and remove accounts."],
-        ["Module & Quiz Progress", "See exactly who's completed what, drill into individual missed questions, and grade long-answer quiz responses."],
-        ["Analyze", "Team-wide trends — completion rates and the questions people miss most often, across both training modules and standalone quizzes."],
-        ["Targeted Announcements & Quizzes", "Send to everyone, a specific team, or hand-picked people."],
-        ["Edit Log", "A full audit trail of every content change — who changed what, and when."],
-        ["This Guest Preview itself", "Fully customizable — admins control exactly what a prospective client or new hire sees in this exact sandbox."]
-      ])}
+      <div class="editor-section-head" style="margin-top:24px;"><h3>For admins</h3></div>
+      <div class="feature-grid">${adminFeatures.map(pill).join("")}</div>
 
-      <button class="btn primary" id="guest-features-done" style="margin-top:6px;">Start exploring →</button>
+      <button class="btn primary" id="guest-features-done" style="margin-top:24px;">Start exploring →</button>
     </div>
   `);
   document.getElementById("guest-features-done").addEventListener("click", ()=>{ view="home"; render(); });
@@ -1095,12 +1108,12 @@ async function reorderModuleDrop(draggedId, targetId, pos){
   render();
 }
 
-let dashboardFilterIncomplete = false;
+let dashboardShowCompleted = false; // hidden by default; loaded from profile.dashboard_show_completed at login
 
 function renderDashboard(){
   lastModuleContext = { view:"dashboard" };
   const editOn = canEdit();
-  const visibleModules = dashboardFilterIncomplete ? MODULES.filter(m=> moduleStatus(m.id)!=="mastered") : MODULES;
+  const visibleModules = dashboardShowCompleted ? MODULES : MODULES.filter(m=> moduleStatus(m.id)!=="mastered");
   const cards = visibleModules.map(m=>{
     const status = moduleStatus(m.id); const s = progressMap[m.id];
     const pillHtml = status==="mastered" ? `<span class="status-pill done">Mastered</span>`
@@ -1120,7 +1133,7 @@ function renderDashboard(){
   const totalQ = MODULES.reduce((a,m)=>a+m.quiz.length,0);
   const doneQ = Object.values(progressMap).reduce((a,s)=>a+(s.best||0),0);
   const modsMastered = MODULES.filter(m=>moduleStatus(m.id)==="mastered").length;
-  const emptyFilterMsg = (dashboardFilterIncomplete && !visibleModules.length) ? `<p style="color:var(--text-faint);font-size:13.5px;padding:10px 2px;">Everything's mastered — nothing incomplete to show.</p>` : "";
+  const emptyFilterMsg = (!dashboardShowCompleted && !visibleModules.length && MODULES.length) ? `<p style="color:var(--text-faint);font-size:13.5px;padding:10px 2px;">Everything's mastered — nice work. Tap "Show Completed" above to see them.</p>` : "";
 
   renderShell(`
     <section class="hero">
@@ -1131,14 +1144,15 @@ function renderDashboard(){
       <div class="stat"><div class="num">${doneQ}/${totalQ}</div><div class="lbl">BEST-SCORE QUESTIONS CORRECT</div></div></div>
     </section>
     <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
-      <button class="pill-btn" id="toggle-incomplete-filter">${dashboardFilterIncomplete ? "✓ Showing incomplete only" : "Filter: incomplete only"}</button>
+      <button class="pill-btn" id="toggle-incomplete-filter">${dashboardShowCompleted ? "✓ Showing completed" : "Show Completed"}</button>
     </div>
     <div class="grid">${cards}${emptyFilterMsg}${addCard}</div>
   `);
 
-  document.getElementById("toggle-incomplete-filter").addEventListener("click", ()=>{
-    dashboardFilterIncomplete = !dashboardFilterIncomplete;
+  document.getElementById("toggle-incomplete-filter").addEventListener("click", async ()=>{
+    dashboardShowCompleted = !dashboardShowCompleted;
     render();
+    if(!guestMode) await supabase.from("profiles").update({ dashboard_show_completed: dashboardShowCompleted }).eq("id", session.user.id);
   });
 
   root.querySelectorAll(".mod-card").forEach(el=> el.addEventListener("click",(e)=>{
