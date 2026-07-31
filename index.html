@@ -322,7 +322,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r33";
+const BUILD_VERSION = "2026-07-27T00:00Z-r35";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -340,21 +340,31 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   bar.style.cssText = 'position:fixed;top:0;left:0;height:3px;width:0%;background:var(--cyan);box-shadow:0 0 8px var(--cyan);z-index:1000;transition:width .25s ease, opacity .3s ease;opacity:0;pointer-events:none;';
   document.body.appendChild(bar);
   let activeRequests = 0;
-  let hideTimer = null;
+  let completeTimer = null;
+  window.silentSaveDepth = 0;
   function showBar(){
+    if(window.loadingBarSuppressed || window.silentSaveDepth > 0) return;
     activeRequests++;
-    clearTimeout(hideTimer);
+    if(completeTimer){ clearTimeout(completeTimer); completeTimer = null; }
     bar.style.opacity = '1';
     if(parseFloat(bar.style.width) < 70) bar.style.width = '70%';
   }
   function hideBar(){
+    if(activeRequests===0) return; // nothing to hide (e.g. showBar was suppressed for this one)
     activeRequests = Math.max(0, activeRequests-1);
     if(activeRequests===0){
-      bar.style.width = '100%';
-      hideTimer = setTimeout(()=>{
-        bar.style.opacity = '0';
-        setTimeout(()=>{ bar.style.width = '0%'; }, 300);
-      }, 150);
+      // Wait briefly before completing — a single user action is often two or
+      // three sequential (not concurrent) requests, and without this grace
+      // period each one finishes and restarts the bar, showing as a visible
+      // double sweep instead of one smooth motion.
+      completeTimer = setTimeout(()=>{
+        bar.style.width = '100%';
+        setTimeout(()=>{
+          bar.style.opacity = '0';
+          setTimeout(()=>{ bar.style.width = '0%'; }, 300);
+        }, 150);
+        completeTimer = null;
+      }, 300);
     }
   }
   const supabaseHost = SUPABASE_URL.replace(/^https?:\/\//, '');
@@ -857,6 +867,17 @@ function renderGuestFeatureList(){
   document.getElementById("guest-features-done").addEventListener("click", ()=>{ view="home"; render(); });
 }
 
+// Wrap an autosave's Supabase call so the global loading bar skips it —
+// autosave-on-typing already shows its own "Saving…/Saved" text right next
+// to the field, so the global bar firing on every keystroke-triggered save
+// is redundant noise, unlike genuinely unindicated actions (deletes, page
+// loads, explicit button clicks) where the bar is the only feedback.
+async function silentSave(fn){
+  window.silentSaveDepth = (window.silentSaveDepth||0) + 1;
+  try { return await fn(); }
+  finally { window.silentSaveDepth = Math.max(0, (window.silentSaveDepth||1) - 1); }
+}
+
 function formatNamePart(str){
   return str.trim().split(/\s+/).filter(Boolean).map(word=>
     word.split('-').map(seg => seg.charAt(0).toUpperCase() + seg.slice(1).toLowerCase()).join('-')
@@ -894,6 +915,7 @@ async function submitAuth(){
 let wasFirstLoginThisSession = false;
 
 async function afterLogin(){
+  window.loadingBarSuppressed = true;
   view = "loading"; render();
   await loadProfile();
   wasFirstLoginThisSession = profile.is_first_login === true;
@@ -912,6 +934,7 @@ async function afterLogin(){
     loadStandaloneQuizzes()
   ]);
   setupRealtime();
+  window.loadingBarSuppressed = false;
   view = "home"; render();
   ensureFeedbackButton();
   await showUnseenAnnouncements();
@@ -2541,7 +2564,7 @@ function wireQuizBuilderEvents(){
     if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
     clearTimeout(quizTitleAutosaveTimer);
     quizTitleAutosaveTimer = setTimeout(async ()=>{
-      const { error } = await supabase.from("standalone_quizzes").update({ title:d.title }).eq("id", d.id);
+      const { error } = await silentSave(()=> supabase.from("standalone_quizzes").update({ title:d.title }).eq("id", d.id));
       const el = document.getElementById("qz-title-save-status");
       if(el){ if(error){ el.textContent="Couldn't save: "+error.message; el.style.color="var(--red)"; } else { el.textContent="Saved"; el.style.color="var(--green)"; } }
     }, 600);
@@ -2570,12 +2593,12 @@ function wireQuizBuilderEvents(){
     if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
     clearTimeout(quizQuestionAutosaveTimers[q.id]);
     quizQuestionAutosaveTimers[q.id] = setTimeout(async ()=>{
-      const { error } = await supabase.from("standalone_quiz_questions").update({
+      const { error } = await silentSave(()=> supabase.from("standalone_quiz_questions").update({
         question_type:q.type, question:q.question,
         options: q.type==="multiple_choice" ? q.options : null,
         correct_index: q.type==="multiple_choice" ? q.correct : null,
         explanation: q.explain
-      }).eq("id", q.id);
+      }).eq("id", q.id));
       const el = document.getElementById(`qz-save-status-${i}`);
       if(el){ if(error){ el.textContent="Couldn't save: "+error.message; el.style.color="var(--red)"; } else { el.textContent="Saved"; el.style.color="var(--green)"; } }
     }, 600);
@@ -4642,7 +4665,7 @@ function openInteractivePicConfigFullscreen(ipId){
   let saveTimer = null;
   function scheduleSave(){
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(async ()=>{ await supabase.from("interactive_pictures").update({ hotspots: ip.hotspots }).eq("id", ipId); }, 500);
+    saveTimer = setTimeout(async ()=>{ await silentSave(()=> supabase.from("interactive_pictures").update({ hotspots: ip.hotspots }).eq("id", ipId)); }, 500);
   }
 
   function draw(){
@@ -5121,7 +5144,7 @@ function wireEditorEvents(){
     if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
     clearTimeout(modAutosaveTimer);
     modAutosaveTimer = setTimeout(async ()=>{
-      const { error } = await supabase.from("modules").update({ title:d.title, short:d.short, popup_enabled:d.popupEnabled, popup_title:d.popupTitle, popup_body:d.popupBody }).eq("id", editingExistingId);
+      const { error } = await silentSave(()=> supabase.from("modules").update({ title:d.title, short:d.short, popup_enabled:d.popupEnabled, popup_title:d.popupTitle, popup_body:d.popupBody }).eq("id", editingExistingId));
       const el = document.getElementById("mod-save-status");
       if(el){
         if(error){ el.textContent = "Couldn't save: " + error.message; el.style.color = "var(--red)"; }
@@ -5143,7 +5166,7 @@ function wireEditorEvents(){
     if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
     clearTimeout(lessonAutosaveTimers[l.id]);
     lessonAutosaveTimers[l.id] = setTimeout(async ()=>{
-      const { error } = await supabase.from("lessons").update({ label:l.label, title:l.title, body:l.body }).eq("id", l.id);
+      const { error } = await silentSave(()=> supabase.from("lessons").update({ label:l.label, title:l.title, body:l.body }).eq("id", l.id));
       const el = document.getElementById(`lesson-save-status-${i}`);
       if(el){
         if(error){ el.textContent = "Couldn't save: " + error.message; el.style.color = "var(--red)"; }
@@ -5231,7 +5254,7 @@ function wireEditorEvents(){
     if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
     clearTimeout(quizAutosaveTimers[q.id]);
     quizAutosaveTimers[q.id] = setTimeout(async ()=>{
-      const { error } = await supabase.from("quiz_questions").update({ question:q.q, options:q.opts, correct_index:q.correct, explanation:q.explain, question_type:q.type, sim_screens:q.simScreens, end_goal:q.endGoal, final_screen_id:q.finalScreenId }).eq("id", q.id);
+      const { error } = await silentSave(()=> supabase.from("quiz_questions").update({ question:q.q, options:q.opts, correct_index:q.correct, explanation:q.explain, question_type:q.type, sim_screens:q.simScreens, end_goal:q.endGoal, final_screen_id:q.finalScreenId }).eq("id", q.id));
       const el = document.getElementById(`q-save-status-${i}`);
       if(el){
         if(error){ el.textContent = "Couldn't save: " + error.message; el.style.color = "var(--red)"; }
@@ -5897,7 +5920,7 @@ async function flushRefSave(pageId, titleInput, bodyRte){
   clearTimeout(refSaveTimer);
   const title = titleInput.value.trim() || "Untitled page";
   const body = getCleanEditorHtml(bodyRte);
-  const { error } = await supabase.from("reference_pages").update({ title, body }).eq("id", pageId);
+  const { error } = await silentSave(()=> supabase.from("reference_pages").update({ title, body }).eq("id", pageId));
   const statusElNow = document.getElementById("ref-save-status");
   if(error){
     if(statusElNow){ statusElNow.textContent = "Couldn't save: " + error.message; statusElNow.style.color = "var(--red)"; }
@@ -6124,7 +6147,7 @@ function scheduleNoteAutosave(noteId, titleInput, bodyRte){
   noteSaveTimer = setTimeout(async ()=>{
     const title = titleInput.value.trim() || "Untitled note";
     const body = getCleanEditorHtml(bodyRte);
-    const { error } = await supabase.from("personal_notes").update({ title, body, updated_at: new Date().toISOString() }).eq("id", noteId);
+    const { error } = await silentSave(()=> supabase.from("personal_notes").update({ title, body, updated_at: new Date().toISOString() }).eq("id", noteId));
     const statusElNow = document.getElementById("note-save-status");
     if(error){
       if(statusElNow){ statusElNow.textContent = "Couldn't save: " + error.message; statusElNow.style.color = "var(--red)"; }
@@ -6197,11 +6220,12 @@ function render(){
    INIT
    ============================================================ */
 (async function init(){
+  window.loadingBarSuppressed = true;
   applyTheme(currentTheme());
   view="loading"; render();
   const { data } = await supabase.auth.getSession();
   if(data.session){ session = data.session; await afterLogin(); }
-  else { view="auth"; render(); }
+  else { window.loadingBarSuppressed = false; view="auth"; render(); }
 
   supabase.auth.onAuthStateChange((event, newSession)=>{
     if(event === "SIGNED_OUT"){ session=null; profile=null; view="auth"; render(); }
