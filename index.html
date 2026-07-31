@@ -101,7 +101,7 @@
   .field input:focus,.field textarea:focus{ border-color:var(--cyan); } .field .hint{ font-size:11px; color:var(--text-faint); margin-top:5px; }
   .editor-section{ margin-top:30px; } .editor-section-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
   .editor-section-head h3{ font-size:14px; margin:0; font-family:var(--mono); letter-spacing:.05em; color:var(--text-dim); text-transform:uppercase; }
-  .sub-card{ background:#0e1626; border:1px solid var(--stroke); border-radius:10px; padding:18px; margin-bottom:14px; }
+  .sub-card{ background:#0e1626; border:1px solid var(--stroke); border-radius:10px; padding:18px; margin-bottom:14px; position:relative; }
   .sub-card-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; } .sub-card-head .tag{ font-family:var(--mono); font-size:10.5px; color:var(--text-faint); }
   .mini-tools{ display:flex; gap:6px; }
   .mini-btn{ font-family:var(--mono); font-size:10.5px; padding:5px 9px; border-radius:6px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); cursor:pointer; }
@@ -175,8 +175,8 @@
   .ref-row.active .ref-row-tools{ background:var(--cyan-dim); }
   .ref-row:hover .ref-row-tools{ opacity:1; pointer-events:auto; }
   .ref-row-tools .mini-btn{ padding:2px 6px; font-size:9px; }
-  .ref-row.drag-over-top::before, .mod-card.drag-over-top::before{ content:""; position:absolute; left:4px; right:4px; top:-4px; height:3px; border-radius:2px; background:var(--cyan); box-shadow:0 0 6px var(--cyan); z-index:2; }
-  .ref-row.drag-over-bottom::after, .mod-card.drag-over-bottom::after{ content:""; position:absolute; left:4px; right:4px; bottom:-4px; height:3px; border-radius:2px; background:var(--cyan); box-shadow:0 0 6px var(--cyan); z-index:2; }
+  .ref-row.drag-over-top::before, .mod-card.drag-over-top::before, .sub-card.drag-over-top::before{ content:""; position:absolute; left:4px; right:4px; top:-4px; height:3px; border-radius:2px; background:var(--cyan); box-shadow:0 0 6px var(--cyan); z-index:2; }
+  .ref-row.drag-over-bottom::after, .mod-card.drag-over-bottom::after, .sub-card.drag-over-bottom::after{ content:""; position:absolute; left:4px; right:4px; bottom:-4px; height:3px; border-radius:2px; background:var(--cyan); box-shadow:0 0 6px var(--cyan); z-index:2; }
   .drag-handle{ cursor:grab; color:var(--text-faint); font-size:15px; width:28px; height:28px; display:flex; align-items:center; justify-content:center; }
   .ref-row[draggable="true"]{ cursor:grab; }
   .onenote-title-input{ width:100%; background:none; border:none; border-bottom:1px solid var(--stroke); font-size:26px; font-weight:700; color:var(--text); font-family:var(--sans); padding:4px 2px 14px; outline:none; margin-bottom:14px; }
@@ -321,7 +321,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r29";
+const BUILD_VERSION = "2026-07-27T00:00Z-r32";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -614,15 +614,11 @@ function renderAuth(){
         <div class="field"><label>Password</label><input type="password" id="auth-password" placeholder="••••••••"></div>
         <button class="btn primary" id="auth-submit" style="width:100%;">${authMode==='login'?'Log in':'Create account'}</button>
       </div>
-      <div style="text-align:center;margin-top:16px;">
-        <button class="btn" id="guest-tour-btn" style="width:100%;">👀 View site as guest</button>
-      </div>
     </div>
   `;
   document.getElementById("tab-login").addEventListener("click", ()=>{ authMode="login"; authError=""; authInfo=""; renderAuth(); });
   document.getElementById("tab-signup").addEventListener("click", ()=>{ authMode="signup"; authError=""; authInfo=""; renderAuth(); });
   document.getElementById("auth-submit").addEventListener("click", submitAuth);
-  document.getElementById("guest-tour-btn").addEventListener("click", openGuestIntroModal);
 }
 
 /* ============================================================
@@ -1003,7 +999,6 @@ function renderShell(inner){
             <div class="admin-menu-panel">
               <button id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>
               <button id="open-announce">📣 Make Announcement</button>
-              <button id="open-guest-editor">👀 Edit Guest Preview</button>
               <button id="open-edit-log">📋 Edit Log</button>
               <button id="open-view-feedback">🗣 View Feedback</button>
             </div>
@@ -1047,8 +1042,6 @@ function renderShell(inner){
   if(toggleEdit) toggleEdit.addEventListener("click", ()=>{ editMode = !editMode; render(); });
   const openAnnounce = document.getElementById("open-announce");
   if(openAnnounce) openAnnounce.addEventListener("click", ()=> openAnnouncementModal());
-  const openGuestEditorBtn = document.getElementById("open-guest-editor");
-  if(openGuestEditorBtn) openGuestEditorBtn.addEventListener("click", openGuestEditor);
   const openEditLogBtn = document.getElementById("open-edit-log");
   if(openEditLogBtn) openEditLogBtn.addEventListener("click", openEditLog);
   const openViewFeedbackBtn = document.getElementById("open-view-feedback");
@@ -4327,7 +4320,13 @@ function wireRichEditor(id){
       if(cmd === "link"){
         saveCurrentRange();
         const url = await promptModal("Insert link", "https://example.com");
-        if(url){ restoreRange(); editorEl.focus(); document.execCommand("createLink", false, url); }
+        if(url){
+          restoreRange(); editorEl.focus(); document.execCommand("createLink", false, url);
+          const sel = window.getSelection();
+          const anchorEl = sel.anchorNode && (sel.anchorNode.nodeType===1 ? sel.anchorNode : sel.anchorNode.parentElement);
+          const link = anchorEl && anchorEl.closest ? anchorEl.closest("a[href]") : null;
+          if(link){ link.setAttribute("target","_blank"); link.setAttribute("rel","noopener noreferrer"); }
+        }
         updateToolbarState();
         return;
       }
@@ -4476,6 +4475,18 @@ function attachImageResizeHandles(editorEl){
 // inconsistent. Block native drag from ever starting on those two controls.
 document.addEventListener("dragstart", (e)=>{
   if(e.target.closest(".rte-resize-handle") || e.target.closest(".rte-img-delete")) e.preventDefault();
+});
+// Any link anywhere in rendered content (lessons, reference pages, notes,
+// chat, quiz explanations, feedback, etc.) opens in a new tab rather than
+// navigating away from the app — covers links already saved from before
+// this was added too, not just ones created going forward.
+document.addEventListener("click", (e)=>{
+  const link = e.target.closest("a[href]");
+  if(!link) return;
+  const href = link.getAttribute("href");
+  if(!href || href.startsWith("#")) return;
+  e.preventDefault();
+  window.open(href, "_blank", "noopener,noreferrer");
 });
 document.addEventListener("click", (e)=>{
   const delBtn = e.target.closest(".rte-img-delete");
@@ -4994,10 +5005,8 @@ function renderEditor(){
         <div class="nav-buttons"><div></div><button class="btn primary" data-lesson-done="${i}">Done</button></div>
       </div>`;
     }
-    return `<div class="sub-card"><div class="sub-card-head"><span class="tag">LESSON ${i+1}${l.title?' · '+escapeHtml(l.title):''}</span>
+    return `<div class="sub-card" data-lesson-drag="${i}" draggable="true"><div class="sub-card-head"><span class="tag"><span class="drag-handle" title="Drag to reorder">⠿</span> LESSON ${i+1}${l.title?' · '+escapeHtml(l.title):''}</span>
       <div class="mini-tools">
-        <button class="mini-btn" data-lesson-up="${i}" ${i===0?'disabled':''}>↑</button>
-        <button class="mini-btn" data-lesson-down="${i}" ${i===d.lessons.length-1?'disabled':''}>↓</button>
         <button class="mini-btn" data-lesson-edit="${i}">Edit</button>
         <button class="mini-btn danger" data-lesson-del="${i}">Delete</button>
       </div></div>
@@ -5026,10 +5035,8 @@ function renderEditor(){
       </div>`;
     }
     const typeTag = q.type==='simulation' ? ' · SIMULATION' : '';
-    return `<div class="sub-card"><div class="sub-card-head"><span class="tag">QUESTION ${i+1}${typeTag}${q.q?' · '+escapeHtml(q.q.slice(0,50))+(q.q.length>50?'…':''):''}</span>
+    return `<div class="sub-card" data-q-drag="${i}" draggable="true"><div class="sub-card-head"><span class="tag"><span class="drag-handle" title="Drag to reorder">⠿</span> QUESTION ${i+1}${typeTag}${q.q?' · '+escapeHtml(q.q.slice(0,50))+(q.q.length>50?'…':''):''}</span>
       <div class="mini-tools">
-        <button class="mini-btn" data-q-up="${i}" ${i===0?'disabled':''}>↑</button>
-        <button class="mini-btn" data-q-down="${i}" ${i===d.quiz.length-1?'disabled':''}>↓</button>
         <button class="mini-btn" data-q-edit="${i}">Edit</button>
         <button class="mini-btn danger" data-q-del="${i}">Delete</button>
       </div></div>
@@ -5109,24 +5116,45 @@ function wireEditorEvents(){
     const rteEl = document.getElementById(`lesson-rte-${expandedLessonIdx}`);
     if(rteEl) rteEl.addEventListener("input", ()=>{ d.lessons[expandedLessonIdx].body = getCleanEditorHtml(rteEl); scheduleLessonAutosave(expandedLessonIdx); });
   }
-  root.querySelectorAll("[data-lesson-up]").forEach(el=> el.addEventListener("click", async ()=>{
-    const i=+el.dataset.lessonUp;
-    [d.lessons[i-1],d.lessons[i]]=[d.lessons[i],d.lessons[i-1]];
-    renderEditor();
-    await Promise.all([
-      supabase.from("lessons").update({ sort_order:i-1 }).eq("id", d.lessons[i-1].id),
-      supabase.from("lessons").update({ sort_order:i }).eq("id", d.lessons[i].id)
-    ]);
-  }));
-  root.querySelectorAll("[data-lesson-down]").forEach(el=> el.addEventListener("click", async ()=>{
-    const i=+el.dataset.lessonDown;
-    [d.lessons[i+1],d.lessons[i]]=[d.lessons[i],d.lessons[i+1]];
-    renderEditor();
-    await Promise.all([
-      supabase.from("lessons").update({ sort_order:i }).eq("id", d.lessons[i].id),
-      supabase.from("lessons").update({ sort_order:i+1 }).eq("id", d.lessons[i+1].id)
-    ]);
-  }));
+  let dragOverEl = null;
+  let dragLessonIdx = null;
+  root.querySelectorAll("[data-lesson-drag]").forEach(el=>{
+    el.addEventListener("dragstart", (e)=>{ dragLessonIdx = +el.getAttribute("data-lesson-drag"); e.dataTransfer.effectAllowed = "move"; el.style.opacity = "0.4"; startDragAutoScroll(); });
+    el.addEventListener("dragend", ()=>{
+      el.style.opacity = "";
+      stopDragAutoScroll();
+      if(dragOverEl){ dragOverEl.classList.remove("drag-over-top","drag-over-bottom"); dragOverEl = null; }
+    });
+    el.addEventListener("dragover", (e)=>{
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const pos = (e.clientY - rect.top) < rect.height/2 ? "before" : "after";
+      if(dragOverEl && dragOverEl!==el) dragOverEl.classList.remove("drag-over-top","drag-over-bottom");
+      dragOverEl = el;
+      el.classList.toggle("drag-over-top", pos==="before");
+      el.classList.toggle("drag-over-bottom", pos==="after");
+    });
+    el.addEventListener("dragleave", ()=>{ el.classList.remove("drag-over-top","drag-over-bottom"); });
+    el.addEventListener("drop", async (e)=>{
+      e.preventDefault();
+      const pos = el.classList.contains("drag-over-top") ? "before" : "after";
+      el.classList.remove("drag-over-top","drag-over-bottom");
+      let toIdx = +el.getAttribute("data-lesson-drag");
+      if(dragLessonIdx===null || dragLessonIdx===toIdx){ dragLessonIdx=null; return; }
+      if(pos==="after") toIdx++;
+      const dragged = d.lessons[dragLessonIdx];
+      const reordered = d.lessons.slice();
+      reordered.splice(dragLessonIdx,1);
+      if(dragLessonIdx < toIdx) toIdx--;
+      reordered.splice(toIdx,0,dragged);
+      d.lessons = reordered;
+      dragLessonIdx = null;
+      renderEditor();
+      for(let i=0;i<d.lessons.length;i++){
+        await supabase.from("lessons").update({ sort_order:i }).eq("id", d.lessons[i].id);
+      }
+    });
+  });
   root.querySelectorAll("[data-lesson-del]").forEach(el=> el.addEventListener("click", async ()=>{
     const i=+el.dataset.lessonDel;
     if(!confirm("Delete this lesson?")) return;
@@ -5242,24 +5270,44 @@ function wireEditorEvents(){
     d.quiz[qi].opts.splice(oi,1); if(d.quiz[qi].correct===oi) d.quiz[qi].correct=0; else if(d.quiz[qi].correct>oi) d.quiz[qi].correct-=1;
     scheduleQuizAutosave(qi); renderEditor();
   }));
-  root.querySelectorAll("[data-q-up]").forEach(el=> el.addEventListener("click", async ()=>{
-    const i=+el.dataset.qUp;
-    [d.quiz[i-1],d.quiz[i]]=[d.quiz[i],d.quiz[i-1]];
-    renderEditor();
-    await Promise.all([
-      supabase.from("quiz_questions").update({ sort_order:i-1 }).eq("id", d.quiz[i-1].id),
-      supabase.from("quiz_questions").update({ sort_order:i }).eq("id", d.quiz[i].id)
-    ]);
-  }));
-  root.querySelectorAll("[data-q-down]").forEach(el=> el.addEventListener("click", async ()=>{
-    const i=+el.dataset.qDown;
-    [d.quiz[i+1],d.quiz[i]]=[d.quiz[i],d.quiz[i+1]];
-    renderEditor();
-    await Promise.all([
-      supabase.from("quiz_questions").update({ sort_order:i }).eq("id", d.quiz[i].id),
-      supabase.from("quiz_questions").update({ sort_order:i+1 }).eq("id", d.quiz[i+1].id)
-    ]);
-  }));
+  let dragQuestionIdx = null;
+  root.querySelectorAll("[data-q-drag]").forEach(el=>{
+    el.addEventListener("dragstart", (e)=>{ dragQuestionIdx = +el.getAttribute("data-q-drag"); e.dataTransfer.effectAllowed = "move"; el.style.opacity = "0.4"; startDragAutoScroll(); });
+    el.addEventListener("dragend", ()=>{
+      el.style.opacity = "";
+      stopDragAutoScroll();
+      if(dragOverEl){ dragOverEl.classList.remove("drag-over-top","drag-over-bottom"); dragOverEl = null; }
+    });
+    el.addEventListener("dragover", (e)=>{
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const pos = (e.clientY - rect.top) < rect.height/2 ? "before" : "after";
+      if(dragOverEl && dragOverEl!==el) dragOverEl.classList.remove("drag-over-top","drag-over-bottom");
+      dragOverEl = el;
+      el.classList.toggle("drag-over-top", pos==="before");
+      el.classList.toggle("drag-over-bottom", pos==="after");
+    });
+    el.addEventListener("dragleave", ()=>{ el.classList.remove("drag-over-top","drag-over-bottom"); });
+    el.addEventListener("drop", async (e)=>{
+      e.preventDefault();
+      const pos = el.classList.contains("drag-over-top") ? "before" : "after";
+      el.classList.remove("drag-over-top","drag-over-bottom");
+      let toIdx = +el.getAttribute("data-q-drag");
+      if(dragQuestionIdx===null || dragQuestionIdx===toIdx){ dragQuestionIdx=null; return; }
+      if(pos==="after") toIdx++;
+      const dragged = d.quiz[dragQuestionIdx];
+      const reordered = d.quiz.slice();
+      reordered.splice(dragQuestionIdx,1);
+      if(dragQuestionIdx < toIdx) toIdx--;
+      reordered.splice(toIdx,0,dragged);
+      d.quiz = reordered;
+      dragQuestionIdx = null;
+      renderEditor();
+      for(let i=0;i<d.quiz.length;i++){
+        await supabase.from("quiz_questions").update({ sort_order:i }).eq("id", d.quiz[i].id);
+      }
+    });
+  });
   root.querySelectorAll("[data-q-del]").forEach(el=> el.addEventListener("click", async ()=>{
     const i=+el.dataset.qDel;
     if(!confirm("Delete this question?")) return;
