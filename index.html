@@ -228,7 +228,8 @@
   .rte-img-wrap[data-align="left"]{ margin:8px auto 8px 0; }
   .rte-img-wrap[data-align="center"]{ margin:8px auto; }
   .rte-img-wrap[data-align="right"]{ margin:8px 0 8px auto; }
-  .rte-body a{ color:var(--cyan); text-decoration:underline; }
+  .rte-body a, .body a, .chat-bubble-body a{ color:var(--cyan); text-decoration:underline; }
+  .rte-body a:visited, .body a:visited, .chat-bubble-body a:visited{ color:var(--cyan); }
   .rte-body h2{ font-size:19px; margin:14px 0 8px; color:var(--text); } .rte-body h3{ font-size:15px; margin:12px 0 6px; color:var(--text); }
   .rte-body{ border:1px solid var(--stroke); border-radius:0 0 8px 8px; padding:14px; min-height:140px; background:#0e1626; color:var(--text); font-size:14px; line-height:1.7; overflow-y:auto; overflow-x:auto; resize:vertical; }
   html.theme-light .rte-body{ background:#fff; }
@@ -321,12 +322,53 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r32";
+const BUILD_VERSION = "2026-07-27T00:00Z-r33";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
 
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// A thin, unobtrusive loading bar at the top of the screen that appears
+// automatically during any save/load — every Supabase call (queries,
+// inserts, updates, deletes, edge functions) ultimately goes through
+// fetch(), so hooking in here covers all of it without needing to touch
+// every individual save call site, and without missing any.
+(function(){
+  const bar = document.createElement('div');
+  bar.id = 'global-loading-bar';
+  bar.style.cssText = 'position:fixed;top:0;left:0;height:3px;width:0%;background:var(--cyan);box-shadow:0 0 8px var(--cyan);z-index:1000;transition:width .25s ease, opacity .3s ease;opacity:0;pointer-events:none;';
+  document.body.appendChild(bar);
+  let activeRequests = 0;
+  let hideTimer = null;
+  function showBar(){
+    activeRequests++;
+    clearTimeout(hideTimer);
+    bar.style.opacity = '1';
+    if(parseFloat(bar.style.width) < 70) bar.style.width = '70%';
+  }
+  function hideBar(){
+    activeRequests = Math.max(0, activeRequests-1);
+    if(activeRequests===0){
+      bar.style.width = '100%';
+      hideTimer = setTimeout(()=>{
+        bar.style.opacity = '0';
+        setTimeout(()=>{ bar.style.width = '0%'; }, 300);
+      }, 150);
+    }
+  }
+  const supabaseHost = SUPABASE_URL.replace(/^https?:\/\//, '');
+  const _origFetch = window.fetch.bind(window);
+  window.fetch = function(...args){
+    const target = args[0];
+    const url = typeof target === 'string' ? target : (target && target.url) || '';
+    const isSupabase = url.includes(supabaseHost);
+    if(isSupabase) showBar();
+    const result = _origFetch(...args);
+    if(isSupabase) result.finally(hideBar);
+    return result;
+  };
+})();
 
 /* ============================================================
    GUEST MODE — lets a visitor tour the real app with sample data
