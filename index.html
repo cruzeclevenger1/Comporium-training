@@ -128,46 +128,54 @@
   }
   html.theme-light body{ background:#F3F5FA; }
 
-  /* Programmer — black terminal, phosphor green */
+  /* Programmer — true black terminal, phosphor green */
   html.theme-programmer{
-    --bg:#000000; --panel:#0a0f0a; --stroke:#1f3d1f; --text:#33ff66; --text-dim:#22bb44; --text-faint:#1a7a30;
-    --green:#33ff66; --green-dim:#33ff6633; --amber:#ffcc00; --amber-dim:#ffcc0033; --red:#ff3333; --red-dim:#ff333333;
-    --cyan:#00ffaa; --cyan-dim:#00ffaa33; --input-bg:#001a05; --body-bg-glow:radial-gradient(circle at 15% -10%,#0a2a12 0%,transparent 45%);
+    --bg:#000000; --panel:#000000; --stroke:#1f3d1f; --text:#3dff70; --text-dim:#2ee85c; --text-faint:#22b348;
+    --green:#3dff70; --green-dim:#3dff7033; --amber:#ffcc00; --amber-dim:#ffcc0033; --red:#ff4444; --red-dim:#ff444433;
+    --cyan:#00ffaa; --cyan-dim:#00ffaa33; --input-bg:#020a04; --body-bg-glow:none;
   }
-  html.theme-programmer body{ background:radial-gradient(circle at 15% -10%,#0a2a12 0%,transparent 45%),#000000; }
+  html.theme-programmer body{ background:#000000; }
   html.theme-programmer, html.theme-programmer .card .body p, html.theme-programmer .card .body ul, html.theme-programmer .opt span.txt{ font-family:var(--mono); }
 
   /* Retro Amber — old CRT monochrome terminal */
   html.theme-retro{
-    --bg:#0a0603; --panel:#140d05; --stroke:#3d2a10; --text:#ffb000; --text-dim:#cc8800; --text-faint:#8a5c00;
-    --green:#7fdb6b; --green-dim:#7fdb6b33; --amber:#ffb000; --amber-dim:#ffb00033; --red:#ff5533; --red-dim:#ff553333;
+    --bg:#0a0603; --panel:#140d05; --stroke:#4a3414; --text:#ffb000; --text-dim:#e6a000; --text-faint:#b3801a;
+    --green:#8fe67a; --green-dim:#8fe67a33; --amber:#ffb000; --amber-dim:#ffb00033; --red:#ff6644; --red-dim:#ff664433;
     --cyan:#ffb000; --cyan-dim:#ffb00033; --input-bg:#1a1006; --body-bg-glow:radial-gradient(circle at 15% -10%,#2a1a05 0%,transparent 45%);
   }
   html.theme-retro body{ background:radial-gradient(circle at 15% -10%,#2a1a05 0%,transparent 45%),#0a0603; }
 
   /* Synthwave — 80s neon */
   html.theme-synthwave{
-    --bg:#0d0221; --panel:#1a0a35; --stroke:#4a1a6e; --text:#f8e8ff; --text-dim:#c9a3e8; --text-faint:#8a5fb8;
+    --bg:#0d0221; --panel:#1a0a35; --stroke:#5a2680; --text:#f8e8ff; --text-dim:#d3aeee; --text-faint:#ab7dd0;
     --green:#39ff9c; --green-dim:#39ff9c33; --amber:#ffb84d; --amber-dim:#ffb84d33; --red:#ff2e88; --red-dim:#ff2e8833;
-    --cyan:#00f0ff; --cyan-dim:#00f0ff33; --input-bg:#150730; --body-bg-glow:radial-gradient(circle at 15% -10%,#3a0a5e 0%,transparent 45%),radial-gradient(circle at 100% 0%,#0a2a4a 0%,transparent 40%);
+    --cyan:#00f0ff; --cyan-dim:#00f0ff33; --input-bg:#1c0a3d; --body-bg-glow:radial-gradient(circle at 15% -10%,#3a0a5e 0%,transparent 45%),radial-gradient(circle at 100% 0%,#0a2a4a 0%,transparent 40%);
   }
   html.theme-synthwave body{ background:radial-gradient(circle at 15% -10%,#3a0a5e 0%,transparent 45%),radial-gradient(circle at 100% 0%,#0a2a4a 0%,transparent 40%),#0d0221; }
 
   /* Ocean — deep sea blues */
   html.theme-ocean{
-    --bg:#041624; --panel:#0a2740; --stroke:#1c4560; --text:#dff2ff; --text-dim:#8fb8d0; --text-faint:#5a8aa8;
-    --green:#34D399; --green-dim:#34D39933; --amber:#F0A93D; --amber-dim:#F0A93D33; --red:#ef5d5d; --red-dim:#ef5d5d33;
-    --cyan:#2dd4e8; --cyan-dim:#2dd4e833; --input-bg:#0d3350; --body-bg-glow:radial-gradient(circle at 15% -10%,#0d4060 0%,transparent 45%);
+    --bg:#041624; --panel:#0a2740; --stroke:#28587a; --text:#e6f6ff; --text-dim:#a3cee2; --text-faint:#78b0cc;
+    --green:#34D399; --green-dim:#34D39933; --amber:#F0A93D; --amber-dim:#F0A93D33; --red:#ff7a6b; --red-dim:#ff7a6b33;
+    --cyan:#3ddcf0; --cyan-dim:#3ddcf033; --input-bg:#0d3350; --body-bg-glow:radial-gradient(circle at 15% -10%,#0d4060 0%,transparent 45%);
   }
   html.theme-ocean body{ background:radial-gradient(circle at 15% -10%,#0d4060 0%,transparent 45%),#041624; }
 
   /* Forest — earthy dark greens */
   html.theme-forest{
-    --bg:#0d1610; --panel:#16241a; --stroke:#2e4535; --text:#e4ecdf; --text-dim:#9db898; --text-faint:#647a5f;
-    --green:#4ade80; --green-dim:#4ade8033; --amber:#d4a24c; --amber-dim:#d4a24c33; --red:#e0685a; --red-dim:#e0685a33;
-    --cyan:#7fd68a; --cyan-dim:#7fd68a33; --input-bg:#1a2b1f; --body-bg-glow:radial-gradient(circle at 15% -10%,#1f3826 0%,transparent 45%);
+    --bg:#0d1610; --panel:#16241a; --stroke:#3a5a44; --text:#eaf2e5; --text-dim:#b1cbab; --text-faint:#8bab84;
+    --green:#5aeb90; --green-dim:#5aeb9033; --amber:#e0b262; --amber-dim:#e0b26233; --red:#f07d6e; --red-dim:#f07d6e33;
+    --cyan:#8fe69a; --cyan-dim:#8fe69a33; --input-bg:#1a2b1f; --body-bg-glow:radial-gradient(circle at 15% -10%,#1f3826 0%,transparent 45%);
   }
   html.theme-forest body{ background:radial-gradient(circle at 15% -10%,#1f3826 0%,transparent 45%),#0d1610; }
+
+  /* Japan — cherry blossom, soft sakura pink against night */
+  html.theme-japan{
+    --bg:#1a0f16; --panel:#261620; --stroke:#4a2e3d; --text:#fce8ee; --text-dim:#e0aec2; --text-faint:#c084a0;
+    --green:#8fdba8; --green-dim:#8fdba833; --amber:#f0bd7a; --amber-dim:#f0bd7a33; --red:#f0708a; --red-dim:#f0708a33;
+    --cyan:#ff9dc0; --cyan-dim:#ff9dc033; --input-bg:#2b1a24; --body-bg-glow:radial-gradient(circle at 15% -10%,#3d1f30 0%,transparent 45%),radial-gradient(circle at 100% 0%,#2a1520 0%,transparent 40%);
+  }
+  html.theme-japan body{ background:radial-gradient(circle at 15% -10%,#3d1f30 0%,transparent 45%),radial-gradient(circle at 100% 0%,#2a1520 0%,transparent 40%),#1a0f16; }
 
   /* High Contrast — accessibility-focused, maximum readability */
   html.theme-contrast{
@@ -199,11 +207,13 @@
   .gear-btn{ width:34px; height:34px; border-radius:8px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); cursor:pointer; font-size:15px; display:flex; align-items:center; justify-content:center; }
   html.theme-light .gear-btn{ background:var(--input-bg); }
   .gear-btn:hover{ border-color:#3a4a70; color:var(--text); }
-  .theme-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px; }
-  .theme-swatch{ display:flex; flex-direction:column; align-items:center; gap:6px; padding:16px 10px; border-radius:10px; border:2px solid; cursor:pointer; font-size:20px; transition:transform .12s; }
-  .theme-swatch:hover{ transform:translateY(-2px); }
-  .theme-swatch span{ font-size:11.5px; font-family:var(--sans); font-weight:600; }
-  .theme-swatch.active{ box-shadow:0 0 0 2px var(--cyan), 0 0 14px var(--cyan-dim); }
+  .theme-dropdown{ position:relative; max-width:280px; }
+  .theme-dropdown-trigger{ width:100%; display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:9px; border:1px solid var(--stroke); background:var(--input-bg); color:var(--text); cursor:pointer; font-size:13.5px; font-family:var(--sans); }
+  .theme-swatch-sm{ width:26px; height:26px; border-radius:7px; border:2px solid; display:flex; align-items:center; justify-content:center; font-size:13px; flex:none; }
+  .theme-dropdown-panel{ position:absolute; top:calc(100% + 6px); left:0; right:0; background:var(--panel); border:1px solid var(--stroke); border-radius:10px; padding:6px; z-index:50; box-shadow:0 12px 30px #00000066; max-height:320px; overflow-y:auto; }
+  .theme-option{ width:100%; display:flex; align-items:center; gap:10px; padding:8px 9px; border-radius:7px; border:none; background:transparent; color:var(--text); cursor:pointer; font-size:13px; font-family:var(--sans); text-align:left; }
+  .theme-option:hover{ background:var(--input-bg); }
+  .theme-option.active{ background:var(--cyan-dim); color:var(--cyan); }
   .top-nav{ display:flex; gap:8px; margin-bottom:24px; }
   .top-nav-btn{ font-family:var(--mono); font-size:12px; letter-spacing:.03em; padding:9px 16px; border-radius:8px; border:1px solid var(--stroke); background:var(--panel); color:var(--text-dim); cursor:pointer; }
   .top-nav-btn:hover{ border-color:#3a4a70; color:var(--text); }
@@ -376,7 +386,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r41";
+const BUILD_VERSION = "2026-07-27T00:00Z-r43";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1151,7 +1161,7 @@ function renderShell(inner){
   });
   document.getElementById("nav-reference").addEventListener("click", openReference);
   document.getElementById("nav-notes").addEventListener("click", openNotes);
-  document.getElementById("open-settings").addEventListener("click", ()=>{ view="settings"; render(); });
+  document.getElementById("open-settings").addEventListener("click", ()=>{ themeDropdownOpen = false; view="settings"; render(); });
   const ultToggle = document.getElementById("ult-edit-toggle");
   if(ultToggle) ultToggle.addEventListener("click", ()=>{ ultimateEditMode = !ultimateEditMode; render(); });
   document.getElementById("logout-btn").addEventListener("click", ()=>{ guestMode ? exitGuestMode() : logout(); });
@@ -1221,6 +1231,7 @@ async function reorderModuleDrop(draggedId, targetId, pos){
 }
 
 let dashboardShowCompleted = false; // hidden by default; loaded from profile.dashboard_show_completed at login
+let themeDropdownOpen = false;
 
 function renderDashboard(){
   lastModuleContext = { view:"dashboard" };
@@ -4749,11 +4760,17 @@ function openInteractivePicConfigFullscreen(ipId){
           ${boxesHtml}
         </div>
       </div>
-      ${zoomLevel>100 ? `<p class="hint" style="margin-top:8px;">Scroll or drag the scrollbars to pan around while zoomed in.</p>` : ''}`;
+      <p class="hint" style="margin-top:8px;">Ctrl/Cmd + scroll to zoom${zoomLevel>100 ? ' · scroll to pan around' : ''}.</p>`;
     document.getElementById("ip-config-done").addEventListener("click", ()=>{ scheduleSave(); overlay.remove(); if(view==="editor") renderEditor(); });
     document.getElementById("ip-zoom-in").addEventListener("click", ()=>{ zoomLevel = Math.min(400, zoomLevel+25); draw(); });
     document.getElementById("ip-zoom-out").addEventListener("click", ()=>{ zoomLevel = Math.max(100, zoomLevel-25); draw(); });
     document.getElementById("ip-zoom-reset").addEventListener("click", ()=>{ zoomLevel = 100; draw(); });
+    overlay.querySelector(".ip-zoom-viewport").addEventListener("wheel", (e)=>{
+      if(!e.ctrlKey && !e.metaKey) return; // plain scroll stays free for panning when zoomed in
+      e.preventDefault();
+      zoomLevel = Math.min(400, Math.max(100, zoomLevel + (e.deltaY < 0 ? 25 : -25)));
+      draw();
+    }, { passive:false });
     const canvas = overlay.querySelector("[data-ip-canvas]");
     canvas.addEventListener("mousedown", (e)=>{
       if(e.target.closest(".sim-zone")) return;
@@ -4819,11 +4836,17 @@ async function openInteractivePicViewer(ipId){
           ${boxesHtml}
         </div>
       </div>
-      ${!allDone ? `<p style="color:var(--text-faint);font-size:12.5px;margin-top:10px;">Click every red box — it turns green once you've read it. All boxes must be green before you can move to the next lesson.</p>` : ''}`;
+      ${!allDone ? `<p style="color:var(--text-faint);font-size:12.5px;margin-top:10px;">Click every red box — it turns green once you've read it. All boxes must be green before you can move to the next lesson. Ctrl/Cmd + scroll to zoom.</p>` : `<p class="hint" style="margin-top:8px;">Ctrl/Cmd + scroll to zoom.</p>`}`;
     document.getElementById("ip-viewer-close").addEventListener("click", ()=>{ overlay.remove(); render(); });
     document.getElementById("ip-zoom-in").addEventListener("click", ()=>{ zoomLevel = Math.min(400, zoomLevel+25); draw(); });
     document.getElementById("ip-zoom-out").addEventListener("click", ()=>{ zoomLevel = Math.max(100, zoomLevel-25); draw(); });
     document.getElementById("ip-zoom-reset").addEventListener("click", ()=>{ zoomLevel = 100; draw(); });
+    overlay.querySelector(".ip-zoom-viewport").addEventListener("wheel", (e)=>{
+      if(!e.ctrlKey && !e.metaKey) return; // plain scroll stays free for panning when zoomed in
+      e.preventDefault();
+      zoomLevel = Math.min(400, Math.max(100, zoomLevel + (e.deltaY < 0 ? 25 : -25)));
+      draw();
+    }, { passive:false });
     overlay.querySelectorAll("[data-ip-hotspot]").forEach(el=> el.addEventListener("click", ()=>{
       const hi = +el.getAttribute("data-ip-hotspot");
       const h = ip.hotspots[hi];
@@ -4908,6 +4931,12 @@ document.addEventListener("click", (e)=>{
   }
   const playEmbed = e.target.closest('.interactive-pic-embed[data-ip-hydrated="play"]');
   if(playEmbed){ openInteractivePicViewer(playEmbed.getAttribute("data-interactive-pic-id")); return; }
+});
+document.addEventListener("click", (e)=>{
+  if(!themeDropdownOpen) return;
+  if(e.target.closest(".theme-dropdown")) return;
+  themeDropdownOpen = false;
+  if(view==="settings") renderSettings();
 });
 
 
@@ -5664,7 +5693,18 @@ function openNewModuleNotifyModal(title){
 /* ============================================================
    SETTINGS (name, own password, theme)
    ============================================================ */
-const THEME_NAMES = ["dark","light","programmer","retro","synthwave","ocean","forest","contrast"];
+const THEMES = [
+  { id:"dark", icon:"🌙", label:"Dark", bg:"#0A0F1A", color:"#52D5E0", border:"#24304a" },
+  { id:"light", icon:"☀️", label:"Light", bg:"#F3F5FA", color:"#1B2233", border:"#DCE3F0" },
+  { id:"programmer", icon:"&gt;_", label:"Programmer", bg:"#000000", color:"#3dff70", border:"#1f3d1f", mono:true },
+  { id:"retro", icon:"📺", label:"Retro Amber", bg:"#0a0603", color:"#ffb000", border:"#4a3414" },
+  { id:"synthwave", icon:"🌆", label:"Synthwave", bg:"#0d0221", color:"#00f0ff", border:"#5a2680" },
+  { id:"ocean", icon:"🌊", label:"Ocean", bg:"#041624", color:"#3ddcf0", border:"#28587a" },
+  { id:"forest", icon:"🌲", label:"Forest", bg:"#0d1610", color:"#5aeb90", border:"#3a5a44" },
+  { id:"japan", icon:"🌸", label:"Japan", bg:"#1a0f16", color:"#ff9dc0", border:"#4a2e3d" },
+  { id:"contrast", icon:"◐", label:"High Contrast", bg:"#000000", color:"#ffff00", border:"#ffffff" }
+];
+const THEME_NAMES = THEMES.map(t=>t.id);
 function currentTheme(){ const t = localStorage.getItem("lineup-theme") || "dark"; return THEME_NAMES.includes(t) ? t : "dark"; }
 function applyTheme(t){
   THEME_NAMES.forEach(name=>{ if(name!=="dark") document.documentElement.classList.remove("theme-"+name); });
@@ -5693,16 +5733,23 @@ function renderSettings(){
 
       <div class="editor-section">
         <div class="editor-section-head"><h3>Appearance</h3></div>
-        <div class="theme-grid">
-          <button class="theme-swatch ${t==='dark'?'active':''}" data-theme="dark" style="background:#0A0F1A;color:#52D5E0;border-color:#24304a;">🌙<span>Dark</span></button>
-          <button class="theme-swatch ${t==='light'?'active':''}" data-theme="light" style="background:#F3F5FA;color:#1B2233;border-color:#DCE3F0;">☀️<span>Light</span></button>
-          <button class="theme-swatch ${t==='programmer'?'active':''}" data-theme="programmer" style="background:#000000;color:#33ff66;border-color:#1f3d1f;font-family:var(--mono);">&gt;_<span>Programmer</span></button>
-          <button class="theme-swatch ${t==='retro'?'active':''}" data-theme="retro" style="background:#0a0603;color:#ffb000;border-color:#3d2a10;">📺<span>Retro Amber</span></button>
-          <button class="theme-swatch ${t==='synthwave'?'active':''}" data-theme="synthwave" style="background:#0d0221;color:#00f0ff;border-color:#4a1a6e;">🌆<span>Synthwave</span></button>
-          <button class="theme-swatch ${t==='ocean'?'active':''}" data-theme="ocean" style="background:#041624;color:#2dd4e8;border-color:#1c4560;">🌊<span>Ocean</span></button>
-          <button class="theme-swatch ${t==='forest'?'active':''}" data-theme="forest" style="background:#0d1610;color:#4ade80;border-color:#2e4535;">🌲<span>Forest</span></button>
-          <button class="theme-swatch ${t==='contrast'?'active':''}" data-theme="contrast" style="background:#000000;color:#ffff00;border-color:#ffffff;">◐<span>High Contrast</span></button>
-        </div>
+        ${(()=>{
+          const cur = THEMES.find(th=>th.id===t) || THEMES[0];
+          const optionsHtml = THEMES.map(th=>`
+            <button class="theme-option ${th.id===t?'active':''}" data-theme="${th.id}">
+              <span class="theme-swatch-sm" style="background:${th.bg};color:${th.color};border-color:${th.border};${th.mono?'font-family:var(--mono);':''}">${th.icon}</span>
+              <span>${th.label}</span>
+            </button>`).join("");
+          return `
+          <div class="theme-dropdown">
+            <button class="theme-dropdown-trigger" id="theme-dropdown-toggle">
+              <span class="theme-swatch-sm" style="background:${cur.bg};color:${cur.color};border-color:${cur.border};${cur.mono?'font-family:var(--mono);':''}">${cur.icon}</span>
+              <span>${cur.label}</span>
+              <span style="margin-left:auto;color:var(--text-faint);">${themeDropdownOpen?'▲':'▼'}</span>
+            </button>
+            ${themeDropdownOpen ? `<div class="theme-dropdown-panel">${optionsHtml}</div>` : ''}
+          </div>`;
+        })()}
       </div>
 
       ${(!isAdmin() && !guestMode) ? `
@@ -5759,7 +5806,9 @@ function renderSettings(){
     document.getElementById("set-pw1").value = ""; document.getElementById("set-pw2").value = "";
   });
 
-  root.querySelectorAll("[data-theme]").forEach(el=> el.addEventListener("click", ()=>{ applyTheme(el.getAttribute("data-theme")); renderSettings(); }));
+  const themeToggle = document.getElementById("theme-dropdown-toggle");
+  if(themeToggle) themeToggle.addEventListener("click", (e)=>{ e.stopPropagation(); themeDropdownOpen = !themeDropdownOpen; renderSettings(); });
+  root.querySelectorAll("[data-theme]").forEach(el=> el.addEventListener("click", ()=>{ applyTheme(el.getAttribute("data-theme")); themeDropdownOpen = false; renderSettings(); }));
 }
 
 /* ============================================================
