@@ -30,6 +30,9 @@
   .crumbs-row button:hover{ text-decoration:underline; }
   nav.crumbs button{ background:none; border:none; color:var(--cyan); cursor:pointer; font-family:var(--mono); font-size:12px; padding:0; }
   .pill-btn{ font-family:var(--mono); font-size:11px; letter-spacing:.04em; padding:7px 12px; border-radius:7px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); cursor:pointer; }
+  .dept-tabs{ display:flex; gap:8px; margin-bottom:18px; }
+  .dept-tab{ padding:9px 16px; border-radius:8px; border:1px solid var(--stroke); background:var(--input-bg); color:var(--text-dim); cursor:pointer; font-size:13px; font-family:var(--sans); font-weight:600; }
+  .dept-tab.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
   .pill-btn:hover{ border-color:#3a4a70; color:var(--text); }
   .admin-badge{ font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; padding:6px 10px; border-radius:20px; border:1px solid var(--amber-dim); background:var(--amber-dim); color:var(--amber); }
   .led-strip{ display:flex; gap:6px; align-items:center; }
@@ -397,7 +400,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r49";
+const BUILD_VERSION = "2026-07-27T00:00Z-r50";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -664,7 +667,7 @@ async function loadEverything(){
   ]);
   const mods = modsRes.data, lessons = lessonsRes.data, quiz = quizRes.data;
   MODULES = (mods||[]).map(m=>({
-    id:m.id, title:m.title, short:m.short, ledColor:m.led_color,
+    id:m.id, title:m.title, short:m.short, ledColor:m.led_color, department: m.department || 'TS',
     popupEnabled: !!m.popup_enabled, popupTitle: m.popup_title||"", popupBody: m.popup_body||"",
     lessons:(lessons||[]).filter(l=>l.module_id===m.id).map(l=>({id:l.id,label:l.label,title:l.title,body:l.body})),
     // sim_screens (Simulated Navigation screenshots) deliberately excluded here — each one can hold
@@ -953,6 +956,30 @@ async function silentSave(fn){
   finally { window.silentSaveDepth = Math.max(0, (window.silentSaveDepth||1) - 1); }
 }
 
+function promptDepartmentChoice(){
+  return new Promise((resolve)=>{
+    openModal(`
+      <h3>Which team are you on?</h3>
+      <p class="sub">This decides which training modules and reference guide you'll see. An admin can always add access to the other team later if that changes.</p>
+      <div class="modal-actions" style="justify-content:center;gap:14px;">
+        <button class="btn primary" id="dept-pick-ts" style="flex:1;">Tech Support</button>
+        <button class="btn primary" id="dept-pick-cs" style="flex:1;">Customer Service</button>
+      </div>
+    `, false, true);
+    // No close/cancel path is wired here on purpose — this has to be
+    // answered before the account is usable, since which modules even
+    // exist for this person depends on the answer.
+    const finish = async (field)=>{
+      await supabase.from("profiles").update({ [field]: true }).eq("id", session.user.id);
+      profile[field] = true;
+      closeModal();
+      resolve();
+    };
+    document.getElementById("dept-pick-ts").addEventListener("click", ()=> finish("can_access_ts"));
+    document.getElementById("dept-pick-cs").addEventListener("click", ()=> finish("can_access_cs"));
+  });
+}
+
 function formatNamePart(str){
   return str.trim().split(/\s+/).filter(Boolean).map(word=>
     word.split('-').map(seg => seg.charAt(0).toUpperCase() + seg.slice(1).toLowerCase()).join('-')
@@ -997,6 +1024,9 @@ async function afterLogin(){
   if(wasFirstLoginThisSession){
     await supabase.from("profiles").update({ is_first_login:false }).eq("id", session.user.id);
     profile.is_first_login = false;
+  }
+  if(profile && !profile.can_access_ts && !profile.can_access_cs){
+    await promptDepartmentChoice();
   }
   // These four don't depend on each other's results, only on profile being
   // loaded — running them in parallel instead of one-after-another cuts
@@ -1242,12 +1272,34 @@ async function reorderModuleDrop(draggedId, targetId, pos){
 }
 
 let dashboardShowCompleted = false; // hidden by default; loaded from profile.dashboard_show_completed at login
+let activeDepartment = null; // 'TS' or 'CS' — only meaningful for people with access to both; set on first render
+
+function canAccessDepartment(dept){
+  if(guestMode) return true; // guest preview shows everything regardless of department
+  if(!profile) return false;
+  return dept === 'CS' ? !!profile.can_access_cs : !!profile.can_access_ts;
+}
+function myDepartments(){
+  const list = [];
+  if(canAccessDepartment('TS')) list.push('TS');
+  if(canAccessDepartment('CS')) list.push('CS');
+  return list;
+}
+function currentActiveDepartment(){
+  const mine = myDepartments();
+  if(mine.length===0) return 'TS';
+  if(activeDepartment && mine.includes(activeDepartment)) return activeDepartment;
+  activeDepartment = mine[0];
+  return activeDepartment;
+}
 let themeDropdownOpen = false;
 
 function renderDashboard(){
   lastModuleContext = { view:"dashboard" };
   const editOn = canEdit();
-  const visibleModules = dashboardShowCompleted ? MODULES : MODULES.filter(m=> moduleStatus(m.id)!=="mastered");
+  const dept = currentActiveDepartment();
+  const deptModules = guestMode ? MODULES : MODULES.filter(m=> m.department===dept);
+  const visibleModules = dashboardShowCompleted ? deptModules : deptModules.filter(m=> moduleStatus(m.id)!=="mastered");
   const cards = visibleModules.map(m=>{
     const status = moduleStatus(m.id); const s = progressMap[m.id];
     const pillHtml = status==="mastered" ? `<span class="status-pill done">Mastered</span>`
@@ -1264,25 +1316,31 @@ function renderDashboard(){
   }).join("");
 
   const addCard = canEdit() ? `<div class="add-mod-card" id="add-module">+ ADD MODULE</div>` : "";
-  const totalQ = MODULES.reduce((a,m)=>a+m.quiz.length,0);
-  const doneQ = Object.values(progressMap).reduce((a,s)=>a+(s.best||0),0);
-  const modsMastered = MODULES.filter(m=>moduleStatus(m.id)==="mastered").length;
-  const emptyFilterMsg = (!dashboardShowCompleted && !visibleModules.length && MODULES.length) ? `<p style="color:var(--text-faint);font-size:13.5px;padding:10px 2px;">Everything's mastered — nice work. Tap "Show Completed" above to see them.</p>` : "";
+  const totalQ = deptModules.reduce((a,m)=>a+m.quiz.length,0);
+  const doneQ = deptModules.reduce((a,m)=>a+((progressMap[m.id]&&progressMap[m.id].best)||0),0);
+  const modsMastered = deptModules.filter(m=>moduleStatus(m.id)==="mastered").length;
+  const emptyFilterMsg = (!dashboardShowCompleted && !visibleModules.length && deptModules.length) ? `<p style="color:var(--text-faint);font-size:13.5px;padding:10px 2px;">Everything's mastered — nice work. Tap "Show Completed" above to see them.</p>` : "";
+  const deptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
+      <button class="dept-tab ${dept==='TS'?'active':''}" data-dept="TS">Tech Support</button>
+      <button class="dept-tab ${dept==='CS'?'active':''}" data-dept="CS">Customer Service</button>
+    </div>` : "";
 
   renderShell(`
     <section class="hero">
       <div class="eyebrow">${T('dashboard.eyebrow','New Agent Onboarding')}</div>
       <h1>${T('dashboard.h1','Before you take a call, learn to read the box.')}</h1>
       <p>${T("dashboard.p","Modules built from the tickets you'll actually see this week. Each ends in a scored quiz — your progress is saved to your account.")}</p>
-      <div class="panel-row"><div class="stat"><div class="num">${modsMastered}/${MODULES.length}</div><div class="lbl">MODULES MASTERED</div></div>
+      <div class="panel-row"><div class="stat"><div class="num">${modsMastered}/${deptModules.length}</div><div class="lbl">MODULES MASTERED</div></div>
       <div class="stat"><div class="num">${doneQ}/${totalQ}</div><div class="lbl">BEST-SCORE QUESTIONS CORRECT</div></div></div>
     </section>
+    ${deptTabsHtml}
     <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
       <button class="pill-btn" id="toggle-incomplete-filter">${dashboardShowCompleted ? "✓ Showing completed" : "Show Completed"}</button>
     </div>
     <div class="grid">${cards}${emptyFilterMsg}${addCard}</div>
   `);
 
+  root.querySelectorAll("[data-dept]").forEach(el=> el.addEventListener("click", ()=>{ activeDepartment = el.getAttribute("data-dept"); render(); }));
   document.getElementById("toggle-incomplete-filter").addEventListener("click", async ()=>{
     dashboardShowCompleted = !dashboardShowCompleted;
     render();
@@ -1687,7 +1745,8 @@ async function openTeamProgress(){
     const mastered = values.filter(v=>v===100).length;
     const teamIds = (memberships||[]).filter(m=>m.user_id===p.id).map(m=>m.team_id);
     return { id:p.id, name:p.name, role:p.role, perModule, perModuleRaw, overall, mastered, teamIds,
-      permEditContent: !!p.perm_edit_content, permCreateQuizzes: !!p.perm_create_quizzes, permManagePeople: !!p.perm_manage_people };
+      permEditContent: !!p.perm_edit_content, permCreateQuizzes: !!p.perm_create_quizzes, permManagePeople: !!p.perm_manage_people,
+      canAccessTs: !!p.can_access_ts, canAccessCs: !!p.can_access_cs };
   });
   view = "team"; render();
 }
@@ -1794,6 +1853,10 @@ function renderTeam(){
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:editContent" ${currentPerms.editContent?'checked':''}> Can edit modules, lessons and module quizzes</label>
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:createQuizzes" ${currentPerms.createQuizzes?'checked':''}> Can create quizzes</label>
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:managePeople" ${currentPerms.managePeople?'checked':''}> Can edit users and teams</label>
+          <div style="border-top:1px solid var(--stroke);margin-top:6px;padding-top:10px;">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-dept-check="${r.id}:ts" ${r.canAccessTs?'checked':''}> Can access Tech Support</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-top:6px;"><input type="checkbox" data-dept-check="${r.id}:cs" ${r.canAccessCs?'checked':''}> Can access Customer Service</label>
+          </div>
         </div>
       </td></tr>` : "";
     return mainRow + panelRow;
@@ -2036,6 +2099,19 @@ function renderTeam(){
     const newDisplayRole = computeDisplayRole(pendingRoleChanges[id].perms);
     pendingRoleChanges[id].role = newDisplayRole === "custom" ? "agent" : newDisplayRole;
     renderTeam();
+  }));
+  root.querySelectorAll("[data-dept-check]").forEach(el=> el.addEventListener("change", async (e)=>{
+    const [id, key] = el.getAttribute("data-dept-check").split(":");
+    const row = teamRows.find(r=>r.id===id);
+    const column = key === "ts" ? "can_access_ts" : "can_access_cs";
+    const checked = e.target.checked;
+    el.disabled = true;
+    const { error } = await supabase.from("profiles").update({ [column]: checked }).eq("id", id);
+    el.disabled = false;
+    if(error){ alert("Couldn't save: " + error.message); e.target.checked = !checked; return; }
+    if(key==="ts") row.canAccessTs = checked; else row.canAccessCs = checked;
+    logEdit("updated", "department_access", `${row.name} — ${key.toUpperCase()} ${checked?'granted':'removed'}`);
+    showToast("Access updated.");
   }));
   root.querySelectorAll("[data-role-save]").forEach(el=> el.addEventListener("click", async (e)=>{
     e.stopPropagation();
@@ -3240,9 +3316,9 @@ async function loadAllNotifications(){
   let claimedRoots = [];
   if(isAdmin()){
     const { data: uc } = await supabase.from("messages").select("*").eq("audience","admins").is("thread_id", null).is("claimed_by", null).order("created_at",{ascending:false});
-    NOTIF_UNCLAIMED = uc || [];
+    NOTIF_UNCLAIMED = (uc||[]).filter(m=> !m.department || canAccessDepartment(m.department));
     const { data: mc } = await supabase.from("messages").select("*").eq("audience","admins").is("thread_id", null).eq("claimed_by", session.user.id).order("created_at",{ascending:false});
-    claimedRoots = mc || [];
+    claimedRoots = (mc||[]).filter(m=> !m.department || canAccessDepartment(m.department));
   } else {
     NOTIF_UNCLAIMED = [];
   }
@@ -3700,7 +3776,7 @@ function openFeedbackModal(type, context){
   document.getElementById("fb-send").addEventListener("click", async ()=>{
     const body = getCleanEditorHtml(document.getElementById(editorId)).trim();
     if(!body || body === "<br>") { closeModal(); return; }
-    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"admins", type, body, context });
+    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"admins", type, body, context, department: currentActiveDepartment() });
     closeModal();
     alert("Sent to admins — thanks!");
   });
@@ -4180,13 +4256,13 @@ function slugify(s){ const base=(s||"").toLowerCase().trim().replace(/[^a-z0-9]+
 /* ============================================================
    GENERIC MODAL SYSTEM
    ============================================================ */
-function openModal(innerHtml, wide){
+function openModal(innerHtml, wide, blocking){
   closeModal();
   const wrap = document.createElement("div");
   wrap.className = "overlay"; wrap.id = "app-modal-overlay";
   wrap.innerHTML = `<div class="modal ${wide?'wide':''}">${innerHtml}</div>`;
   document.body.appendChild(wrap);
-  wrap.addEventListener("mousedown", (e)=>{ if(e.target===wrap) closeModal(); });
+  if(!blocking) wrap.addEventListener("mousedown", (e)=>{ if(e.target===wrap) closeModal(); });
   return wrap;
 }
 function closeModal(){ const el = document.getElementById("app-modal-overlay"); if(el) el.remove(); }
@@ -5235,7 +5311,7 @@ async function openEditor(id, openToLessonIdx, openToQuestionIdx){
   const title = await promptModal("New module", "Module title");
   if(!title) return;
   const newId = slugify(title.trim()) || ("module-" + Date.now());
-  const { error } = await supabase.from("modules").insert({ id:newId, title:title.trim(), short:"", led_color:"green", sort_order: MODULES.length+1 });
+  const { error } = await supabase.from("modules").insert({ id:newId, title:title.trim(), short:"", led_color:"green", department: currentActiveDepartment(), sort_order: MODULES.length+1 });
   if(error){ alert("Couldn't create module: " + error.message); return; }
   logEdit("created", "module", title.trim());
   await loadEverything();
@@ -5303,6 +5379,13 @@ function renderEditor(){
         <span id="mod-save-status" style="font-size:11px;color:var(--text-faint);font-family:var(--mono);"></span>
       </div>
       <div class="field"><label>Module title</label><input type="text" id="mod-title" value="${escapeHtml(d.title)}"></div>
+      <div class="field"><label>Department</label>
+        <select id="mod-department">
+          <option value="TS" ${d.department!=='CS'?'selected':''}>Tech Support</option>
+          <option value="CS" ${d.department==='CS'?'selected':''}>Customer Service</option>
+        </select>
+        <p class="hint">Only people with access to this department will ever see this module.</p>
+      </div>
       <div class="field"><label>Short description</label><textarea id="mod-short" style="min-height:55px;">${escapeHtml(d.short)}</textarea></div>
       <div class="field">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;"><input type="checkbox" id="mod-popup-enabled" ${d.popupEnabled?'checked':''}> Show a popup when someone starts this module</label>
@@ -5332,7 +5415,7 @@ function wireEditorEvents(){
     if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
     clearTimeout(modAutosaveTimer);
     modAutosaveTimer = setTimeout(async ()=>{
-      const { error } = await silentSave(()=> supabase.from("modules").update({ title:d.title, short:d.short, popup_enabled:d.popupEnabled, popup_title:d.popupTitle, popup_body:d.popupBody }).eq("id", editingExistingId));
+      const { error } = await silentSave(()=> supabase.from("modules").update({ title:d.title, short:d.short, department:d.department, popup_enabled:d.popupEnabled, popup_title:d.popupTitle, popup_body:d.popupBody }).eq("id", editingExistingId));
       const el = document.getElementById("mod-save-status");
       if(el){
         if(error){ el.textContent = "Couldn't save: " + error.message; el.style.color = "var(--red)"; }
@@ -5341,6 +5424,7 @@ function wireEditorEvents(){
     }, 600);
   }
   document.getElementById("mod-title").addEventListener("input", e=>{ d.title=e.target.value; scheduleModAutosave(); });
+  document.getElementById("mod-department").addEventListener("change", e=>{ d.department=e.target.value; scheduleModAutosave(); });
   document.getElementById("mod-short").addEventListener("input", e=>{ d.short=e.target.value; scheduleModAutosave(); });
   document.getElementById("mod-popup-enabled").addEventListener("change", e=>{ d.popupEnabled=e.target.checked; scheduleModAutosave(); renderEditor(); });
   const popupTitleEl = document.getElementById("mod-popup-title");
@@ -5931,6 +6015,14 @@ function renderHome(){
 let refCollapsed = new Set();
 let refSearchQuery = "";
 let dragRefId = null;
+let refActiveDepartment = null;
+function currentActiveRefDepartment(){
+  const mine = myDepartments();
+  if(mine.length===0) return 'TS';
+  if(refActiveDepartment && mine.includes(refActiveDepartment)) return refActiveDepartment;
+  refActiveDepartment = mine[0];
+  return refActiveDepartment;
+}
 
 async function loadReference(){
   if(guestMode) return;
@@ -5941,10 +6033,13 @@ async function loadReference(){
 async function openReference(){
   await loadReference();
   refEditing = false;
-  if(!currentRefId){ const top = REFERENCE_PAGES.find(p=>!p.parent_id); if(top) currentRefId = top.id; }
+  if(!currentRefId || !REFERENCE_PAGES.find(p=>p.id===currentRefId && p.department===currentActiveRefDepartment())){
+    const top = topLevelPages()[0];
+    currentRefId = top ? top.id : null;
+  }
   view = "reference"; render();
 }
-function topLevelPages(){ return REFERENCE_PAGES.filter(p=>!p.parent_id).sort((a,b)=>a.sort_order-b.sort_order); }
+function topLevelPages(){ return REFERENCE_PAGES.filter(p=>!p.parent_id && (guestMode || p.department===currentActiveRefDepartment())).sort((a,b)=>a.sort_order-b.sort_order); }
 function childPages(parentId){ return REFERENCE_PAGES.filter(p=>p.parent_id===parentId).sort((a,b)=>a.sort_order-b.sort_order); }
 
 function renderReference(){
@@ -6006,7 +6101,13 @@ function renderReference(){
       </div>`;
   }
 
+  const refDeptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
+      <button class="dept-tab ${currentActiveRefDepartment()==='TS'?'active':''}" data-ref-dept="TS">Tech Support</button>
+      <button class="dept-tab ${currentActiveRefDepartment()==='CS'?'active':''}" data-ref-dept="CS">Customer Service</button>
+    </div>` : "";
+
   renderShell(`
+    ${refDeptTabsHtml}
     <div class="ref-layout">
       <div class="ref-sidebar">
         <input type="text" id="ref-search" data-no-enter-submit placeholder="Search reference guide…" value="${escapeHtml(refSearchQuery)}" class="search-input" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
@@ -6015,6 +6116,14 @@ function renderReference(){
       <div class="ref-content">${contentHtml}</div>
     </div>
   `);
+
+  root.querySelectorAll("[data-ref-dept]").forEach(el=> el.addEventListener("click", ()=>{
+    refActiveDepartment = el.getAttribute("data-ref-dept");
+    const top = topLevelPages()[0];
+    currentRefId = top ? top.id : null;
+    refEditing = false;
+    render();
+  }));
 
   const refSearchEl = document.getElementById("ref-search");
   if(refSearchEl){
@@ -6054,15 +6163,16 @@ function renderReference(){
 
   const addPageBtn = document.getElementById("add-ref-page");
   if(addPageBtn) addPageBtn.addEventListener("click", async ()=>{
-    const { data, error } = await supabase.from("reference_pages").insert({ title:"New page", body:"<p>Write here.</p>", parent_id:null, sort_order: tops.length }).select().single();
+    const { data, error } = await supabase.from("reference_pages").insert({ title:"New page", body:"<p>Write here.</p>", parent_id:null, department: currentActiveRefDepartment(), sort_order: tops.length }).select().single();
     if(!error){ logEdit("created", "reference_page", data.title); await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
   });
   root.querySelectorAll("[data-ref-addsub]").forEach(el=> el.addEventListener("click", async (e)=>{
     e.stopPropagation();
     const parentId = el.getAttribute("data-ref-addsub");
     const kids = childPages(parentId);
+    const parentPage = REFERENCE_PAGES.find(p=>p.id===parentId);
     refCollapsed.delete(parentId);
-    const { data, error } = await supabase.from("reference_pages").insert({ title:"New subsection", body:"<p>Write here.</p>", parent_id:parentId, sort_order: kids.length }).select().single();
+    const { data, error } = await supabase.from("reference_pages").insert({ title:"New subsection", body:"<p>Write here.</p>", parent_id:parentId, department: parentPage ? parentPage.department : currentActiveRefDepartment(), sort_order: kids.length }).select().single();
     if(!error){ logEdit("created", "reference_page", data.title); await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
   }));
   root.querySelectorAll("[data-ref-del]").forEach(el=> el.addEventListener("click", async (e)=>{
