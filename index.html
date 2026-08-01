@@ -400,7 +400,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r52";
+const BUILD_VERSION = "2026-07-27T00:00Z-r53";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5444,11 +5444,13 @@ function renderEditor(){
       </div>
       <div class="field"><label>Module title</label><input type="text" id="mod-title" value="${escapeHtml(d.title)}"></div>
       <div class="field"><label>Department</label>
+        ${myDepartments().length>1 ? `
         <select id="mod-department">
           <option value="TS" ${d.department!=='CS'?'selected':''}>Tech Support</option>
           <option value="CS" ${d.department==='CS'?'selected':''}>Customer Service</option>
         </select>
         <p class="hint">Only people with access to this department will ever see this module.</p>
+        ` : `<p style="color:var(--text-dim);font-size:13px;margin:0;">${d.department==='CS'?'Customer Service':'Tech Support'} — you only have access to one department, so this can't be changed here.</p>`}
       </div>
       <div class="field"><label>Short description</label><textarea id="mod-short" style="min-height:55px;">${escapeHtml(d.short)}</textarea></div>
       <div class="field">
@@ -5488,7 +5490,8 @@ function wireEditorEvents(){
     }, 600);
   }
   document.getElementById("mod-title").addEventListener("input", e=>{ d.title=e.target.value; scheduleModAutosave(); });
-  document.getElementById("mod-department").addEventListener("change", e=>{ d.department=e.target.value; scheduleModAutosave(); });
+  const deptSelectEl = document.getElementById("mod-department");
+  if(deptSelectEl) deptSelectEl.addEventListener("change", e=>{ d.department=e.target.value; scheduleModAutosave(); });
   document.getElementById("mod-short").addEventListener("input", e=>{ d.short=e.target.value; scheduleModAutosave(); });
   document.getElementById("mod-popup-enabled").addEventListener("change", e=>{ d.popupEnabled=e.target.checked; scheduleModAutosave(); renderEditor(); });
   const popupTitleEl = document.getElementById("mod-popup-title");
