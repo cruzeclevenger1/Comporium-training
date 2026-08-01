@@ -323,7 +323,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r39";
+const BUILD_VERSION = "2026-07-27T00:00Z-r40";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -4665,6 +4665,7 @@ function openInteractivePicConfigFullscreen(ipId){
   overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;";
   document.body.appendChild(overlay);
 
+  let zoomLevel = 100;
   let saveTimer = null;
   function scheduleSave(){
     clearTimeout(saveTimer);
@@ -4678,16 +4679,28 @@ function openInteractivePicConfigFullscreen(ipId){
         <span style="position:absolute;bottom:2px;left:2px;background:#000000cc;color:var(--red);font-size:10px;padding:1px 4px;border-radius:3px;font-family:var(--mono);white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(h.title||'(untitled)')}</span>
       </div>`).join("");
     overlay.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:1200px;margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:1200px;margin-bottom:14px;gap:12px;">
         <span style="color:var(--text-dim);font-family:var(--mono);font-size:12px;">INTERACTIVE PICTURE · ${ip.hotspots.length} hotspot${ip.hotspots.length===1?'':'s'} — drag to add one</span>
-        <button class="btn primary" id="ip-config-done">Done</button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="mini-btn" id="ip-zoom-out" title="Zoom out">−</button>
+          <span style="color:var(--text-faint);font-family:var(--mono);font-size:11.5px;min-width:38px;text-align:center;">${zoomLevel}%</span>
+          <button class="mini-btn" id="ip-zoom-in" title="Zoom in">+</button>
+          <button class="mini-btn" id="ip-zoom-reset" title="Reset zoom">Reset</button>
+          <button class="btn primary" id="ip-config-done">Done</button>
+        </div>
       </div>
-      <div class="sim-screen-canvas" data-ip-canvas style="max-width:min(94vw,1200px);max-height:80vh;">
-        <img src="${ip.image}" style="max-width:min(94vw,1200px);max-height:80vh;display:block;pointer-events:none;user-select:none;" draggable="false">
-        <div class="sim-canvas-hint">✛ Drag to add a hotspot</div>
-        ${boxesHtml}
-      </div>`;
+      <div class="ip-zoom-viewport" style="overflow:auto;max-width:min(94vw,1200px);max-height:80vh;border-radius:8px;">
+        <div class="sim-screen-canvas" data-ip-canvas style="width:${zoomLevel}%;min-width:100%;">
+          <img src="${ip.image}" style="width:100%;display:block;pointer-events:none;user-select:none;" draggable="false">
+          <div class="sim-canvas-hint">✛ Drag to add a hotspot</div>
+          ${boxesHtml}
+        </div>
+      </div>
+      ${zoomLevel>100 ? `<p class="hint" style="margin-top:8px;">Scroll or drag the scrollbars to pan around while zoomed in.</p>` : ''}`;
     document.getElementById("ip-config-done").addEventListener("click", ()=>{ scheduleSave(); overlay.remove(); if(view==="editor") renderEditor(); });
+    document.getElementById("ip-zoom-in").addEventListener("click", ()=>{ zoomLevel = Math.min(400, zoomLevel+25); draw(); });
+    document.getElementById("ip-zoom-out").addEventListener("click", ()=>{ zoomLevel = Math.max(100, zoomLevel-25); draw(); });
+    document.getElementById("ip-zoom-reset").addEventListener("click", ()=>{ zoomLevel = 100; draw(); });
     const canvas = overlay.querySelector("[data-ip-canvas]");
     canvas.addEventListener("mousedown", (e)=>{
       if(e.target.closest(".sim-zone")) return;
@@ -4730,22 +4743,34 @@ async function openInteractivePicViewer(ipId){
   overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f5;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;";
   document.body.appendChild(overlay);
 
+  let zoomLevel = 100;
   function draw(){
     const total = ip.hotspots.length;
     const done = ip.hotspots.filter(h=>readSet.has(h.id)).length;
     const allDone = total>0 && done>=total;
     const boxesHtml = ip.hotspots.map((h,hi)=>`<div class="ip-play-hotspot ${readSet.has(h.id)?'ip-read':'ip-unread'}" data-ip-hotspot="${hi}" style="position:absolute;left:${h.x}%;top:${h.y}%;width:${h.w}%;height:${h.h}%;"></div>`).join("");
     overlay.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:1300px;margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:1300px;margin-bottom:14px;gap:12px;">
         <span style="color:${allDone?'var(--green)':'var(--text-dim)'};font-family:var(--mono);font-size:12px;">${done}/${total} read${allDone?' — all done!':''}</span>
-        <button class="btn ${allDone?'primary':''}" id="ip-viewer-close">${allDone?'Done ✓':'✕ Exit'}</button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="mini-btn" id="ip-zoom-out" title="Zoom out">−</button>
+          <span style="color:var(--text-faint);font-family:var(--mono);font-size:11.5px;min-width:38px;text-align:center;">${zoomLevel}%</span>
+          <button class="mini-btn" id="ip-zoom-in" title="Zoom in">+</button>
+          <button class="mini-btn" id="ip-zoom-reset" title="Reset zoom">Reset</button>
+          <button class="btn ${allDone?'primary':''}" id="ip-viewer-close">${allDone?'Done ✓':'✕ Exit'}</button>
+        </div>
       </div>
-      <div style="position:relative;display:inline-block;max-width:min(94vw,1300px);max-height:82vh;">
-        <img src="${ip.image}" style="max-width:min(94vw,1300px);max-height:82vh;display:block;user-select:none;border-radius:8px;" draggable="false">
-        ${boxesHtml}
+      <div class="ip-zoom-viewport" style="overflow:auto;max-width:min(94vw,1300px);max-height:82vh;border-radius:8px;">
+        <div style="position:relative;width:${zoomLevel}%;min-width:100%;">
+          <img src="${ip.image}" style="width:100%;display:block;user-select:none;border-radius:8px;" draggable="false">
+          ${boxesHtml}
+        </div>
       </div>
       ${!allDone ? `<p style="color:var(--text-faint);font-size:12.5px;margin-top:10px;">Click every red box — it turns green once you've read it. All boxes must be green before you can move to the next lesson.</p>` : ''}`;
     document.getElementById("ip-viewer-close").addEventListener("click", ()=>{ overlay.remove(); render(); });
+    document.getElementById("ip-zoom-in").addEventListener("click", ()=>{ zoomLevel = Math.min(400, zoomLevel+25); draw(); });
+    document.getElementById("ip-zoom-out").addEventListener("click", ()=>{ zoomLevel = Math.max(100, zoomLevel-25); draw(); });
+    document.getElementById("ip-zoom-reset").addEventListener("click", ()=>{ zoomLevel = 100; draw(); });
     overlay.querySelectorAll("[data-ip-hotspot]").forEach(el=> el.addEventListener("click", ()=>{
       const hi = +el.getAttribute("data-ip-hotspot");
       const h = ip.hotspots[hi];
