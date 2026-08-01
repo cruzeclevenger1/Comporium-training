@@ -215,7 +215,7 @@
   .theme-dropdown{ position:relative; max-width:280px; }
   .theme-dropdown-trigger{ width:100%; display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:9px; border:1px solid var(--stroke); background:var(--input-bg); color:var(--text); cursor:pointer; font-size:13.5px; font-family:var(--sans); }
   .theme-swatch-sm{ width:26px; height:26px; border-radius:7px; border:2px solid; display:flex; align-items:center; justify-content:center; font-size:13px; flex:none; }
-  .theme-dropdown-panel{ position:absolute; top:calc(100% + 6px); left:0; right:0; background:var(--panel); border:1px solid var(--stroke); border-radius:10px; padding:6px; z-index:50; box-shadow:0 12px 30px #00000066; max-height:320px; overflow-y:auto; }
+  .theme-dropdown-panel{ position:absolute; top:calc(100% + 6px); left:0; right:0; background:var(--panel); border:1px solid var(--stroke); border-radius:10px; padding:6px; z-index:50; box-shadow:0 12px 30px #00000066; max-height:min(320px, 70vh); overflow-y:auto; }
   .theme-option{ width:100%; display:flex; align-items:center; gap:10px; padding:8px 9px; border-radius:7px; border:none; background:transparent; color:var(--text); cursor:pointer; font-size:13px; font-family:var(--sans); text-align:left; }
   .theme-option:hover{ background:var(--input-bg); }
   .theme-option.active{ background:var(--cyan-dim); color:var(--cyan); }
@@ -402,7 +402,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r57";
+const BUILD_VERSION = "2026-07-27T00:00Z-r58";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -6138,6 +6138,19 @@ function renderSettings(){
   const themeToggle = document.getElementById("theme-dropdown-toggle");
   if(themeToggle) themeToggle.addEventListener("click", (e)=>{ e.stopPropagation(); themeDropdownOpen = !themeDropdownOpen; renderSettings(); });
   root.querySelectorAll("[data-theme]").forEach(el=> el.addEventListener("click", ()=>{ applyTheme(el.getAttribute("data-theme")); themeDropdownOpen = false; renderSettings(); }));
+
+  // The panel defaults to opening downward, but if there isn't enough room
+  // left in the viewport below it, that pushes the bottom themes off screen
+  // and forces scrolling the whole page instead of just the dropdown.
+  // Flip it to open upward in that case.
+  const panel = document.querySelector(".theme-dropdown-panel");
+  if(panel){
+    const rect = panel.getBoundingClientRect();
+    if(rect.bottom > window.innerHeight){
+      panel.style.top = "auto";
+      panel.style.bottom = "calc(100% + 6px)";
+    }
+  }
 }
 
 /* ============================================================
