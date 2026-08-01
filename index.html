@@ -397,7 +397,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r47";
+const BUILD_VERSION = "2026-07-27T00:00Z-r48";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -4236,7 +4236,8 @@ async function checkForNewVersion(){
     if(match && match[1] && match[1] !== BUILD_VERSION) showUpdateBanner();
   }catch(e){ /* network hiccup — just try again next interval */ }
 }
-setInterval(checkForNewVersion, 3 * 60 * 1000); // every 3 minutes
+setInterval(checkForNewVersion, 45 * 1000); // every 45 seconds
+document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState === "visible") checkForNewVersion(); });
 
 function ensureFeedbackButton(){
   if(document.getElementById("feedback-fab")) return;
