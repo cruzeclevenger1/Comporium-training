@@ -229,6 +229,7 @@
   .rte-img-wrap[data-align="center"]{ margin:8px auto; }
   .rte-img-wrap[data-align="right"]{ margin:8px 0 8px auto; }
   .rte-body a, .body a, .chat-bubble-body a{ color:var(--cyan); text-decoration:underline; }
+  .rte-body hr, .body hr, .chat-bubble-body hr{ border:none; border-top:1px solid var(--stroke); width:100%; margin:18px 0; }
   .rte-body a:visited, .body a:visited, .chat-bubble-body a:visited{ color:var(--cyan); }
   .rte-body h2{ font-size:19px; margin:14px 0 8px; color:var(--text); } .rte-body h3{ font-size:15px; margin:12px 0 6px; color:var(--text); }
   .rte-body{ border:1px solid var(--stroke); border-radius:0 0 8px 8px; padding:14px; min-height:140px; background:#0e1626; color:var(--text); font-size:14px; line-height:1.7; overflow-y:auto; overflow-x:auto; resize:vertical; }
@@ -322,7 +323,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r36";
+const BUILD_VERSION = "2026-07-27T00:00Z-r38";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -4280,6 +4281,7 @@ function richEditorHtml(id, initialHtml){
       <button type="button" data-cmd="insertUnorderedList" title="Bullet list">• List</button>
       <button type="button" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
       <button type="button" data-cmd="blockquote" title="Quote block">❝</button>
+      <button type="button" data-cmd="hr" title="Horizontal line">―</button>
       <div class="rte-sep"></div>
       <button type="button" data-cmd="link" title="Insert link">🔗</button>
       <button type="button" data-cmd="unlink" title="Remove link">Unlink</button>
@@ -4381,6 +4383,7 @@ function wireRichEditor(id){
         ipFileInput.click();
         return;
       }
+      if(cmd === "hr"){ document.execCommand("insertHTML", false, "<hr>"); return; }
       if(cmd === "clearFormat"){ clearFormatting(editorEl); return; }
       if(cmd === "link"){
         saveCurrentRange();
