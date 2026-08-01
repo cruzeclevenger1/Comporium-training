@@ -294,16 +294,16 @@
   .rte-img-wrap[data-align="right"]{ margin:8px 0 8px auto; }
   .rte-body a, .body a, .chat-bubble-body a{ color:var(--cyan); text-decoration:underline; }
   .rte-body hr, .body hr, .chat-bubble-body hr{ border:none; border-top:1px solid var(--text-dim); width:100%; margin:18px 0; }
-  /* The rich text editor's default text-color swatch is #e8ecf5, which
-     exactly matched the old dark theme's default text color — meaning it
-     was often baked into saved content invisibly (no visual difference at
-     the time) whenever the color tool got touched at all, intentionally or
-     not. Now that other themes exist, that hardcoded value no longer
-     matches and looks "stuck." Force it back to the current theme's text
-     color rather than leaving it pinned to the old dark-theme value. */
-  .body [style*="e8ecf5" i], .rte-body [style*="e8ecf5" i], .chat-bubble-body [style*="e8ecf5" i],
-  .body [style*="rgb(232, 236, 245)"], .rte-body [style*="rgb(232, 236, 245)"], .chat-bubble-body [style*="rgb(232, 236, 245)"],
-  .body [style*="rgb(232,236,245)"], .rte-body [style*="rgb(232,236,245)"], .chat-bubble-body [style*="rgb(232,236,245)"]
+  /* Content saved with an inline text color — from the color tool, or from
+     content pasted in from elsewhere — locks that exact color in, which
+     overrides theme switching entirely since inline styles always win over
+     CSS no matter what the color value is. This affects both bold and plain
+     text, so rather than guessing at specific hex values one at a time,
+     force every inline color within body content to the current theme's
+     text color, full stop. Anyone who wants a genuinely distinct color for
+     something (a real warning callout, etc.) should use the highlight tool
+     instead, which is left untouched here. */
+  .body [style*="color"], .rte-body [style*="color"], .chat-bubble-body [style*="color"]
   { color:var(--text) !important; }
   .rte-body a:visited, .body a:visited, .chat-bubble-body a:visited{ color:var(--cyan); }
   .rte-body h2{ font-size:19px; margin:14px 0 8px; color:var(--text); } .rte-body h3{ font-size:15px; margin:12px 0 6px; color:var(--text); }
@@ -397,7 +397,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r44";
+const BUILD_VERSION = "2026-07-27T00:00Z-r45";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
