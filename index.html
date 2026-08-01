@@ -400,7 +400,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r50";
+const BUILD_VERSION = "2026-07-27T00:00Z-r51";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1719,7 +1719,7 @@ async function openTeamProgress(){
   const { data: memberships } = await supabase.from("team_members").select("*");
 
   TEAMS_LIST = (teamsData||[]).map(t=>({
-    id: t.id, name: t.name,
+    id: t.id, name: t.name, department: t.department||'TS',
     memberIds: (memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id)
   }));
 
@@ -1754,15 +1754,33 @@ async function openTeamProgress(){
 function openTeamManageModal(teamId){
   const team = teamId ? TEAMS_LIST.find(t=>t.id===teamId) : null;
   const memberIds = new Set(team ? team.memberIds : []);
+  const initialDept = team ? team.department : currentActiveDepartment();
+
+  function memberListHtml(dept){
+    return teamRows.filter(r=> canAccessDeptFor(r, dept)).map(r=>`
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);">
+        <input type="checkbox" value="${r.id}" class="team-member-check" ${memberIds.has(r.id)?'checked':''}> ${escapeHtml(r.name)}${r.role==='admin'?' <span class="role-tag admin">ADMIN</span>':''}
+      </label>`).join("") || `<p style="color:var(--text-faint);font-size:12.5px;">Nobody has access to this department yet.</p>`;
+  }
+  function canAccessDeptFor(r, dept){ return dept==='CS' ? r.canAccessCs : r.canAccessTs; }
+
+  const deptFieldHtml = team
+    ? `<div class="field"><label>Department</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${team.department==='CS'?'Customer Service':'Tech Support'} — set when the team was created, can't be changed after.</p></div>`
+    : `<div class="field"><label>Department</label>
+        <select id="team-dept-select">
+          <option value="TS" ${initialDept!=='CS'?'selected':''}>Tech Support</option>
+          <option value="CS" ${initialDept==='CS'?'selected':''}>Customer Service</option>
+        </select>
+        <p class="hint">Teams can't mix departments — only people with access to the chosen one will be selectable below.</p>
+      </div>`;
+
   openModal(`
     <h3>${team ? "Manage team" : "New team"}</h3>
     <div class="field"><label>Team name</label><input type="text" id="team-name-input" value="${team?escapeHtml(team.name):''}" placeholder="e.g. July 2026 New Hires"></div>
+    ${deptFieldHtml}
     <div class="field"><label>Members</label>
-      <div style="max-height:220px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">
-        ${teamRows.map(r=>`
-          <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);">
-            <input type="checkbox" value="${r.id}" class="team-member-check" ${memberIds.has(r.id)?'checked':''}> ${escapeHtml(r.name)}${r.role==='admin'?' <span class="role-tag admin">ADMIN</span>':''}
-          </label>`).join("")}
+      <div id="team-member-list" style="max-height:220px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">
+        ${memberListHtml(initialDept)}
       </div>
     </div>
     <div class="modal-actions" style="justify-content:space-between;">
@@ -1770,6 +1788,10 @@ function openTeamManageModal(teamId){
       <div style="display:flex;gap:10px;"><button class="btn" id="team-cancel-btn">Cancel</button><button class="btn primary" id="team-save-btn">${team?"Save":"Create"}</button></div>
     </div>
   `, true);
+  const deptSelect = document.getElementById("team-dept-select");
+  if(deptSelect) deptSelect.addEventListener("change", (e)=>{
+    document.getElementById("team-member-list").innerHTML = memberListHtml(e.target.value);
+  });
   document.getElementById("team-cancel-btn").addEventListener("click", closeModal);
   const delBtn = document.getElementById("team-delete-btn");
   if(delBtn) delBtn.addEventListener("click", async ()=>{
@@ -1786,7 +1808,8 @@ function openTeamManageModal(teamId){
     const selectedIds = Array.from(document.querySelectorAll(".team-member-check:checked")).map(cb=>cb.value);
     let tid = team ? team.id : null;
     if(!tid){
-      const { data, error } = await supabase.from("teams").insert({ name }).select().single();
+      const dept = document.getElementById("team-dept-select").value;
+      const { data, error } = await supabase.from("teams").insert({ name, department: dept }).select().single();
       if(error){ alert("Couldn't create team: " + error.message); return; }
       tid = data.id;
     } else {
@@ -1834,7 +1857,10 @@ function renderTeam(){
     const isDirty = !!pending && (pending.role !== r.role || pending.perms.editContent !== r.permEditContent || pending.perms.createQuizzes !== r.permCreateQuizzes || pending.perms.managePeople !== r.permManagePeople);
 
     const roleCell = isSelf
-      ? `<span class="role-tag ${r.role==='admin'?'admin':''}">${r.role.toUpperCase()} (YOU)</span>`
+      ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span class="role-tag ${r.role==='admin'?'admin':''}">${r.role.toUpperCase()} (YOU)</span>
+          <button class="mini-btn" data-perm-toggle="${r.id}">Department access ${panelOpen?'▾':'▸'}</button>
+        </div>`
       : `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <select class="mini-btn" data-role-select="${r.id}">
             <option value="agent" ${displayRole==='agent'?'selected':''}>User</option>
@@ -1847,16 +1873,17 @@ function renderTeam(){
         </div>`;
     const editPersonBtn = !isSelf ? `<button class="mini-btn" data-edit-person="${r.id}" data-edit-person-name="${escapeHtml(r.name)}">Edit</button>` : "";
     const mainRow = `<tr><td>${escapeHtml(r.name)}</td><td>${roleCell}</td><td>${editPersonBtn}</td></tr>`;
-    const panelRow = (!isSelf && panelOpen) ? `
+    const panelRow = panelOpen ? `
       <tr class="team-row-detail"><td colspan="3">
         <div style="padding:10px 4px 16px;display:flex;flex-direction:column;gap:8px;">
+          ${!isSelf ? `
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:editContent" ${currentPerms.editContent?'checked':''}> Can edit modules, lessons and module quizzes</label>
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:createQuizzes" ${currentPerms.createQuizzes?'checked':''}> Can create quizzes</label>
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:managePeople" ${currentPerms.managePeople?'checked':''}> Can edit users and teams</label>
-          <div style="border-top:1px solid var(--stroke);margin-top:6px;padding-top:10px;">
+          <div style="border-top:1px solid var(--stroke);margin-top:6px;padding-top:10px;">` : ""}
             <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-dept-check="${r.id}:ts" ${r.canAccessTs?'checked':''}> Can access Tech Support</label>
             <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-top:6px;"><input type="checkbox" data-dept-check="${r.id}:cs" ${r.canAccessCs?'checked':''}> Can access Customer Service</label>
-          </div>
+          ${!isSelf ? `</div>` : ""}
         </div>
       </td></tr>` : "";
     return mainRow + panelRow;
@@ -2499,7 +2526,7 @@ function renderQuizSentDetail(){
 async function createNewStandaloneQuiz(){
   const title = await promptModal("New quiz", "Quiz title");
   if(!title) return;
-  const { data, error } = await supabase.from("standalone_quizzes").insert({ title:title.trim(), created_by:session.user.id, created_by_name:profile.name, audience_type:"everyone", sent:false }).select().single();
+  const { data, error } = await supabase.from("standalone_quizzes").insert({ title:title.trim(), created_by:session.user.id, created_by_name:profile.name, audience_type:"everyone", department: currentActiveDepartment(), sent:false }).select().single();
   if(error){ alert("Couldn't create quiz: " + error.message); return; }
   logEdit("created", "standalone_quiz", title.trim());
   await loadStandaloneQuizzes();
@@ -2618,17 +2645,17 @@ async function openQuizBuilder(id){
   if(!TEAMS_LIST.length){
     const { data: teamsData } = await supabase.from("teams").select("*").order("name");
     const { data: memberships } = await supabase.from("team_members").select("*");
-    TEAMS_LIST = (teamsData||[]).map(t=>({ id:t.id, name:t.name, memberIds:(memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id) }));
+    TEAMS_LIST = (teamsData||[]).map(t=>({ id:t.id, name:t.name, department:t.department||'TS', memberIds:(memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id) }));
   }
   if(!teamRows.length){
     const { data: people } = await supabase.from("profiles").select("*").order("name");
-    teamRows = (people||[]).map(p=>({ id:p.id, name:p.name, role:p.role, perModule:{}, perModuleRaw:{}, overall:0, mastered:0, teamIds:[] }));
+    teamRows = (people||[]).map(p=>({ id:p.id, name:p.name, role:p.role, perModule:{}, perModuleRaw:{}, overall:0, mastered:0, teamIds:[], canAccessTs:!!p.can_access_ts, canAccessCs:!!p.can_access_cs }));
   }
   const { data: qRow } = await supabase.from("standalone_quizzes").select("*").eq("id", id).single();
   const { data: questions } = await supabase.from("standalone_quiz_questions").select("*").eq("quiz_id", id).order("sort_order");
   const { data: recipients } = await supabase.from("standalone_quiz_recipients").select("user_id").eq("quiz_id", id);
   quizBuilderDraft = {
-    id, title:qRow.title, audienceType:qRow.audience_type, teamId:qRow.team_id, sent:qRow.sent,
+    id, title:qRow.title, audienceType:qRow.audience_type, teamId:qRow.team_id, sent:qRow.sent, department:qRow.department||'TS',
     specificIds: (recipients||[]).map(r=>r.user_id),
     questions: (questions||[]).map(q=>({ id:q.id, type:q.question_type, question:q.question, options:q.options||["Option A","Option B"], correct:q.correct_index||0, explain:q.explanation||"" }))
   };
@@ -2669,6 +2696,7 @@ function renderQuizBuilder(){
   }).join("");
 
   const audienceSection = `
+    <div class="field"><label>Department</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${d.department==='CS'?'Customer Service':'Tech Support'} — set when the quiz was created.</p></div>
     <div class="field"><label>Send to</label>
       <select id="qz-audience" ${locked?'disabled':''}>
         <option value="everyone" ${d.audienceType==='everyone'?'selected':''}>Everyone</option>
@@ -2676,8 +2704,8 @@ function renderQuizBuilder(){
         <option value="specific" ${d.audienceType==='specific'?'selected':''}>Specific people…</option>
       </select>
     </div>
-    ${d.audienceType==='team' ? `<div class="field" id="qz-team-field"><label>Team</label><select id="qz-team-select" ${locked?'disabled':''}>${TEAMS_LIST.map(t=>`<option value="${t.id}" ${d.teamId===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("") || '<option value="">No teams yet</option>'}</select></div>` : ""}
-    ${d.audienceType==='specific' ? `<div class="field" id="qz-people-field"><label>Choose people</label><div id="qz-people-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">${teamRows.map(r=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);"><input type="checkbox" value="${r.id}" class="qz-person-check" ${d.specificIds.includes(r.id)?'checked':''} ${locked?'disabled':''}> ${escapeHtml(r.name)}</label>`).join("")}</div></div>` : ""}
+    ${d.audienceType==='team' ? `<div class="field" id="qz-team-field"><label>Team</label><select id="qz-team-select" ${locked?'disabled':''}>${TEAMS_LIST.filter(t=>t.department===d.department).map(t=>`<option value="${t.id}" ${d.teamId===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("") || '<option value="">No teams in this department yet</option>'}</select></div>` : ""}
+    ${d.audienceType==='specific' ? `<div class="field" id="qz-people-field"><label>Choose people</label><div id="qz-people-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">${teamRows.filter(r=> d.department==='CS' ? r.canAccessCs : r.canAccessTs).map(r=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);"><input type="checkbox" value="${r.id}" class="qz-person-check" ${d.specificIds.includes(r.id)?'checked':''} ${locked?'disabled':''}> ${escapeHtml(r.name)}</label>`).join("")}</div></div>` : ""}
   `;
 
   renderShell(`
@@ -2851,7 +2879,9 @@ async function loadStandaloneQuizzes(){
   const myTeamIds = new Set((myTeamMemberships||[]).map(m=>m.team_id));
   const myRecipientQuizIds = new Set((myRecipientRows||[]).map(r=>r.quiz_id));
 
-  QUIZZES = (quizzes||[]).map(q=>{
+  QUIZZES = (quizzes||[])
+    .filter(q=> guestMode || canAccessDepartment(q.department||'TS'))
+    .map(q=>{
     // Broad visibility (via RLS) lets any quiz-manager see every quiz, for
     // management purposes. That's NOT the same as "this quiz is actually
     // meant for me to take" — compute that separately and explicitly.
@@ -2862,7 +2892,7 @@ async function loadStandaloneQuizzes(){
       else if(q.audience_type === "specific") isRecipient = myRecipientQuizIds.has(q.id);
     }
     return {
-      id:q.id, title:q.title, createdBy:q.created_by, createdByName:q.created_by_name,
+      id:q.id, title:q.title, createdBy:q.created_by, createdByName:q.created_by_name, department:q.department||'TS',
       audienceType:q.audience_type, teamId:q.team_id, sent:q.sent, createdAt:q.created_at,
       questions:(questions||[]).filter(qq=>qq.quiz_id===q.id).map(qq=>({ id:qq.id, type:qq.question_type, question:qq.question, options:qq.options||[], correct:qq.correct_index, explain:qq.explanation||"" })),
       myAttempt: (myAttempts||[]).find(a=>a.quiz_id===q.id) || null,
@@ -3011,17 +3041,22 @@ function renderEditLog(){
 
 async function openAnalyze(){
   if(guestMode){ view = "analyze"; render(); return; }
-  const { data: profilesData } = await supabase.from("profiles").select("id");
-  const { data: allProgress } = await supabase.from("progress").select("*");
-  const { data: allAttempts } = await supabase.from("quiz_attempts").select("*");
-  const { count: flagCount } = await supabase.from("messages").select("*", { count:"exact", head:true }).in("type", ["flag","comment","highlight"]);
+  const dept = currentActiveDepartment();
+  const deptModules = MODULES.filter(m=> m.department===dept);
+  const deptModuleIds = new Set(deptModules.map(m=>m.id));
+  const { data: profilesData } = await supabase.from("profiles").select("id,can_access_ts,can_access_cs");
+  const { data: allProgressRaw } = await supabase.from("progress").select("*");
+  const { data: allAttemptsRaw } = await supabase.from("quiz_attempts").select("*");
+  const { data: flagRows } = await supabase.from("messages").select("department").in("type", ["flag","comment","highlight"]);
+  const allProgress = (allProgressRaw||[]).filter(p=> deptModuleIds.has(p.module_id));
+  const allAttempts = (allAttemptsRaw||[]).filter(a=> deptModuleIds.has(a.module_id));
 
-  const totalPeople = (profilesData||[]).length;
-  const startedUserIds = new Set((allProgress||[]).map(p=>p.user_id));
+  const totalPeople = (profilesData||[]).filter(p=> dept==='CS' ? p.can_access_cs : p.can_access_ts).length;
+  const startedUserIds = new Set(allProgress.map(p=>p.user_id));
   const notStarted = Math.max(totalPeople - startedUserIds.size, 0);
 
-  ANALYZE_MODULE_STATS = MODULES.map(m=>{
-    const progRows = (allProgress||[]).filter(p=>p.module_id===m.id);
+  ANALYZE_MODULE_STATS = deptModules.map(m=>{
+    const progRows = allProgress.filter(p=>p.module_id===m.id);
     const totalLessons = m.lessons.length || 1;
     const hasQuiz = m.quiz.length > 0;
     const completions = progRows.map(p=>{
@@ -3044,7 +3079,7 @@ async function openAnalyze(){
   // attempt made "missed" numbers disagree with someone's current, corrected
   // standing after a retake.
   const latestAttemptByUserModule = {};
-  (allAttempts||[]).forEach(a=>{
+  allAttempts.forEach(a=>{
     const key = a.user_id + "::" + a.module_id;
     const existing = latestAttemptByUserModule[key];
     if(!existing || new Date(a.created_at) > new Date(existing.created_at)) latestAttemptByUserModule[key] = a;
@@ -3064,7 +3099,8 @@ async function openAnalyze(){
     .sort((a,b)=> b.missed - a.missed)
     .slice(0, 10);
 
-  ANALYZE_TOTALS = { totalPeople, notStarted, totalAttempts: (allAttempts||[]).length, totalFlags: flagCount||0 };
+  const flagCount = (flagRows||[]).filter(m=> !m.department || m.department===dept).length;
+  ANALYZE_TOTALS = { totalPeople, notStarted, totalAttempts: allAttempts.length, totalFlags: flagCount };
 
   view = "analyze"; render();
 }
@@ -3085,7 +3121,13 @@ function renderAnalyze(){
       <div style="font-size:14px;color:var(--text);">${escapeHtml(q.question)}</div>
     </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">Not enough quiz attempts yet to show trends.</p>`;
 
+  const deptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
+      <button class="dept-tab ${currentActiveDepartment()==='TS'?'active':''}" data-analyze-dept="TS">Tech Support</button>
+      <button class="dept-tab ${currentActiveDepartment()==='CS'?'active':''}" data-analyze-dept="CS">Customer Service</button>
+    </div>` : "";
+
   renderShell(`
+    ${deptTabsHtml}
     <div class="card">
       <div class="k-label">ADMIN</div>
       <h2 style="margin-bottom:4px;">Analyze</h2>
@@ -3108,6 +3150,10 @@ function renderAnalyze(){
       ${missedHtml}
     </div>
   `);
+  root.querySelectorAll("[data-analyze-dept]").forEach(el=> el.addEventListener("click", async ()=>{
+    activeDepartment = el.getAttribute("data-analyze-dept");
+    await openAnalyze();
+  }));
   root.querySelectorAll("[data-analyze-module]").forEach(el=> el.addEventListener("click", ()=> openModuleAnalyzeDetail(el.getAttribute("data-analyze-module"))));
 }
 
@@ -3686,11 +3732,11 @@ async function sendThreadMessage(rootId){
    ============================================================ */
 function stripHtml(html){ const d = document.createElement("div"); d.innerHTML = html; return (d.textContent||"").trim(); }
 
-function logEdit(action, entityType, entityLabel, details){
+function logEdit(action, entityType, entityLabel, details, department){
   if(guestMode || !session) return;
   supabase.from("edit_log").insert({
     actor_id: session.user.id, actor_name: profile.name,
-    action, entity_type: entityType, entity_label: entityLabel || "", details: details || null
+    action, entity_type: entityType, entity_label: entityLabel || "", details: details || null, department: department || null
   }).then(()=>{}, ()=>{}); // best-effort — never let logging failures affect the actual save
 }
 
@@ -5313,7 +5359,7 @@ async function openEditor(id, openToLessonIdx, openToQuestionIdx){
   const newId = slugify(title.trim()) || ("module-" + Date.now());
   const { error } = await supabase.from("modules").insert({ id:newId, title:title.trim(), short:"", led_color:"green", department: currentActiveDepartment(), sort_order: MODULES.length+1 });
   if(error){ alert("Couldn't create module: " + error.message); return; }
-  logEdit("created", "module", title.trim());
+  logEdit("created", "module", title.trim(), null, currentActiveDepartment());
   await loadEverything();
   editingExistingId = newId;
   draftModule = JSON.parse(JSON.stringify(modById(newId)));
@@ -5497,7 +5543,7 @@ function wireEditorEvents(){
     if(!confirm("Delete this lesson?")) return;
     const { error } = await supabase.from("lessons").delete().eq("id", d.lessons[i].id);
     if(error){ alert("Couldn't delete: " + error.message); return; }
-    logEdit("deleted", "lesson", `${d.title} — ${d.lessons[i].title}`);
+    logEdit("deleted", "lesson", `${d.title} — ${d.lessons[i].title}`, null, d.department);
     d.lessons.splice(i,1);
     if(expandedLessonIdx===i) expandedLessonIdx=null;
     renderEditor();
@@ -5514,7 +5560,7 @@ function wireEditorEvents(){
     const blank = blankLesson();
     const { data, error } = await supabase.from("lessons").insert({ module_id: editingExistingId, sort_order: d.lessons.length, label: blank.label, title: blank.title, body: blank.body }).select().single();
     if(error){ alert("Couldn't add lesson: " + error.message); return; }
-    logEdit("created", "lesson", `${d.title} — ${blank.title}`);
+    logEdit("created", "lesson", `${d.title} — ${blank.title}`, null, d.department);
     d.lessons.push({ id:data.id, label:data.label, title:data.title, body:data.body });
     expandedLessonIdx = d.lessons.length-1;
     renderEditor();
@@ -5650,7 +5696,7 @@ function wireEditorEvents(){
     if(!confirm("Delete this question?")) return;
     const { error } = await supabase.from("quiz_questions").delete().eq("id", d.quiz[i].id);
     if(error){ alert("Couldn't delete: " + error.message); return; }
-    logEdit("deleted", "module_quiz_question", `${d.title} — ${d.quiz[i].q}`);
+    logEdit("deleted", "module_quiz_question", `${d.title} — ${d.quiz[i].q}`, null, d.department);
     d.quiz.splice(i,1);
     if(expandedQuestionIdx===i) expandedQuestionIdx=null;
     renderEditor();
@@ -5667,7 +5713,7 @@ function wireEditorEvents(){
     const blank = blankQuestion();
     const { data, error } = await supabase.from("quiz_questions").insert({ module_id: editingExistingId, sort_order: d.quiz.length, question: blank.q, options: blank.opts, correct_index: blank.correct, explanation: blank.explain, question_type: blank.type, sim_screens: blank.simScreens }).select().single();
     if(error){ alert("Couldn't add question: " + error.message); return; }
-    logEdit("created", "module_quiz_question", `${d.title} — ${blank.q}`);
+    logEdit("created", "module_quiz_question", `${d.title} — ${blank.q}`, null, d.department);
     d.quiz.push({ id:data.id, q:data.question, opts:data.options, correct:data.correct_index, explain:data.explanation, type:data.question_type||'multiple_choice', simScreens:data.sim_screens||[] });
     expandedQuestionIdx = d.quiz.length-1;
     renderEditor();
@@ -5684,7 +5730,7 @@ function wireEditorEvents(){
   document.getElementById("editor-delete").addEventListener("click", async ()=>{
     if(confirm(`Delete "${d.title||'this module'}"? This can't be undone.`)){
       await supabase.from("modules").delete().eq("id", editingExistingId);
-      logEdit("deleted", "module", d.title);
+      logEdit("deleted", "module", d.title, null, d.department);
       await loadEverything(); view="dashboard"; render();
     }
   });
@@ -6164,7 +6210,7 @@ function renderReference(){
   const addPageBtn = document.getElementById("add-ref-page");
   if(addPageBtn) addPageBtn.addEventListener("click", async ()=>{
     const { data, error } = await supabase.from("reference_pages").insert({ title:"New page", body:"<p>Write here.</p>", parent_id:null, department: currentActiveRefDepartment(), sort_order: tops.length }).select().single();
-    if(!error){ logEdit("created", "reference_page", data.title); await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
+    if(!error){ logEdit("created", "reference_page", data.title, null, data.department); await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
   });
   root.querySelectorAll("[data-ref-addsub]").forEach(el=> el.addEventListener("click", async (e)=>{
     e.stopPropagation();
@@ -6173,7 +6219,7 @@ function renderReference(){
     const parentPage = REFERENCE_PAGES.find(p=>p.id===parentId);
     refCollapsed.delete(parentId);
     const { data, error } = await supabase.from("reference_pages").insert({ title:"New subsection", body:"<p>Write here.</p>", parent_id:parentId, department: parentPage ? parentPage.department : currentActiveRefDepartment(), sort_order: kids.length }).select().single();
-    if(!error){ logEdit("created", "reference_page", data.title); await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
+    if(!error){ logEdit("created", "reference_page", data.title, null, data.department); await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
   }));
   root.querySelectorAll("[data-ref-del]").forEach(el=> el.addEventListener("click", async (e)=>{
     e.stopPropagation();
@@ -6182,7 +6228,7 @@ function renderReference(){
     const hasKids = childPages(id).length>0;
     if(confirm(`Delete "${target.title}"?${hasKids?' This will also delete its subsections.':''}`)){
       await supabase.from("reference_pages").delete().eq("id", id);
-      logEdit("deleted", "reference_page", target.title);
+      logEdit("deleted", "reference_page", target.title, null, target.department);
       if(currentRefId===id) currentRefId = null;
       await loadReference(); render();
     }
@@ -6226,14 +6272,14 @@ function renderReference(){
     const titleEl = document.getElementById("ref-title");
     const bodyEl = document.getElementById("ref-body-rte");
     if(titleEl && bodyEl) await flushRefSave(page.id, titleEl, bodyEl);
-    logEdit("updated", "reference_page", page.title);
+    logEdit("updated", "reference_page", page.title, null, page.department);
     refEditing=false; render();
   });
   const deleteBtn = document.getElementById("ref-delete");
   if(deleteBtn) deleteBtn.addEventListener("click", async ()=>{
     if(confirm(`Delete "${page.title}"? This can't be undone.`)){
       await supabase.from("reference_pages").delete().eq("id", page.id);
-      logEdit("deleted", "reference_page", page.title);
+      logEdit("deleted", "reference_page", page.title, null, page.department);
       refEditing = false; currentRefId = null; await loadReference(); render();
     }
   });
