@@ -397,7 +397,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r46";
+const BUILD_VERSION = "2026-07-27T00:00Z-r47";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -4741,6 +4741,33 @@ function openInteractivePicConfigFullscreen(ipId){
   document.body.appendChild(overlay);
 
   let zoomLevel = 100;
+  // Pan state and its listeners live here, at the top level, attached exactly
+  // once for the life of this overlay — draw() reruns constantly (every box
+  // drawn, every zoom change) and rebuilds the DOM each time, so anything
+  // attached to window/document from inside draw() would pile up a fresh
+  // duplicate listener on every single one of those reruns instead of just
+  // being re-pointed at the fresh canvas/viewport elements.
+  let spaceHeld = false, panning = false, panStartX = 0, panStartY = 0, panScrollLeft = 0, panScrollTop = 0;
+  let currentCanvas = null, currentViewport = null;
+  const onKeyDown = (e)=>{ if(e.code==="Space" && !e.target.closest("input,textarea")){ spaceHeld = true; if(currentCanvas) currentCanvas.style.cursor = "grab"; } };
+  const onKeyUp = (e)=>{ if(e.code==="Space"){ spaceHeld = false; if(currentCanvas && !panning) currentCanvas.style.cursor = ""; } };
+  const onWindowMouseMove = (e)=>{
+    if(!panning || !currentViewport) return;
+    currentViewport.scrollLeft = panScrollLeft - (e.clientX - panStartX);
+    currentViewport.scrollTop = panScrollTop - (e.clientY - panStartY);
+  };
+  const onWindowMouseUp = ()=>{ if(panning){ panning = false; if(currentCanvas) currentCanvas.style.cursor = spaceHeld ? "grab" : ""; } };
+  document.addEventListener("keydown", onKeyDown);
+  document.addEventListener("keyup", onKeyUp);
+  window.addEventListener("mousemove", onWindowMouseMove);
+  window.addEventListener("mouseup", onWindowMouseUp);
+  function cleanupPanListeners(){
+    document.removeEventListener("keydown", onKeyDown);
+    document.removeEventListener("keyup", onKeyUp);
+    window.removeEventListener("mousemove", onWindowMouseMove);
+    window.removeEventListener("mouseup", onWindowMouseUp);
+  }
+
   let saveTimer = null;
   function scheduleSave(){
     clearTimeout(saveTimer);
@@ -4764,25 +4791,36 @@ function openInteractivePicConfigFullscreen(ipId){
           <button class="btn primary" id="ip-config-done">Done</button>
         </div>
       </div>
-      <div class="ip-zoom-viewport" style="overflow:auto;max-width:min(94vw,1200px);max-height:80vh;border-radius:8px;">
+      <div class="ip-zoom-viewport" style="overflow:auto;width:min(94vw,1200px);max-height:80vh;border-radius:8px;">
         <div class="sim-screen-canvas" data-ip-canvas style="width:${zoomLevel}%;min-width:100%;">
           <img src="${ip.image}" style="width:100%;display:block;pointer-events:none;user-select:none;" draggable="false">
           <div class="sim-canvas-hint">✛ Drag to add a hotspot</div>
           ${boxesHtml}
         </div>
       </div>
-      <p class="hint" style="margin-top:8px;">Ctrl/Cmd + scroll to zoom${zoomLevel>100 ? ' · scroll to pan around' : ''}.</p>`;
-    document.getElementById("ip-config-done").addEventListener("click", ()=>{ scheduleSave(); overlay.remove(); if(view==="editor") renderEditor(); });
+      <p class="hint" style="margin-top:8px;">Scroll to zoom${zoomLevel>100 ? ' · hold Space and drag to pan around' : ''}.</p>`;
+    document.getElementById("ip-config-done").addEventListener("click", ()=>{ scheduleSave(); cleanupPanListeners(); overlay.remove(); if(view==="editor") renderEditor(); });
     document.getElementById("ip-zoom-in").addEventListener("click", ()=>{ zoomLevel = Math.min(400, zoomLevel+25); draw(); });
     document.getElementById("ip-zoom-out").addEventListener("click", ()=>{ zoomLevel = Math.max(100, zoomLevel-25); draw(); });
     document.getElementById("ip-zoom-reset").addEventListener("click", ()=>{ zoomLevel = 100; draw(); });
-    overlay.querySelector(".ip-zoom-viewport").addEventListener("wheel", (e)=>{
+    const viewport = overlay.querySelector(".ip-zoom-viewport");
+    currentViewport = viewport;
+    viewport.addEventListener("wheel", (e)=>{
       e.preventDefault();
       zoomLevel = Math.min(400, Math.max(100, zoomLevel + (e.deltaY < 0 ? 25 : -25)));
       draw();
     }, { passive:false });
     const canvas = overlay.querySelector("[data-ip-canvas]");
+    currentCanvas = canvas;
+    if(spaceHeld) canvas.style.cursor = "grab";
     canvas.addEventListener("mousedown", (e)=>{
+      if(spaceHeld){
+        panning = true; panStartX = e.clientX; panStartY = e.clientY;
+        panScrollLeft = viewport.scrollLeft; panScrollTop = viewport.scrollTop;
+        canvas.style.cursor = "grabbing";
+        e.preventDefault();
+        return;
+      }
       if(e.target.closest(".sim-zone")) return;
       const rect = canvas.getBoundingClientRect();
       const previewEl = document.createElement("div");
@@ -4824,6 +4862,24 @@ async function openInteractivePicViewer(ipId){
   document.body.appendChild(overlay);
 
   let zoomLevel = 100;
+  // Same reasoning as the config tool: attach once, outside draw(), so
+  // repeated draw() calls (every hotspot click) don't pile up duplicate
+  // listeners on window.
+  let panning = false, panStartX = 0, panStartY = 0, panScrollLeft = 0, panScrollTop = 0;
+  let currentViewport = null, currentPanInner = null;
+  const onWindowMouseMove = (e)=>{
+    if(!panning || !currentViewport) return;
+    currentViewport.scrollLeft = panScrollLeft - (e.clientX - panStartX);
+    currentViewport.scrollTop = panScrollTop - (e.clientY - panStartY);
+  };
+  const onWindowMouseUp = ()=>{ panning = false; if(currentPanInner) currentPanInner.style.cursor = "grab"; };
+  window.addEventListener("mousemove", onWindowMouseMove);
+  window.addEventListener("mouseup", onWindowMouseUp);
+  function cleanupPanListeners(){
+    window.removeEventListener("mousemove", onWindowMouseMove);
+    window.removeEventListener("mouseup", onWindowMouseUp);
+  }
+
   function draw(){
     const total = ip.hotspots.length;
     const done = ip.hotspots.filter(h=>readSet.has(h.id)).length;
@@ -4840,22 +4896,33 @@ async function openInteractivePicViewer(ipId){
           <button class="btn ${allDone?'primary':''}" id="ip-viewer-close">${allDone?'Done ✓':'✕ Exit'}</button>
         </div>
       </div>
-      <div class="ip-zoom-viewport" style="overflow:auto;max-width:min(94vw,1300px);max-height:82vh;border-radius:8px;">
-        <div style="position:relative;width:${zoomLevel}%;min-width:100%;">
-          <img src="${ip.image}" style="width:100%;display:block;user-select:none;border-radius:8px;" draggable="false">
+      <div class="ip-zoom-viewport" style="overflow:auto;width:min(94vw,1300px);max-height:82vh;border-radius:8px;">
+        <div class="ip-pan-inner" style="position:relative;width:${zoomLevel}%;min-width:100%;cursor:${zoomLevel>100?'grab':''};">
+          <img src="${ip.image}" style="width:100%;display:block;user-select:none;border-radius:8px;pointer-events:none;" draggable="false">
           ${boxesHtml}
         </div>
       </div>
-      ${!allDone ? `<p style="color:var(--text-faint);font-size:12.5px;margin-top:10px;">Click every red box — it turns green once you've read it. All boxes must be green before you can move to the next lesson. Ctrl/Cmd + scroll to zoom.</p>` : `<p class="hint" style="margin-top:8px;">Ctrl/Cmd + scroll to zoom.</p>`}`;
-    document.getElementById("ip-viewer-close").addEventListener("click", ()=>{ overlay.remove(); render(); });
+      ${!allDone ? `<p style="color:var(--text-faint);font-size:12.5px;margin-top:10px;">Click every red box — it turns green once you've read it. All boxes must be green before you can move to the next lesson. Scroll to zoom${zoomLevel>100?', drag to pan':''}.</p>` : `<p class="hint" style="margin-top:8px;">Scroll to zoom${zoomLevel>100?', drag to pan':''}.</p>`}`;
+    document.getElementById("ip-viewer-close").addEventListener("click", ()=>{ cleanupPanListeners(); overlay.remove(); render(); });
     document.getElementById("ip-zoom-in").addEventListener("click", ()=>{ zoomLevel = Math.min(400, zoomLevel+25); draw(); });
     document.getElementById("ip-zoom-out").addEventListener("click", ()=>{ zoomLevel = Math.max(100, zoomLevel-25); draw(); });
     document.getElementById("ip-zoom-reset").addEventListener("click", ()=>{ zoomLevel = 100; draw(); });
-    overlay.querySelector(".ip-zoom-viewport").addEventListener("wheel", (e)=>{
+    const viewport = overlay.querySelector(".ip-zoom-viewport");
+    currentViewport = viewport;
+    viewport.addEventListener("wheel", (e)=>{
       e.preventDefault();
       zoomLevel = Math.min(400, Math.max(100, zoomLevel + (e.deltaY < 0 ? 25 : -25)));
       draw();
     }, { passive:false });
+    const panInner = overlay.querySelector(".ip-pan-inner");
+    currentPanInner = panInner;
+    panInner.addEventListener("mousedown", (e)=>{
+      if(zoomLevel<=100 || e.target.closest(".ip-play-hotspot")) return;
+      panning = true; panStartX = e.clientX; panStartY = e.clientY;
+      panScrollLeft = viewport.scrollLeft; panScrollTop = viewport.scrollTop;
+      panInner.style.cursor = "grabbing";
+      e.preventDefault();
+    });
     overlay.querySelectorAll("[data-ip-hotspot]").forEach(el=> el.addEventListener("click", ()=>{
       const hi = +el.getAttribute("data-ip-hotspot");
       const h = ip.hotspots[hi];
