@@ -397,7 +397,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r45";
+const BUILD_VERSION = "2026-07-27T00:00Z-r46";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -4777,7 +4777,6 @@ function openInteractivePicConfigFullscreen(ipId){
     document.getElementById("ip-zoom-out").addEventListener("click", ()=>{ zoomLevel = Math.max(100, zoomLevel-25); draw(); });
     document.getElementById("ip-zoom-reset").addEventListener("click", ()=>{ zoomLevel = 100; draw(); });
     overlay.querySelector(".ip-zoom-viewport").addEventListener("wheel", (e)=>{
-      if(!e.ctrlKey && !e.metaKey) return; // plain scroll stays free for panning when zoomed in
       e.preventDefault();
       zoomLevel = Math.min(400, Math.max(100, zoomLevel + (e.deltaY < 0 ? 25 : -25)));
       draw();
@@ -4853,7 +4852,6 @@ async function openInteractivePicViewer(ipId){
     document.getElementById("ip-zoom-out").addEventListener("click", ()=>{ zoomLevel = Math.max(100, zoomLevel-25); draw(); });
     document.getElementById("ip-zoom-reset").addEventListener("click", ()=>{ zoomLevel = 100; draw(); });
     overlay.querySelector(".ip-zoom-viewport").addEventListener("wheel", (e)=>{
-      if(!e.ctrlKey && !e.metaKey) return; // plain scroll stays free for panning when zoomed in
       e.preventDefault();
       zoomLevel = Math.min(400, Math.max(100, zoomLevel + (e.deltaY < 0 ? 25 : -25)));
       draw();
@@ -4872,9 +4870,9 @@ async function openInteractivePicViewer(ipId){
         if(!alreadyRead){
           readSet.add(h.id);
           draw();
-          await Promise.resolve(supabase.from("interactive_picture_progress").upsert({
+          await silentSave(()=> Promise.resolve(supabase.from("interactive_picture_progress").upsert({
             user_id: session.user.id, interactive_picture_id: ipId, read_hotspot_ids: Array.from(readSet), updated_at: new Date().toISOString()
-          }, { onConflict: "user_id,interactive_picture_id" })).catch(()=>{});
+          }, { onConflict: "user_id,interactive_picture_id" })).catch(()=>{}));
         }
       });
     }));
