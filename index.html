@@ -400,7 +400,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r53";
+const BUILD_VERSION = "2026-07-27T00:00Z-r54";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -3773,11 +3773,10 @@ function showToast(text, onClickFn){
 function setupRealtime(){
   teardownRealtime();
   const chMyProfile = supabase.channel("rt-my-profile-"+session.user.id)
-    .on("postgres_changes", { event:"UPDATE", schema:"public", table:"profiles", filter:`id=eq.${session.user.id}` }, async (payload)=>{
+    .on("postgres_changes", { event:"UPDATE", schema:"public", table:"profiles", filter:`id=eq.${session.user.id}` }, async ()=>{
       const oldP = profile;
-      profile = payload.new;
-      simWarningDismissed = !!(profile && profile.sim_warning_dismissed);
-      dashboardShowCompleted = !!(profile && profile.dashboard_show_completed);
+      await loadProfile(); // re-fetch from source of truth rather than trusting the realtime payload directly —
+                            // safer against payload-shape surprises and against two rapid updates racing each other
       const changed = !oldP || oldP.can_access_ts !== profile.can_access_ts || oldP.can_access_cs !== profile.can_access_cs
         || oldP.role !== profile.role || oldP.perm_edit_content !== profile.perm_edit_content
         || oldP.perm_create_quizzes !== profile.perm_create_quizzes || oldP.perm_manage_people !== profile.perm_manage_people;
