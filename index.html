@@ -402,7 +402,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r56";
+const BUILD_VERSION = "2026-07-27T00:00Z-r57";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1941,6 +1941,19 @@ function renderTeam(){
 
   // ---- Module progress rows ----
   const deptModulesForRoster = guestMode ? MODULES : MODULES.filter(m=> m.department===dept);
+  // AUDIT FIX: r.overall / r.mastered were computed once at load time across
+  // every module the admin can see, mixing both departments together —
+  // switching tabs changed which module pills showed, but not these
+  // aggregate numbers, so someone could see "100% mastered" on a tab with
+  // zero modules in it. Recompute them fresh here, scoped to only the
+  // modules actually in the active department.
+  function deptOverallFor(r){
+    const values = deptModulesForRoster.map(m=> r.perModule[m.id]).filter(v=> v!==undefined);
+    return values.length ? Math.round(values.reduce((a,b)=>a+b,0)/values.length) : 0;
+  }
+  function deptMasteredFor(r){
+    return deptModulesForRoster.filter(m=> r.perModule[m.id]===100).length;
+  }
   const moduleRows = filteredRows.map(r=>{
     const expanded = teamExpandedRows.has(r.id);
     const moduleGrid = deptModulesForRoster.map(m=>{
@@ -1963,11 +1976,11 @@ function renderTeam(){
     } else {
       progressCell = `<td style="min-width:160px;">
           <div style="display:flex;align-items:center;gap:8px;">
-            <div class="progress-bar" style="flex:1;"><div style="width:${r.overall}%"></div></div>
-            <span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${r.overall}%</span>
+            <div class="progress-bar" style="flex:1;"><div style="width:${deptOverallFor(r)}%"></div></div>
+            <span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${deptOverallFor(r)}%</span>
           </div>
         </td>`;
-      thirdCell = `<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${r.mastered}/${MODULES.length} (${MODULES.length?Math.round((r.mastered/MODULES.length)*100):0}%) mastered</td>`;
+      thirdCell = `<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${deptMasteredFor(r)}/${deptModulesForRoster.length} (${deptModulesForRoster.length?Math.round((deptMasteredFor(r)/deptModulesForRoster.length)*100):0}%) mastered</td>`;
     }
 
     const mainRow = `
@@ -2052,7 +2065,7 @@ function renderTeam(){
     </div>
 
     <div class="card" style="margin-top:16px;">
-      ${sectionHeader('people', 'People', teamRows.length)}
+      ${sectionHeader('people', 'People', deptRows.length)}
       ${teamsSectionOpen.people ? `
         <div style="margin-top:14px;">
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
