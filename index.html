@@ -30,9 +30,11 @@
   .crumbs-row button:hover{ text-decoration:underline; }
   nav.crumbs button{ background:none; border:none; color:var(--cyan); cursor:pointer; font-family:var(--mono); font-size:12px; padding:0; }
   .pill-btn{ font-family:var(--mono); font-size:11px; letter-spacing:.04em; padding:7px 12px; border-radius:7px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); cursor:pointer; }
-  .dept-tabs{ display:flex; gap:8px; margin-bottom:18px; }
-  .dept-tab{ padding:9px 16px; border-radius:8px; border:1px solid var(--stroke); background:var(--input-bg); color:var(--text-dim); cursor:pointer; font-size:13px; font-family:var(--sans); font-weight:600; }
-  .dept-tab.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
+  .dept-tabs{ display:flex; gap:4px; margin-bottom:16px; border-bottom:2px solid var(--stroke); padding-left:2px; }
+  .dept-tab{ padding:10px 22px; border-radius:10px 10px 0 0; border:1px solid transparent; border-bottom:none; background:transparent; color:var(--text-faint); cursor:pointer; font-size:13.5px; font-family:var(--sans); font-weight:600; position:relative; bottom:-2px; transition:background .15s, color .15s; }
+  .dept-tab:hover{ color:var(--text-dim); background:var(--input-bg); }
+  .dept-tab.active{ background:var(--panel); color:var(--cyan); border-color:var(--stroke); border-bottom:2px solid var(--panel); }
+  html.theme-light .dept-tab.active{ background:var(--panel); border-bottom-color:var(--panel); }
   .pill-btn:hover{ border-color:#3a4a70; color:var(--text); }
   .admin-badge{ font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; padding:6px 10px; border-radius:20px; border:1px solid var(--amber-dim); background:var(--amber-dim); color:var(--amber); }
   .led-strip{ display:flex; gap:6px; align-items:center; }
@@ -400,7 +402,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r55";
+const BUILD_VERSION = "2026-07-27T00:00Z-r56";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -2401,11 +2403,13 @@ async function showStandaloneQuizAttemptDetail(userId, quizId, holderId, personN
    QUIZZES — list, take, results, and admin builder
    ============================================================ */
 function renderQuizzesList(){
+  const dept = currentActiveDepartment();
+  const deptQuizzes = guestMode ? QUIZZES : QUIZZES.filter(q=> (q.department||'TS')===dept);
   const canManageQuizzes = canCreateQuizzes();
-  const myQuizzes = QUIZZES.filter(q=> q.isRecipient);
+  const myQuizzes = deptQuizzes.filter(q=> q.isRecipient);
   const pending = myQuizzes.filter(q=> !q.myAttempt);
   const completed = myQuizzes.filter(q=> !!q.myAttempt);
-  const sentQuizzes = canManageQuizzes ? QUIZZES : [];
+  const sentQuizzes = canManageQuizzes ? deptQuizzes : [];
   const activeSent = sentQuizzes.filter(q=> !(q.sent && q.isFullyComplete));
   const fullyCompleteSent = sentQuizzes.filter(q=> q.sent && q.isFullyComplete);
 
@@ -2442,7 +2446,12 @@ function renderQuizzesList(){
   }
 
   const addBtn = (canManageQuizzes && editMode) ? `<button class="dashed-btn" id="add-quiz" style="margin-top:14px;">+ New quiz</button>` : "";
+  const quizDeptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
+      <button class="dept-tab ${dept==='TS'?'active':''}" data-quiz-dept="TS">Tech Support</button>
+      <button class="dept-tab ${dept==='CS'?'active':''}" data-quiz-dept="CS">Customer Service</button>
+    </div>` : "";
   renderShell(`
+    ${quizDeptTabsHtml}
     <section class="hero">
       <div class="eyebrow">${T('quizzes.eyebrow','Quizzes')}</div>
       <h1>${T('quizzes.h1','Quick check-ins from your admins')}</h1>
@@ -2467,6 +2476,10 @@ function renderQuizzesList(){
     </div>` : ""}
     ${addBtn}
   `);
+  root.querySelectorAll("[data-quiz-dept]").forEach(el=> el.addEventListener("click", ()=>{
+    activeDepartment = el.getAttribute("data-quiz-dept");
+    render();
+  }));
   root.querySelectorAll("[data-quiz-section-toggle]").forEach(el=> el.addEventListener("click", ()=>{
     const key = el.getAttribute("data-quiz-section-toggle");
     quizListSectionOpen[key] = !quizListSectionOpen[key];
@@ -6437,6 +6450,14 @@ let notesCollapsed = new Set();
 let noteSearchQuery = "";
 let dragNoteId = null;
 let noteSaveTimer = null;
+let notesActiveDepartment = null;
+function currentActiveNotesDepartment(){
+  const mine = myDepartments();
+  if(mine.length===0) return 'TS';
+  if(notesActiveDepartment && mine.includes(notesActiveDepartment)) return notesActiveDepartment;
+  notesActiveDepartment = mine[0];
+  return notesActiveDepartment;
+}
 
 async function loadPersonalNotes(){
   if(guestMode) return;
@@ -6446,10 +6467,13 @@ async function loadPersonalNotes(){
 }
 async function openNotes(){
   await loadPersonalNotes();
-  if(!currentNoteId){ const top = PERSONAL_NOTES.find(n=>!n.parent_id); if(top) currentNoteId = top.id; }
+  if(!currentNoteId || !PERSONAL_NOTES.find(n=>n.id===currentNoteId && n.department===currentActiveNotesDepartment())){
+    const top = topLevelNotes()[0];
+    currentNoteId = top ? top.id : null;
+  }
   view = "notes"; render();
 }
-function topLevelNotes(){ return PERSONAL_NOTES.filter(n=>!n.parent_id).sort((a,b)=>a.sort_order-b.sort_order); }
+function topLevelNotes(){ return PERSONAL_NOTES.filter(n=>!n.parent_id && (guestMode || n.department===currentActiveNotesDepartment())).sort((a,b)=>a.sort_order-b.sort_order); }
 function childNotes(parentId){ return PERSONAL_NOTES.filter(n=>n.parent_id===parentId).sort((a,b)=>a.sort_order-b.sort_order); }
 
 function renderNotes(){
@@ -6498,7 +6522,13 @@ function renderNotes(){
       </div>`;
   }
 
+  const notesDeptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
+      <button class="dept-tab ${currentActiveNotesDepartment()==='TS'?'active':''}" data-notes-dept="TS">Tech Support</button>
+      <button class="dept-tab ${currentActiveNotesDepartment()==='CS'?'active':''}" data-notes-dept="CS">Customer Service</button>
+    </div>` : "";
+
   renderShell(`
+    ${notesDeptTabsHtml}
     <div class="ref-layout">
       <div class="ref-sidebar">
         <input type="text" id="note-search" data-no-enter-submit placeholder="Search notes…" value="${escapeHtml(noteSearchQuery)}" class="search-input" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
@@ -6507,6 +6537,13 @@ function renderNotes(){
       <div class="ref-content">${contentHtml}</div>
     </div>
   `);
+
+  root.querySelectorAll("[data-notes-dept]").forEach(el=> el.addEventListener("click", ()=>{
+    notesActiveDepartment = el.getAttribute("data-notes-dept");
+    const top = topLevelNotes()[0];
+    currentNoteId = top ? top.id : null;
+    render();
+  }));
 
   const noteSearchEl = document.getElementById("note-search");
   if(noteSearchEl){
@@ -6537,15 +6574,16 @@ function renderNotes(){
 
   const addBtn = document.getElementById("add-note");
   if(addBtn) addBtn.addEventListener("click", async ()=>{
-    const { data, error } = await supabase.from("personal_notes").insert({ user_id: session.user.id, title:"New note", body:"<p>Write here.</p>", parent_id:null, sort_order: tops.length }).select().single();
+    const { data, error } = await supabase.from("personal_notes").insert({ user_id: session.user.id, title:"New note", body:"<p>Write here.</p>", parent_id:null, department: currentActiveNotesDepartment(), sort_order: tops.length }).select().single();
     if(!error){ await loadPersonalNotes(); currentNoteId = data.id; render(); }
   });
   root.querySelectorAll("[data-note-addsub]").forEach(el=> el.addEventListener("click", async (e)=>{
     e.stopPropagation();
     const parentId = el.getAttribute("data-note-addsub");
     const kids = childNotes(parentId);
+    const parentNote = PERSONAL_NOTES.find(n=>n.id===parentId);
     notesCollapsed.delete(parentId);
-    const { data, error } = await supabase.from("personal_notes").insert({ user_id: session.user.id, title:"New subsection", body:"<p>Write here.</p>", parent_id:parentId, sort_order: kids.length }).select().single();
+    const { data, error } = await supabase.from("personal_notes").insert({ user_id: session.user.id, title:"New subsection", body:"<p>Write here.</p>", parent_id:parentId, department: parentNote ? parentNote.department : currentActiveNotesDepartment(), sort_order: kids.length }).select().single();
     if(!error){ await loadPersonalNotes(); currentNoteId = data.id; render(); }
   }));
   root.querySelectorAll("[data-note-del]").forEach(el=> el.addEventListener("click", async (e)=>{
