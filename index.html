@@ -400,7 +400,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r54";
+const BUILD_VERSION = "2026-07-27T00:00Z-r55";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -958,25 +958,41 @@ async function silentSave(fn){
 
 function promptDepartmentChoice(){
   return new Promise((resolve)=>{
-    openModal(`
-      <h3>Which team are you on?</h3>
-      <p class="sub">This decides which training modules and reference guide you'll see. An admin can always add access to the other team later if that changes.</p>
-      <div class="modal-actions" style="justify-content:center;gap:14px;">
-        <button class="btn primary" id="dept-pick-ts" style="flex:1;">Tech Support</button>
-        <button class="btn primary" id="dept-pick-cs" style="flex:1;">Customer Service</button>
-      </div>
-    `, false, true);
-    // No close/cancel path is wired here on purpose — this has to be
-    // answered before the account is usable, since which modules even
-    // exist for this person depends on the answer.
-    const finish = async (field)=>{
-      await supabase.from("profiles").update({ [field]: true }).eq("id", session.user.id);
-      profile[field] = true;
-      closeModal();
-      resolve();
-    };
-    document.getElementById("dept-pick-ts").addEventListener("click", ()=> finish("can_access_ts"));
-    document.getElementById("dept-pick-cs").addEventListener("click", ()=> finish("can_access_cs"));
+    function draw(){
+      openModal(`
+        <h3>Which team are you on?</h3>
+        <p class="sub">This decides which training modules and reference guide you'll see. An admin can always add access to the other team later if that changes.</p>
+        <div class="modal-error" id="dept-pick-error" style="display:none;"></div>
+        <div class="modal-actions" style="justify-content:center;gap:14px;">
+          <button class="btn primary" id="dept-pick-ts" style="flex:1;">Tech Support</button>
+          <button class="btn primary" id="dept-pick-cs" style="flex:1;">Customer Service</button>
+        </div>
+      `, false, true);
+      // No close/cancel path is wired here on purpose — this has to be
+      // answered before the account is usable, since which modules even
+      // exist for this person depends on the answer.
+      const finish = async (field, btn)=>{
+        btn.disabled = true; btn.textContent = "Saving…";
+        const { error } = await supabase.from("profiles").update({ [field]: true }).eq("id", session.user.id);
+        if(error){
+          // AUDIT FIX: this used to proceed regardless of whether the save
+          // actually succeeded, which meant a failed write here (network
+          // blip, etc.) let the person into the app with a choice that was
+          // never actually persisted — silently bringing this same picker
+          // back on their next login. Now it stays open and lets them retry.
+          const err = document.getElementById("dept-pick-error");
+          if(err){ err.textContent = "Couldn't save: " + error.message + " — try again."; err.style.display = "block"; }
+          btn.disabled = false; btn.textContent = field==="can_access_ts" ? "Tech Support" : "Customer Service";
+          return;
+        }
+        profile[field] = true;
+        closeModal();
+        resolve();
+      };
+      document.getElementById("dept-pick-ts").addEventListener("click", (e)=> finish("can_access_ts", e.target));
+      document.getElementById("dept-pick-cs").addEventListener("click", (e)=> finish("can_access_cs", e.target));
+    }
+    draw();
   });
 }
 
@@ -1122,6 +1138,7 @@ async function showUnseenAnnouncements(){
 
 async function logout(){
   teardownRealtime();
+  closeAllFullscreenOverlays();
   await supabase.auth.signOut();
   session = null; profile = null; MODULES = []; progressMap = {};
   removeFeedbackButton();
@@ -1273,6 +1290,17 @@ async function reorderModuleDrop(draggedId, targetId, pos){
 
 let dashboardShowCompleted = false; // hidden by default; loaded from profile.dashboard_show_completed at login
 let activeDepartment = null; // 'TS' or 'CS' — only meaningful for people with access to both; set on first render
+// AUDIT FIX: every fullscreen overlay (Simulated Navigation player/editor,
+// Interactive Picture config/viewer) is appended directly to document.body,
+// outside #root, so a normal render() never touches it. Each pushes its own
+// removal here when opened, so logout() (or anything else that needs to
+// force-close the app) can clean up whichever one happens to be open,
+// instead of leaving it visually stuck on screen with stale listeners.
+window.activeFullscreenCleanups = [];
+function closeAllFullscreenOverlays(){
+  window.activeFullscreenCleanups.forEach(fn=>{ try{ fn(); } catch(e){} });
+  window.activeFullscreenCleanups = [];
+}
 
 function canAccessDepartment(dept){
   if(guestMode) return true; // guest preview shows everything regardless of department
@@ -1296,6 +1324,16 @@ let themeDropdownOpen = false;
 
 function renderDashboard(){
   lastModuleContext = { view:"dashboard" };
+  if(!guestMode && myDepartments().length===0){
+    renderShell(`
+      <div class="card">
+        <div class="k-label">NO ACCESS YET</div>
+        <h2 style="margin-bottom:8px;">You don't have access to any department yet</h2>
+        <p style="color:var(--text-dim);font-size:14px;">This is unusual — normally this gets set the first time you log in. Ask an admin to grant you Tech Support or Customer Service access from Teams → People → Permissions.</p>
+      </div>
+    `);
+    return;
+  }
   const editOn = canEdit();
   const dept = currentActiveDepartment();
   const deptModules = guestMode ? MODULES : MODULES.filter(m=> m.department===dept);
@@ -1690,7 +1728,9 @@ let QUIZ_PROGRESS_ROWS = null; // lazy-loaded the first time that section opens
 let quizProgressExpandedRows = new Set();
 
 async function loadQuizProgressData(){
-  const { data: quizzes } = await supabase.from("standalone_quizzes").select("*").eq("sent", true);
+  const dept = currentActiveDepartment();
+  const { data: quizzesRaw } = await supabase.from("standalone_quizzes").select("*").eq("sent", true);
+  const quizzes = guestMode ? quizzesRaw : (quizzesRaw||[]).filter(q=> (q.department||'TS')===dept);
   const { data: attempts } = await supabase.from("standalone_quiz_attempts").select("*");
   const { data: recipients } = await supabase.from("standalone_quiz_recipients").select("*");
   const { data: allTeamMembers } = await supabase.from("team_members").select("*");
@@ -1707,7 +1747,7 @@ async function loadQuizProgressData(){
     });
     const completedCount = perQuiz.filter(x=>x.completed).length;
     const pct = perQuiz.length ? Math.round((completedCount/perQuiz.length)*100) : 0;
-    return { id:person.id, name:person.name, role:person.role, teamIds:person.teamIds, perQuiz, completedCount, totalCount:perQuiz.length, pct };
+    return { id:person.id, name:person.name, role:person.role, teamIds:person.teamIds, canAccessTs:person.canAccessTs, canAccessCs:person.canAccessCs, perQuiz, completedCount, totalCount:perQuiz.length, pct };
   });
 }
 
@@ -1828,16 +1868,24 @@ function renderTeam(){
   if(teamsSectionOpen.quizzes && !QUIZ_PROGRESS_ROWS && teamRows.length){
     loadQuizProgressData().then(()=> render());
   }
-  const teamsHtml = TEAMS_LIST.length ? TEAMS_LIST.map(t=>`
+  const dept = currentActiveDepartment();
+  const deptTeams = guestMode ? TEAMS_LIST : TEAMS_LIST.filter(t=> t.department===dept);
+  const teamsHtml = deptTeams.length ? deptTeams.map(t=>`
     <button class="mini-btn" data-manage-team="${t.id}" style="margin:0 6px 6px 0;">${escapeHtml(t.name)} · ${t.memberIds.length}</button>
   `).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No teams yet.</p>`;
 
-  let filteredRows = teamRows;
+  // AUDIT FIX: previously showed every person regardless of the viewing
+  // admin's own department access — a CS-only admin could see TS reps'
+  // names, roles, module progress, and quiz progress. Scope the base roster
+  // to people who actually have access to the department being viewed
+  // before any of the existing role/team/search filters apply on top.
+  const deptRows = guestMode ? teamRows : teamRows.filter(r=> dept==='CS' ? r.canAccessCs : r.canAccessTs);
+  let filteredRows = deptRows;
   if(teamRosterFilter.startsWith("role:")){
     const role = teamRosterFilter.slice(5);
-    filteredRows = teamRows.filter(r=> r.role === role);
+    filteredRows = deptRows.filter(r=> r.role === role);
   } else if(teamRosterFilter){
-    filteredRows = teamRows.filter(r=> r.teamIds.includes(teamRosterFilter));
+    filteredRows = deptRows.filter(r=> r.teamIds.includes(teamRosterFilter));
   }
   if(teamSearchQuery.trim()){
     const q = teamSearchQuery.trim().toLowerCase();
@@ -1890,9 +1938,10 @@ function renderTeam(){
   }).join("");
 
   // ---- Module progress rows ----
+  const deptModulesForRoster = guestMode ? MODULES : MODULES.filter(m=> m.department===dept);
   const moduleRows = filteredRows.map(r=>{
     const expanded = teamExpandedRows.has(r.id);
-    const moduleGrid = MODULES.map(m=>{
+    const moduleGrid = deptModulesForRoster.map(m=>{
       const pct = r.perModule[m.id];
       const cls = pct===100 ? "done" : pct>0 ? "progress" : "";
       return `<button class="status-pill ${cls}" data-view-attempt="${r.id}:${m.id}" style="cursor:pointer;">${escapeHtml(m.title)} · ${pct}%</button>`;
@@ -1938,7 +1987,7 @@ function renderTeam(){
   // ---- Quiz progress rows ----
   let quizRowsHtml = `<p style="color:var(--text-faint);font-size:13px;">Loading…</p>`;
   if(QUIZ_PROGRESS_ROWS){
-    let filteredQuizRows = QUIZ_PROGRESS_ROWS;
+    let filteredQuizRows = guestMode ? QUIZ_PROGRESS_ROWS : QUIZ_PROGRESS_ROWS.filter(r=> dept==='CS' ? r.canAccessCs : r.canAccessTs);
     if(teamRosterFilter.startsWith("role:")){
       filteredQuizRows = filteredQuizRows.filter(r=> r.role === teamRosterFilter.slice(5));
     } else if(teamRosterFilter){
@@ -1980,10 +2029,16 @@ function renderTeam(){
     </div>`;
   }
 
+  const teamPageDeptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
+      <button class="dept-tab ${dept==='TS'?'active':''}" data-team-dept="TS">Tech Support</button>
+      <button class="dept-tab ${dept==='CS'?'active':''}" data-team-dept="CS">Customer Service</button>
+    </div>` : "";
+
   renderShell(`
+    ${teamPageDeptTabsHtml}
     ${canManagePeople() ? `
     <div class="card">
-      ${sectionHeader('teams', 'Teams', TEAMS_LIST.length)}
+      ${sectionHeader('teams', 'Teams', deptTeams.length)}
       ${teamsSectionOpen.teams ? `
         <div style="margin-top:14px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
@@ -2028,7 +2083,7 @@ function renderTeam(){
             </select>
             <select id="module-filter" style="width:auto;">
               <option value="">All modules (overall)</option>
-              ${MODULES.map(m=>`<option value="${m.id}" ${teamModuleFilter===m.id?'selected':''}>${escapeHtml(m.title)}</option>`).join("")}
+              ${deptModulesForRoster.map(m=>`<option value="${m.id}" ${teamModuleFilter===m.id?'selected':''}>${escapeHtml(m.title)}</option>`).join("")}
             </select>
             <button class="btn" id="go-analyze-btn" style="margin-left:auto;">📊 Analyze</button>
           </div>
@@ -2078,6 +2133,12 @@ function renderTeam(){
   document.getElementById("new-team-btn")?.addEventListener("click", ()=> openTeamManageModal(null));
   root.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
   document.getElementById("module-filter")?.addEventListener("change", (e)=>{ teamModuleFilter = e.target.value; render(); });
+  root.querySelectorAll("[data-team-dept]").forEach(el=> el.addEventListener("click", ()=>{
+    activeDepartment = el.getAttribute("data-team-dept");
+    teamRosterFilter = ""; teamModuleFilter = "";
+    QUIZ_PROGRESS_ROWS = null; // quiz eligibility is department-scoped now, force a fresh load
+    render();
+  }));
 
   ["people","modules","quizzes"].forEach(suffix=>{
     document.getElementById(`team-filter-${suffix}`)?.addEventListener("change", (e)=>{ teamRosterFilter = e.target.value; render(); });
@@ -2963,7 +3024,8 @@ const EDIT_LOG_TYPE_LABELS = {
 const EDIT_LOG_ACTION_COLORS = { created:"var(--green)", updated:"var(--cyan)", deleted:"var(--red)", sent:"var(--amber)", graded:"var(--cyan)" };
 
 function renderEditLog(){
-  let rows = EDIT_LOG_ROWS;
+  const dept = currentActiveDepartment();
+  let rows = guestMode ? EDIT_LOG_ROWS : EDIT_LOG_ROWS.filter(r=> !r.department || r.department===dept);
   if(editLogTypeFilter) rows = rows.filter(r=> r.entity_type === editLogTypeFilter);
   if(editLogSearchQuery.trim()){
     const q = editLogSearchQuery.trim().toLowerCase();
@@ -2989,7 +3051,13 @@ function renderEditLog(){
     </tr>`;
   }).join("");
 
+  const deptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
+      <button class="dept-tab ${dept==='TS'?'active':''}" data-editlog-dept="TS">Tech Support</button>
+      <button class="dept-tab ${dept==='CS'?'active':''}" data-editlog-dept="CS">Customer Service</button>
+    </div>` : "";
+
   renderShell(`
+    ${deptTabsHtml}
     <div class="card">
       <div class="k-label">ADMIN</div>
       <h2 style="margin-bottom:4px;">Edit Log</h2>
@@ -3021,6 +3089,10 @@ function renderEditLog(){
     </div>
   `);
 
+  root.querySelectorAll("[data-editlog-dept]").forEach(el=> el.addEventListener("click", ()=>{
+    activeDepartment = el.getAttribute("data-editlog-dept");
+    editLogPage = 1; render();
+  }));
   document.getElementById("edit-log-filter").addEventListener("change", (e)=>{ editLogTypeFilter = e.target.value; editLogPage = 1; render(); });
   document.getElementById("edit-log-pagesize").addEventListener("change", (e)=>{ editLogPageSize = +e.target.value; editLogPage = 1; render(); });
   document.getElementById("edit-log-prev").addEventListener("click", ()=>{ if(editLogPage>1){ editLogPage--; render(); } });
@@ -4125,6 +4197,7 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
   overlay.id = "sim-play-fullscreen-overlay";
   overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f5;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;";
   document.body.appendChild(overlay);
+  window.activeFullscreenCleanups.push(()=> overlay.remove());
 
   function showMisclickX(clientX, clientY){
     const x = document.createElement("div");
@@ -4202,6 +4275,7 @@ function openSimEditFullscreen(qi, si){
   overlay.id = "sim-fullscreen-overlay";
   overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;";
   document.body.appendChild(overlay);
+  window.activeFullscreenCleanups.push(()=> overlay.remove());
 
   function draw(){
     const screens = draftModule.quiz[qi].simScreens;
@@ -4907,6 +4981,7 @@ function openInteractivePicConfigFullscreen(ipId){
     window.removeEventListener("mousemove", onWindowMouseMove);
     window.removeEventListener("mouseup", onWindowMouseUp);
   }
+  window.activeFullscreenCleanups.push(()=>{ cleanupPanListeners(); overlay.remove(); });
 
   let saveTimer = null;
   function scheduleSave(){
@@ -5019,6 +5094,7 @@ async function openInteractivePicViewer(ipId){
     window.removeEventListener("mousemove", onWindowMouseMove);
     window.removeEventListener("mouseup", onWindowMouseUp);
   }
+  window.activeFullscreenCleanups.push(()=>{ cleanupPanListeners(); overlay.remove(); });
 
   function draw(){
     const total = ip.hotspots.length;
