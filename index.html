@@ -402,7 +402,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r62";
+const BUILD_VERSION = "2026-07-27T00:00Z-r63";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -518,6 +518,9 @@ let lastModuleContext = null; // { view, modId, lessonIdx } — lets the Trainin
 const MAX_QUIZ_ATTEMPTS = 3;
 let quizAnswers = []; let quizRevealed = []; let quizIdx = 0;
 let quizActiveIndices = []; // indices into m.quiz actually being shown this session
+let quizInProgressModId = null; // which module (if any) has an unsubmitted session live in memory right now — lets navigating lesson<->quiz resume instantly without a DB round trip
+let modulesWithResumableQuiz = new Set(); // module IDs with a persisted in-progress session, fetched at login so the "Take quiz" button can say "Resume" accurately even right after a fresh visit
+let quizProgressSaveTimer = null;
 let quizSimScreenIndex = {}; // session-relative quizIdx -> current screen index, for simulation questions
 let quizSimMisclicks = {}; // session-relative quizIdx -> misclick count, resets each new quiz attempt
 let simWarningDismissed = false; // "don't show again" for the Simulated Navigation warning popup
@@ -679,12 +682,15 @@ async function loadEverything(){
     quiz:(quiz||[]).filter(q=>q.module_id===m.id).map(q=>({id:q.id,q:q.question,opts:q.options,correct:q.correct_index,explain:q.explanation,type:q.question_type||'multiple_choice',simScreens:null,endGoal:q.end_goal||'button',finalScreenId:q.final_screen_id||null}))
   }));
 
-  const [progRes, dismissalsRes, ipicsRes, ipProgressRes] = await Promise.all([
+  const [progRes, dismissalsRes, ipicsRes, ipProgressRes, quizInProgressRes] = await Promise.all([
     supabase.from("progress").select("*").eq("user_id", session.user.id),
     supabase.from("module_popup_dismissals").select("module_id").eq("user_id", session.user.id),
     supabase.from("interactive_pictures").select("id,lesson_id,hotspots"),
-    supabase.from("interactive_picture_progress").select("*").eq("user_id", session.user.id)
+    supabase.from("interactive_picture_progress").select("*").eq("user_id", session.user.id),
+    supabase.from("quiz_in_progress").select("module_id").eq("user_id", session.user.id)
   ]);
+
+  modulesWithResumableQuiz = new Set((quizInProgressRes.data||[]).map(r=>r.module_id));
 
   progressMap = {};
   (progRes.data||[]).forEach(p=>{ progressMap[p.module_id] = { best:p.best_score, total:p.total, lastScore:p.last_score, attempts:p.attempts, lessonsViewed:p.lessons_viewed||[] }; });
@@ -1479,7 +1485,8 @@ function renderLesson(){
   const hasQuiz = m.quiz.length > 0;
   const attemptsUsed = (progressMap[m.id] && progressMap[m.id].attempts) || 0;
   const attemptsExhausted = hasQuiz && attemptsUsed >= MAX_QUIZ_ATTEMPTS && !canEditContent();
-  const quizTab = hasQuiz ? `<button class="lesson-tab quiz" id="go-quiz" ${attemptsExhausted?'disabled':''}>${attemptsExhausted?'QUIZ · NO ATTEMPTS LEFT':'TAKE QUIZ →'}</button>` : "";
+  const hasResumableQuiz = (quizInProgressModId === m.id && quizActiveIndices.length) || modulesWithResumableQuiz.has(m.id);
+  const quizTab = hasQuiz ? `<button class="lesson-tab quiz" id="go-quiz" ${attemptsExhausted?'disabled':''}>${attemptsExhausted?'QUIZ · NO ATTEMPTS LEFT':(hasResumableQuiz?'RESUME QUIZ →':'TAKE QUIZ →')}</button>` : "";
   const picsComplete = lessonInteractivePicsComplete(lesson);
   const nextDisabled = !picsComplete;
   const nextBtnHtml = isLast
@@ -1505,14 +1512,42 @@ function renderLesson(){
 
 async function startQuiz(mode){
   const m = modById(currentModId);
+  // Already have this exact module's session live in memory (e.g. they went
+  // to recheck a lesson and are now coming straight back) — just resume,
+  // don't touch anything.
+  if(mode !== "missed" && quizInProgressModId === currentModId && quizActiveIndices.length){
+    view = "quiz"; render();
+    return;
+  }
   await ensureQuizSimScreens(m);
-  quizSimScreenIndex = {};
-  quizSimMisclicks = {};
   quizIsTestRun = canEditContent() && editMode;
   quizTestRunResult = null;
   const priorAttempts = (progressMap[m.id] && progressMap[m.id].attempts) || 0;
   if(priorAttempts >= MAX_QUIZ_ATTEMPTS && !canEditContent()){ alert(`You've used all ${MAX_QUIZ_ATTEMPTS} attempts for this quiz.`); return; }
   quizCarriedAnswers = {};
+
+  // Real (non-test-run) sessions: check for a persisted in-progress session
+  // for this module — someone who left the site entirely and came back.
+  // Validated against the module's current question count in case content
+  // changed while they were away; stale/mismatched saves are discarded
+  // rather than risking a crash on an out-of-range index.
+  if(mode !== "missed" && !quizIsTestRun){
+    const { data: saved } = await supabase.from("quiz_in_progress").select("*").eq("user_id", session.user.id).eq("module_id", m.id).maybeSingle();
+    if(saved && Array.isArray(saved.active_indices) && saved.active_indices.every(i=> i>=0 && i<m.quiz.length)){
+      quizActiveIndices = saved.active_indices;
+      quizAnswers = saved.answers || new Array(quizActiveIndices.length).fill(null);
+      quizRevealed = saved.revealed || new Array(quizActiveIndices.length).fill(false);
+      quizIdx = Math.min(saved.current_idx||0, quizActiveIndices.length-1);
+      quizSimScreenIndex = saved.sim_screen_index || {};
+      quizSimMisclicks = saved.sim_misclicks || {};
+      quizInProgressModId = currentModId;
+      view = "quiz"; render();
+      return;
+    }
+  }
+
+  quizSimScreenIndex = {};
+  quizSimMisclicks = {};
   if(mode === "missed"){
     const { data: attempts } = await supabase.from("quiz_attempts").select("*").eq("user_id", session.user.id).eq("module_id", m.id).order("created_at", { ascending:false }).limit(1);
     const lastAttempt = attempts && attempts[0];
@@ -1535,7 +1570,25 @@ async function startQuiz(mode){
   }
   quizAnswers = new Array(quizActiveIndices.length).fill(null);
   quizRevealed = new Array(quizActiveIndices.length).fill(false);
-  quizIdx = 0; view = "quiz"; render();
+  quizIdx = 0; quizInProgressModId = currentModId; view = "quiz"; render();
+}
+
+function scheduleQuizProgressSave(){
+  // Test runs and the "missed questions" retake flow don't get persisted —
+  // test runs are never real attempts to begin with, and a missed-retake
+  // session is short-lived by nature (it only exists right after finishing
+  // a full attempt).
+  if(quizIsTestRun || !session || guestMode) return;
+  clearTimeout(quizProgressSaveTimer);
+  quizProgressSaveTimer = setTimeout(async ()=>{
+    modulesWithResumableQuiz.add(currentModId);
+    await silentSave(()=> supabase.from("quiz_in_progress").upsert({
+      user_id: session.user.id, module_id: currentModId,
+      active_indices: quizActiveIndices, answers: quizAnswers, revealed: quizRevealed, current_idx: quizIdx,
+      sim_screen_index: quizSimScreenIndex, sim_misclicks: quizSimMisclicks,
+      updated_at: new Date().toISOString()
+    }, { onConflict: "user_id,module_id" }));
+  }, 400);
 }
 
 function renderQuiz(){
@@ -1615,8 +1668,8 @@ function renderQuiz(){
     });
     document.getElementById("quiz-next").addEventListener("click", ()=>{ if(isLast){ finishQuiz(); } else { quizIdx++; render(); window.scrollTo(0,0); } });
   } else {
-    if(!revealed) root.querySelectorAll(".opt").forEach(el=> el.addEventListener("click", ()=>{ quizAnswers[quizIdx]=parseInt(el.getAttribute("data-idx")); render(); }));
-    document.getElementById("quiz-next").addEventListener("click", ()=>{ if(!revealed){ quizRevealed[quizIdx]=true; render(); } else if(isLast){ finishQuiz(); } else { quizIdx++; render(); window.scrollTo(0,0); } });
+    if(!revealed) root.querySelectorAll(".opt").forEach(el=> el.addEventListener("click", ()=>{ quizAnswers[quizIdx]=parseInt(el.getAttribute("data-idx")); scheduleQuizProgressSave(); render(); }));
+    document.getElementById("quiz-next").addEventListener("click", ()=>{ if(!revealed){ quizRevealed[quizIdx]=true; scheduleQuizProgressSave(); render(); } else if(isLast){ finishQuiz(); } else { quizIdx++; scheduleQuizProgressSave(); render(); window.scrollTo(0,0); } });
   }
   document.getElementById("quiz-prev").addEventListener("click", ()=>{ if(quizIdx>0){ quizIdx--; render(); window.scrollTo(0,0); } });
   root.querySelectorAll("[data-quiz-jump]").forEach(el=> el.addEventListener("click", ()=>{ quizIdx = +el.getAttribute("data-quiz-jump"); render(); }));
@@ -1644,6 +1697,10 @@ async function finishQuiz(){
     quizJustFinished = true; view = "results"; render(); window.scrollTo(0,0);
     return;
   }
+
+  quizInProgressModId = null;
+  modulesWithResumableQuiz.delete(m.id);
+  await supabase.from("quiz_in_progress").delete().eq("user_id", session.user.id).eq("module_id", m.id);
 
   const prior = progressMap[m.id];
   const record = { best: Math.max(correctCount, prior?prior.best:0), total: m.quiz.length, lastScore: correctCount, attempts: (prior?prior.attempts:0)+1, lessonsViewed: prior&&prior.lessonsViewed ? prior.lessonsViewed : [] };
@@ -4325,6 +4382,7 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
     overlay.querySelectorAll("[data-sim-play-zone-fs]").forEach(el=> el.addEventListener("click", ()=>{
       const zi = +el.getAttribute("data-sim-play-zone-fs");
       if(!handleZoneClick(zi)) return;
+      scheduleQuizProgressSave();
       if(quizAnswers[quizIdx] === "done"){ overlay.remove(); render(); } else { draw(); }
     }));
   }
