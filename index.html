@@ -402,7 +402,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r60";
+const BUILD_VERSION = "2026-07-27T00:00Z-r62";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1468,6 +1468,8 @@ function lessonInteractivePicsComplete(lesson){
 
 function renderLesson(){
   const m = modById(currentModId); if(!m){ view="dashboard"; render(); return; }
+  if(!m.lessons.length){ view="dashboard"; render(); return; } // module has no lessons at all
+  if(!m.lessons[currentLessonIdx]) currentLessonIdx = 0; // stale index for this module (e.g. it had more lessons before, or currentLessonIdx carried over from a different module) — fall back to the first lesson instead of crashing
   lastModuleContext = { view:"lesson", modId: currentModId, lessonIdx: currentLessonIdx };
   const lesson = m.lessons[currentLessonIdx];
   if(lesson.id) markLessonViewed(m, lesson.id);
@@ -1538,8 +1540,9 @@ async function startQuiz(mode){
 
 function renderQuiz(){
   const m = modById(currentModId); if(!m||!m.quiz.length){ view="lesson"; render(); return; }
-  lastModuleContext = { view:"quiz", modId: currentModId, lessonIdx: currentLessonIdx };
   const realIdx = quizActiveIndices[quizIdx];
+  if(realIdx===undefined || !m.quiz[realIdx]){ view="lesson"; render(); return; } // stale quiz session state pointing at a question that doesn't exist for this module — bail to the lesson view rather than crashing
+  lastModuleContext = { view:"quiz", modId: currentModId, lessonIdx: currentLessonIdx };
   const q = m.quiz[realIdx]; const revealed = quizRevealed[quizIdx]; const selected = quizAnswers[quizIdx];
   const isMissedRetake = quizActiveIndices.length < m.quiz.length;
   const isSim = q.type === 'simulation';
@@ -1656,7 +1659,7 @@ async function finishQuiz(){
 }
 
 function renderResults(){
-  const m = modById(currentModId);
+  const m = modById(currentModId); if(!m){ view="dashboard"; render(); return; }
   lastModuleContext = { view:"results", modId: currentModId, lessonIdx: currentLessonIdx };
 
   if(quizIsTestRun && quizTestRunResult){
@@ -3195,7 +3198,7 @@ async function openAnalyze(){
     .filter(q=>q.missed>0)
     .map(q=>({ ...q, missRate: Math.round((q.missed/q.total)*100), moduleTitle: (modById(q.moduleId)||{}).title || "Unknown module" }))
     .sort((a,b)=> b.missed - a.missed)
-    .slice(0, 10);
+    .slice(0, 50); // kept broader than the old top-10 so filtering by a specific module below isn't starved of results
 
   const flagCount = (flagRows||[]).filter(m=> !m.department || m.department===dept).length;
   ANALYZE_TOTALS = { totalPeople, notStarted, totalAttempts: allAttempts.length, totalFlags: flagCount };
@@ -3203,8 +3206,13 @@ async function openAnalyze(){
   view = "analyze"; render();
 }
 
+let analyzeModuleFilter = "";
+let analyzeMissedFilter = "";
 function renderAnalyze(){
-  const moduleRows = ANALYZE_MODULE_STATS.map(m=>`
+  const filteredModuleStats = analyzeModuleFilter.trim()
+    ? ANALYZE_MODULE_STATS.filter(m=> m.title.toLowerCase().includes(analyzeModuleFilter.trim().toLowerCase()))
+    : ANALYZE_MODULE_STATS;
+  const moduleRows = filteredModuleStats.map(m=>`
     <tr class="team-row-main" data-analyze-module="${m.id}" style="cursor:pointer;">
       <td>${escapeHtml(m.title)}</td>
       <td style="min-width:150px;"><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="flex:1;"><div style="width:${m.avgCompletion}%"></div></div><span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${m.avgCompletion}%</span></div></td>
@@ -3213,11 +3221,13 @@ function renderAnalyze(){
       <td style="text-align:center;color:var(--text-faint);">▸</td>
     </tr>`).join("");
 
-  const missedHtml = ANALYZE_MISSED_QUESTIONS.length ? ANALYZE_MISSED_QUESTIONS.map(q=>`
+  const filteredMissed = analyzeMissedFilter ? ANALYZE_MISSED_QUESTIONS.filter(q=> q.moduleId===analyzeMissedFilter) : ANALYZE_MISSED_QUESTIONS.slice(0, 10);
+  const missedHtml = filteredMissed.length ? filteredMissed.map(q=>`
     <div class="sub-card">
       <div class="sub-card-head"><span class="tag">${escapeHtml(q.moduleTitle)}</span><span style="font-family:var(--mono);font-size:11px;color:var(--red);">${q.missed} misses · ${q.missRate}% miss rate</span></div>
       <div style="font-size:14px;color:var(--text);">${escapeHtml(q.question)}</div>
-    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">Not enough quiz attempts yet to show trends.</p>`;
+    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">${analyzeMissedFilter ? "No missed questions for this module." : "Not enough quiz attempts yet to show trends."}</p>`;
+  const missedModuleOptions = ANALYZE_MODULE_STATS.map(m=>`<option value="${m.id}" ${analyzeMissedFilter===m.id?'selected':''}>${escapeHtml(m.title)}</option>`).join("");
 
   const deptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
       <button class="dept-tab ${currentActiveDepartment()==='TS'?'active':''}" data-analyze-dept="TS">Tech Support</button>
@@ -3240,10 +3250,17 @@ function renderAnalyze(){
     <div class="card" style="margin-top:16px;">
       <h2 style="margin-bottom:4px;">Module performance</h2>
       <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 14px;">Click a module to see everyone who's attempted it — up to 3 attempts each — and which questions they missed on any given attempt.</p>
-      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Module</th><th>Avg. completion</th><th>Mastered</th><th>Started</th><th></th></tr></thead><tbody>${moduleRows || `<tr><td colspan="5" style="color:var(--text-faint);font-size:13px;">No modules yet.</td></tr>`}</tbody></table></div>
+      <input type="text" id="analyze-module-search" data-no-enter-submit placeholder="Search modules…" value="${escapeHtml(analyzeModuleFilter)}" class="search-input" style="width:240px;margin-bottom:12px;">
+      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Module</th><th>Avg. completion</th><th>Mastered</th><th>Started</th><th></th></tr></thead><tbody>${moduleRows || `<tr><td colspan="5" style="color:var(--text-faint);font-size:13px;">${analyzeModuleFilter ? "No modules match that search." : "No modules yet."}</td></tr>`}</tbody></table></div>
     </div>
     <div class="card" style="margin-top:16px;">
-      <h2 style="margin-bottom:4px;">Most commonly missed questions</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px;">
+        <h2 style="margin:0;">Most commonly missed questions</h2>
+        <select id="analyze-missed-module-filter" style="width:auto;">
+          <option value="">Top 10 across every module</option>
+          ${missedModuleOptions}
+        </select>
+      </div>
       <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">Based on everyone's latest attempt only — a question someone got wrong but later corrected on a retake doesn't count here. A high miss rate usually means the content needs a second look, not the reps.</p>
       ${missedHtml}
     </div>
@@ -3253,6 +3270,8 @@ function renderAnalyze(){
     await openAnalyze();
   }));
   root.querySelectorAll("[data-analyze-module]").forEach(el=> el.addEventListener("click", ()=> openModuleAnalyzeDetail(el.getAttribute("data-analyze-module"))));
+  document.getElementById("analyze-module-search").addEventListener("input", (e)=>{ analyzeModuleFilter = e.target.value; render(); });
+  document.getElementById("analyze-missed-module-filter").addEventListener("change", (e)=>{ analyzeMissedFilter = e.target.value; render(); });
 }
 
 let moduleAnalyzeDetailModule = null;
@@ -3394,14 +3413,19 @@ async function openQuizAnalyze(){
     .filter(q=>q.missed>0)
     .map(q=>({ ...q, missRate: Math.round((q.missed/q.total)*100), quizTitle: (quizzes||[]).find(x=>x.id===q.quizId)?.title || "Unknown quiz" }))
     .sort((a,b)=> b.missed - a.missed)
-    .slice(0, 10);
+    .slice(0, 50);
 
   QUIZ_ANALYZE_TOTALS = { totalQuizzes: (quizzes||[]).length, totalPeople, avgCompletion, totalSubmissions: (attempts||[]).length };
   view = "quiz-analyze"; render();
 }
 
+let quizAnalyzeSearch = "";
+let quizAnalyzeMissedFilter = "";
 function renderQuizAnalyze(){
-  const quizRows = QUIZ_ANALYZE_ROWS.map(q=>{
+  const filteredQuizRows = quizAnalyzeSearch.trim()
+    ? QUIZ_ANALYZE_ROWS.filter(q=> q.title.toLowerCase().includes(quizAnalyzeSearch.trim().toLowerCase()))
+    : QUIZ_ANALYZE_ROWS;
+  const quizRows = filteredQuizRows.map(q=>{
     const pct = q.eligibleCount ? Math.round((q.submissions/q.eligibleCount)*100) : 0;
     return `
     <tr>
@@ -3410,11 +3434,13 @@ function renderQuizAnalyze(){
     </tr>`;
   }).join("");
 
-  const missedHtml = QUIZ_ANALYZE_MISSED.length ? QUIZ_ANALYZE_MISSED.map(q=>`
+  const filteredMissed = quizAnalyzeMissedFilter ? QUIZ_ANALYZE_MISSED.filter(q=> q.quizId===quizAnalyzeMissedFilter) : QUIZ_ANALYZE_MISSED.slice(0, 10);
+  const missedHtml = filteredMissed.length ? filteredMissed.map(q=>`
     <div class="sub-card">
       <div class="sub-card-head"><span class="tag">${escapeHtml(q.quizTitle)}</span><span style="font-family:var(--mono);font-size:11px;color:var(--red);">${q.missed} misses · ${q.missRate}% miss rate</span></div>
       <div style="font-size:14px;color:var(--text);">${escapeHtml(q.question)}</div>
-    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">Not enough quiz submissions yet to show trends.</p>`;
+    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">${quizAnalyzeMissedFilter ? "No missed questions for this quiz." : "Not enough quiz submissions yet to show trends."}</p>`;
+  const missedQuizOptions = QUIZ_ANALYZE_ROWS.map(q=>`<option value="${q.id}" ${quizAnalyzeMissedFilter===q.id?'selected':''}>${escapeHtml(q.title)}</option>`).join("");
 
   renderShell(`
     <div class="card">
@@ -3430,14 +3456,23 @@ function renderQuizAnalyze(){
     </div>
     <div class="card" style="margin-top:16px;">
       <h2 style="margin-bottom:14px;">Quiz completion</h2>
-      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Quiz</th><th>Completed</th></tr></thead><tbody>${quizRows || `<tr><td colspan="2" style="color:var(--text-faint);font-size:13px;">No quizzes sent yet.</td></tr>`}</tbody></table></div>
+      <input type="text" id="quiz-analyze-search" data-no-enter-submit placeholder="Search quizzes…" value="${escapeHtml(quizAnalyzeSearch)}" class="search-input" style="width:240px;margin-bottom:12px;">
+      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Quiz</th><th>Completed</th></tr></thead><tbody>${quizRows || `<tr><td colspan="2" style="color:var(--text-faint);font-size:13px;">${quizAnalyzeSearch ? "No quizzes match that search." : "No quizzes sent yet."}</td></tr>`}</tbody></table></div>
     </div>
     <div class="card" style="margin-top:16px;">
-      <h2 style="margin-bottom:4px;">Most commonly missed questions</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px;">
+        <h2 style="margin:0;">Most commonly missed questions</h2>
+        <select id="quiz-analyze-missed-filter" style="width:auto;">
+          <option value="">Top 10 across every quiz</option>
+          ${missedQuizOptions}
+        </select>
+      </div>
       <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">Across every submission, everyone.</p>
       ${missedHtml}
     </div>
   `);
+  document.getElementById("quiz-analyze-search").addEventListener("input", (e)=>{ quizAnalyzeSearch = e.target.value; render(); });
+  document.getElementById("quiz-analyze-missed-filter").addEventListener("change", (e)=>{ quizAnalyzeMissedFilter = e.target.value; render(); });
 }
 
 /* ============================================================
@@ -4979,35 +5014,7 @@ function openInteractivePicConfigFullscreen(ipId){
   overlay.id = "ip-config-overlay";
   overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;";
   document.body.appendChild(overlay);
-
-  let zoomLevel = 100;
-  // Pan state and its listeners live here, at the top level, attached exactly
-  // once for the life of this overlay — draw() reruns constantly (every box
-  // drawn, every zoom change) and rebuilds the DOM each time, so anything
-  // attached to window/document from inside draw() would pile up a fresh
-  // duplicate listener on every single one of those reruns instead of just
-  // being re-pointed at the fresh canvas/viewport elements.
-  let spaceHeld = false, panning = false, panStartX = 0, panStartY = 0, panScrollLeft = 0, panScrollTop = 0;
-  let currentCanvas = null, currentViewport = null;
-  const onKeyDown = (e)=>{ if(e.code==="Space" && !e.target.closest("input,textarea")){ spaceHeld = true; if(currentCanvas) currentCanvas.style.cursor = "grab"; } };
-  const onKeyUp = (e)=>{ if(e.code==="Space"){ spaceHeld = false; if(currentCanvas && !panning) currentCanvas.style.cursor = ""; } };
-  const onWindowMouseMove = (e)=>{
-    if(!panning || !currentViewport) return;
-    currentViewport.scrollLeft = panScrollLeft - (e.clientX - panStartX);
-    currentViewport.scrollTop = panScrollTop - (e.clientY - panStartY);
-  };
-  const onWindowMouseUp = ()=>{ if(panning){ panning = false; if(currentCanvas) currentCanvas.style.cursor = spaceHeld ? "grab" : ""; } };
-  document.addEventListener("keydown", onKeyDown);
-  document.addEventListener("keyup", onKeyUp);
-  window.addEventListener("mousemove", onWindowMouseMove);
-  window.addEventListener("mouseup", onWindowMouseUp);
-  function cleanupPanListeners(){
-    document.removeEventListener("keydown", onKeyDown);
-    document.removeEventListener("keyup", onKeyUp);
-    window.removeEventListener("mousemove", onWindowMouseMove);
-    window.removeEventListener("mouseup", onWindowMouseUp);
-  }
-  window.activeFullscreenCleanups.push(()=>{ cleanupPanListeners(); overlay.remove(); });
+  window.activeFullscreenCleanups.push(()=> overlay.remove());
 
   let saveTimer = null;
   function scheduleSave(){
@@ -5024,44 +5031,18 @@ function openInteractivePicConfigFullscreen(ipId){
     overlay.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:1200px;margin-bottom:14px;gap:12px;">
         <span style="color:var(--text-dim);font-family:var(--mono);font-size:12px;">INTERACTIVE PICTURE · ${ip.hotspots.length} hotspot${ip.hotspots.length===1?'':'s'} — drag to add one</span>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <button class="mini-btn" id="ip-zoom-out" title="Zoom out">−</button>
-          <span style="color:var(--text-faint);font-family:var(--mono);font-size:11.5px;min-width:38px;text-align:center;">${zoomLevel}%</span>
-          <button class="mini-btn" id="ip-zoom-in" title="Zoom in">+</button>
-          <button class="mini-btn" id="ip-zoom-reset" title="Reset zoom">Reset</button>
-          <button class="btn primary" id="ip-config-done">Done</button>
-        </div>
+        <button class="btn primary" id="ip-config-done">Done</button>
       </div>
-      <div class="ip-zoom-viewport" style="overflow:auto;width:min(94vw,1200px);max-height:80vh;border-radius:8px;">
-        <div class="sim-screen-canvas" data-ip-canvas style="width:${zoomLevel}%;min-width:100%;">
-          <img src="${ip.image}" style="width:100%;display:block;pointer-events:none;user-select:none;" draggable="false">
+      <div style="overflow:auto;max-width:94vw;max-height:80vh;border-radius:8px;">
+        <div class="sim-screen-canvas" data-ip-canvas style="position:relative;display:inline-block;">
+          <img src="${ip.image}" style="max-width:94vw;max-height:80vh;display:block;pointer-events:none;user-select:none;" draggable="false">
           <div class="sim-canvas-hint">✛ Drag to add a hotspot</div>
           ${boxesHtml}
         </div>
-      </div>
-      <p class="hint" style="margin-top:8px;">Scroll to zoom${zoomLevel>100 ? ' · hold Space and drag to pan around' : ''}.</p>`;
-    document.getElementById("ip-config-done").addEventListener("click", ()=>{ scheduleSave(); cleanupPanListeners(); overlay.remove(); if(view==="editor") renderEditor(); });
-    document.getElementById("ip-zoom-in").addEventListener("click", ()=>{ zoomLevel = Math.min(400, zoomLevel+25); draw(); });
-    document.getElementById("ip-zoom-out").addEventListener("click", ()=>{ zoomLevel = Math.max(100, zoomLevel-25); draw(); });
-    document.getElementById("ip-zoom-reset").addEventListener("click", ()=>{ zoomLevel = 100; draw(); });
-    const viewport = overlay.querySelector(".ip-zoom-viewport");
-    currentViewport = viewport;
-    viewport.addEventListener("wheel", (e)=>{
-      e.preventDefault();
-      zoomLevel = Math.min(400, Math.max(100, zoomLevel + (e.deltaY < 0 ? 25 : -25)));
-      draw();
-    }, { passive:false });
+      </div>`;
+    document.getElementById("ip-config-done").addEventListener("click", ()=>{ scheduleSave(); overlay.remove(); if(view==="editor") renderEditor(); });
     const canvas = overlay.querySelector("[data-ip-canvas]");
-    currentCanvas = canvas;
-    if(spaceHeld) canvas.style.cursor = "grab";
     canvas.addEventListener("mousedown", (e)=>{
-      if(spaceHeld){
-        panning = true; panStartX = e.clientX; panStartY = e.clientY;
-        panScrollLeft = viewport.scrollLeft; panScrollTop = viewport.scrollTop;
-        canvas.style.cursor = "grabbing";
-        e.preventDefault();
-        return;
-      }
       if(e.target.closest(".sim-zone")) return;
       const rect = canvas.getBoundingClientRect();
       const previewEl = document.createElement("div");
@@ -5101,26 +5082,7 @@ async function openInteractivePicViewer(ipId){
   overlay.id = "ip-viewer-overlay";
   overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f5;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;";
   document.body.appendChild(overlay);
-
-  let zoomLevel = 100;
-  // Same reasoning as the config tool: attach once, outside draw(), so
-  // repeated draw() calls (every hotspot click) don't pile up duplicate
-  // listeners on window.
-  let panning = false, panStartX = 0, panStartY = 0, panScrollLeft = 0, panScrollTop = 0;
-  let currentViewport = null, currentPanInner = null;
-  const onWindowMouseMove = (e)=>{
-    if(!panning || !currentViewport) return;
-    currentViewport.scrollLeft = panScrollLeft - (e.clientX - panStartX);
-    currentViewport.scrollTop = panScrollTop - (e.clientY - panStartY);
-  };
-  const onWindowMouseUp = ()=>{ panning = false; if(currentPanInner) currentPanInner.style.cursor = "grab"; };
-  window.addEventListener("mousemove", onWindowMouseMove);
-  window.addEventListener("mouseup", onWindowMouseUp);
-  function cleanupPanListeners(){
-    window.removeEventListener("mousemove", onWindowMouseMove);
-    window.removeEventListener("mouseup", onWindowMouseUp);
-  }
-  window.activeFullscreenCleanups.push(()=>{ cleanupPanListeners(); overlay.remove(); });
+  window.activeFullscreenCleanups.push(()=> overlay.remove());
 
   function draw(){
     const total = ip.hotspots.length;
@@ -5130,41 +5092,16 @@ async function openInteractivePicViewer(ipId){
     overlay.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:1300px;margin-bottom:14px;gap:12px;">
         <span style="color:${allDone?'var(--green)':'var(--text-dim)'};font-family:var(--mono);font-size:12px;">${done}/${total} read${allDone?' — all done!':''}</span>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <button class="mini-btn" id="ip-zoom-out" title="Zoom out">−</button>
-          <span style="color:var(--text-faint);font-family:var(--mono);font-size:11.5px;min-width:38px;text-align:center;">${zoomLevel}%</span>
-          <button class="mini-btn" id="ip-zoom-in" title="Zoom in">+</button>
-          <button class="mini-btn" id="ip-zoom-reset" title="Reset zoom">Reset</button>
-          <button class="btn ${allDone?'primary':''}" id="ip-viewer-close">${allDone?'Done ✓':'✕ Exit'}</button>
-        </div>
+        <button class="btn ${allDone?'primary':''}" id="ip-viewer-close">${allDone?'Done ✓':'✕ Exit'}</button>
       </div>
-      <div class="ip-zoom-viewport" style="overflow:auto;width:min(94vw,1300px);max-height:82vh;border-radius:8px;">
-        <div class="ip-pan-inner" style="position:relative;width:${zoomLevel}%;min-width:100%;cursor:${zoomLevel>100?'grab':''};">
-          <img src="${ip.image}" style="width:100%;display:block;user-select:none;border-radius:8px;pointer-events:none;" draggable="false">
+      <div style="overflow:auto;max-width:94vw;max-height:82vh;border-radius:8px;">
+        <div style="position:relative;display:inline-block;">
+          <img src="${ip.image}" style="max-width:94vw;max-height:82vh;display:block;user-select:none;border-radius:8px;pointer-events:none;" draggable="false">
           ${boxesHtml}
         </div>
       </div>
-      ${!allDone ? `<p style="color:var(--text-faint);font-size:12.5px;margin-top:10px;">Click every red box — it turns green once you've read it. All boxes must be green before you can move to the next lesson. Scroll to zoom${zoomLevel>100?', drag to pan':''}.</p>` : `<p class="hint" style="margin-top:8px;">Scroll to zoom${zoomLevel>100?', drag to pan':''}.</p>`}`;
-    document.getElementById("ip-viewer-close").addEventListener("click", ()=>{ cleanupPanListeners(); overlay.remove(); render(); });
-    document.getElementById("ip-zoom-in").addEventListener("click", ()=>{ zoomLevel = Math.min(400, zoomLevel+25); draw(); });
-    document.getElementById("ip-zoom-out").addEventListener("click", ()=>{ zoomLevel = Math.max(100, zoomLevel-25); draw(); });
-    document.getElementById("ip-zoom-reset").addEventListener("click", ()=>{ zoomLevel = 100; draw(); });
-    const viewport = overlay.querySelector(".ip-zoom-viewport");
-    currentViewport = viewport;
-    viewport.addEventListener("wheel", (e)=>{
-      e.preventDefault();
-      zoomLevel = Math.min(400, Math.max(100, zoomLevel + (e.deltaY < 0 ? 25 : -25)));
-      draw();
-    }, { passive:false });
-    const panInner = overlay.querySelector(".ip-pan-inner");
-    currentPanInner = panInner;
-    panInner.addEventListener("mousedown", (e)=>{
-      if(zoomLevel<=100 || e.target.closest(".ip-play-hotspot")) return;
-      panning = true; panStartX = e.clientX; panStartY = e.clientY;
-      panScrollLeft = viewport.scrollLeft; panScrollTop = viewport.scrollTop;
-      panInner.style.cursor = "grabbing";
-      e.preventDefault();
-    });
+      ${!allDone ? `<p style="color:var(--text-faint);font-size:12.5px;margin-top:10px;">Click every red box — it turns green once you've read it. All boxes must be green before you can move to the next lesson.</p>` : ''}`;
+    document.getElementById("ip-viewer-close").addEventListener("click", ()=>{ overlay.remove(); render(); });
     overlay.querySelectorAll("[data-ip-hotspot]").forEach(el=> el.addEventListener("click", ()=>{
       const hi = +el.getAttribute("data-ip-hotspot");
       const h = ip.hotspots[hi];
