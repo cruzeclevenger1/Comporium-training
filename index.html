@@ -402,7 +402,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r58";
+const BUILD_VERSION = "2026-07-27T00:00Z-r60";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -6714,6 +6714,7 @@ async function reorderNoteDrop(draggedId, targetId, pos){
 /* ============================================================
    ROUTER
    ============================================================ */
+
 function render(){
   if(view==="loading") root.innerHTML = `
     <div class="loading-screen">
