@@ -402,7 +402,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r65";
+const BUILD_VERSION = "2026-07-27T00:00Z-r66";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -4363,8 +4363,9 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
 
     if(isFinalScreen){
       overlay.innerHTML = `
-        <div style="display:flex;justify-content:flex-end;width:100%;max-width:1300px;margin-bottom:14px;">
-          <button class="btn" id="sim-play-fullscreen-close">✕ Exit fullscreen</button>
+        <div style="width:100%;max-width:1300px;margin-bottom:14px;">
+          <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 10px;">${escapeHtml(q.q)}</p>
+          <div style="display:flex;justify-content:flex-end;"><button class="btn" id="sim-play-fullscreen-close">✕ Exit fullscreen</button></div>
         </div>
         <div style="position:relative;display:inline-block;max-width:min(94vw,1300px);max-height:76vh;border-radius:12px;box-shadow:0 0 0 3px var(--green), 0 0 34px 6px #2ecc7166;">
           <img src="${screen.image}" style="max-width:min(94vw,1300px);max-height:76vh;display:block;user-select:none;border-radius:8px;" draggable="false">
@@ -4381,9 +4382,12 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
 
     const zonesHtml = (screen.zones||[]).map((z,zi)=>`<div class="sim-play-zone" data-sim-play-zone-fs="${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;cursor:pointer;"></div>`).join("");
     overlay.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:1300px;margin-bottom:14px;">
-        <span style="color:var(--text-faint);font-family:var(--mono);font-size:12px;">MISCLICKS: ${quizSimMisclicks[quizIdx]}/3</span>
-        <button class="btn" id="sim-play-fullscreen-close">✕ Exit fullscreen</button>
+      <div style="width:100%;max-width:1300px;margin-bottom:14px;">
+        <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 10px;">${escapeHtml(q.q)}</p>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:var(--text-faint);font-family:var(--mono);font-size:12px;">MISCLICKS: ${quizSimMisclicks[quizIdx]}/3</span>
+          <button class="btn" id="sim-play-fullscreen-close">✕ Exit fullscreen</button>
+        </div>
       </div>
       <div style="position:relative;display:inline-block;max-width:min(94vw,1300px);max-height:82vh;" id="sim-play-container">
         <img src="${screen.image}" style="max-width:min(94vw,1300px);max-height:82vh;display:block;user-select:none;border-radius:8px;" draggable="false">
