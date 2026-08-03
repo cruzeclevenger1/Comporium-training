@@ -133,7 +133,7 @@
   }
   html.theme-light body{ background:#F3F5FA; }
 
-  /* Programmer — true black terminal, phosphor green */ 
+  /* Programmer — true black terminal, phosphor green */
   html.theme-programmer{
     --bg:#000000; --panel:#000000; --stroke:#1f3d1f; --text:#3dff70; --text-dim:#2ee85c; --text-faint:#22b348;
     --green:#3dff70; --green-dim:#3dff7033; --amber:#ffcc00; --amber-dim:#ffcc0033; --red:#ff4444; --red-dim:#ff444433;
@@ -402,7 +402,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r63";
+const BUILD_VERSION = "2026-07-27T00:00Z-r65";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1512,15 +1512,19 @@ function renderLesson(){
 
 async function startQuiz(mode){
   const m = modById(currentModId);
+  const wouldBeTestRun = canEditContent() && editMode;
   // Already have this exact module's session live in memory (e.g. they went
   // to recheck a lesson and are now coming straight back) — just resume,
-  // don't touch anything.
-  if(mode !== "missed" && quizInProgressModId === currentModId && quizActiveIndices.length){
+  // don't touch anything. Skipped for test runs specifically: an editor
+  // actively testing content may have just changed the simulation's screens,
+  // and a stale in-memory session could point at a screen index that no
+  // longer exists — always regenerate fresh in that case instead.
+  if(mode !== "missed" && !wouldBeTestRun && quizInProgressModId === currentModId && quizActiveIndices.length){
     view = "quiz"; render();
     return;
   }
   await ensureQuizSimScreens(m);
-  quizIsTestRun = canEditContent() && editMode;
+  quizIsTestRun = wouldBeTestRun;
   quizTestRunResult = null;
   const priorAttempts = (progressMap[m.id] && progressMap[m.id].attempts) || 0;
   if(priorAttempts >= MAX_QUIZ_ATTEMPTS && !canEditContent()){ alert(`You've used all ${MAX_QUIZ_ATTEMPTS} attempts for this quiz.`); return; }
@@ -1605,7 +1609,12 @@ function renderQuiz(){
   let bodyHtml, nextLabel, nextDisabled;
   if(isSim){
     const screens = q.simScreens || [];
-    if(quizSimScreenIndex[quizIdx] === undefined) quizSimScreenIndex[quizIdx] = 0;
+    // Also handles a screen index that's out of bounds for the current
+    // screens array, not just an undefined one — a saved/resumed session
+    // could point at a screen that no longer exists if the content changed
+    // since it was saved, and that should recover gracefully rather than
+    // silently showing "not set up" for a question that actually is.
+    if(quizSimScreenIndex[quizIdx] === undefined || quizSimScreenIndex[quizIdx] >= screens.length) quizSimScreenIndex[quizIdx] = 0;
     const screen = screens[quizSimScreenIndex[quizIdx]];
     if(!screen || !screen.image){
       bodyHtml = `<p style="color:var(--text-faint);">This simulation hasn't been set up yet.</p>`;
@@ -4267,6 +4276,13 @@ function openSimZoneTargetModal(d, qi, si, zi, onSaved){
       ${isScreenGoal ? `<option value="" ${!zone.targetScreenId?'selected':''} disabled>— choose a screen —</option>` : `<option value="" ${!zone.targetScreenId?'selected':''}>Finish (completes the simulation)</option>`}
       ${options}
     </select></div>
+    <div class="field"><label>Which click activates this button?</label>
+      <select id="sim-zone-clicktype-select">
+        <option value="left" ${(zone.clickType||'left')==='left'?'selected':''}>Left click</option>
+        <option value="right" ${zone.clickType==='right'?'selected':''}>Right click</option>
+      </select>
+      <p class="hint">Using the other button on this area counts as a misclick — useful for teaching right-click menus specifically.</p>
+    </div>
     <div class="modal-actions"><button class="btn" id="sim-zone-cancel">Cancel</button><button class="btn primary" id="sim-zone-save">Save</button></div>
   `);
   document.getElementById("sim-zone-cancel").addEventListener("click", closeModal);
@@ -4274,6 +4290,7 @@ function openSimZoneTargetModal(d, qi, si, zi, onSaved){
     const val = document.getElementById("sim-zone-target-select").value;
     if(isScreenGoal && !val){ alert("Pick which screen this button leads to."); return; }
     zone.targetScreenId = val || null;
+    zone.clickType = document.getElementById("sim-zone-clicktype-select").value;
     closeModal();
     onSaved();
   });
@@ -4283,7 +4300,7 @@ function renderSimZonesHtml(screens, si, qi){
   const screen = screens[si];
   return (screen.zones||[]).map((z,zi)=>{
     const targetScreenIdx = z.targetScreenId ? screens.findIndex(s=>s.id===z.targetScreenId) : -1;
-    const targetLabel = targetScreenIdx>=0 ? `→ Screen ${targetScreenIdx+1}` : "→ Finish";
+    const targetLabel = (targetScreenIdx>=0 ? `→ Screen ${targetScreenIdx+1}` : "→ Finish") + (z.clickType==='right' ? ' · Right-click' : '');
     return `<div class="sim-zone" data-sim-zone="${qi}:${si}:${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;border:2px dashed var(--cyan);cursor:pointer;">
       <button class="sim-zone-del" data-sim-zone-del="${qi}:${si}:${zi}" style="position:absolute;top:-10px;right:-10px;width:18px;height:18px;border-radius:50%;background:#c0392bdd;color:#fff;font-size:11px;line-height:18px;text-align:center;cursor:pointer;border:none;">✕</button>
       <span style="position:absolute;bottom:2px;left:2px;background:#000000cc;color:var(--cyan);font-size:10px;padding:1px 4px;border-radius:3px;font-family:var(--mono);white-space:nowrap;">${escapeHtml(targetLabel)}</span>
@@ -4373,18 +4390,40 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
         ${zonesHtml}
       </div>`;
     document.getElementById("sim-play-fullscreen-close").addEventListener("click", ()=>{ overlay.remove(); render(); });
-    document.getElementById("sim-play-container").addEventListener("click", (e)=>{
-      if(e.target.closest(".sim-play-zone")) return; // handled by the zone's own listener below
+    const container = document.getElementById("sim-play-container");
+    const registerMisclick = (e)=>{
       showMisclickX(e.clientX, e.clientY);
       quizSimMisclicks[quizIdx]++;
       if(quizSimMisclicks[quizIdx] >= 3){ tooManyMisclicks(); }
+    };
+    // Right-click is repurposed here (some zones expect it), so the native
+    // context menu is always suppressed inside the simulation, not just on
+    // right-click zones specifically.
+    container.addEventListener("contextmenu", (e)=>{ e.preventDefault(); });
+    container.addEventListener("click", (e)=>{
+      if(e.target.closest(".sim-play-zone")) return; // handled by the zone's own listener below
+      registerMisclick(e);
     });
-    overlay.querySelectorAll("[data-sim-play-zone-fs]").forEach(el=> el.addEventListener("click", ()=>{
+    container.addEventListener("contextmenu", (e)=>{
+      if(e.target.closest(".sim-play-zone")) return; // handled by the zone's own listener below
+      registerMisclick(e);
+    });
+    overlay.querySelectorAll("[data-sim-play-zone-fs]").forEach(el=>{
       const zi = +el.getAttribute("data-sim-play-zone-fs");
-      if(!handleZoneClick(zi)) return;
-      scheduleQuizProgressSave();
-      if(quizAnswers[quizIdx] === "done"){ overlay.remove(); render(); } else { draw(); }
-    }));
+      const wantsRight = (screen.zones[zi].clickType||"left") === "right";
+      const activate = (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        if(!handleZoneClick(zi)) return;
+        scheduleQuizProgressSave();
+        if(quizAnswers[quizIdx] === "done"){ overlay.remove(); render(); } else { draw(); }
+      };
+      const wrongButton = (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        registerMisclick(e);
+      };
+      el.addEventListener("click", wantsRight ? wrongButton : activate);
+      el.addEventListener("contextmenu", wantsRight ? activate : wrongButton);
+    });
   }
   draw();
 }
@@ -5011,7 +5050,7 @@ document.addEventListener("mouseup", (e)=>{
   if(wPx < 10 || hPx < 10) return; // too small — treat as an accidental click, not a real zone
   const xPct = ((x1-rect.left)/rect.width)*100, yPct = ((y1-rect.top)/rect.height)*100;
   const wPct = (wPx/rect.width)*100, hPct = (hPx/rect.height)*100;
-  const zone = { x:Math.round(xPct*10)/10, y:Math.round(yPct*10)/10, w:Math.round(wPct*10)/10, h:Math.round(hPct*10)/10, targetScreenId:null };
+  const zone = { x:Math.round(xPct*10)/10, y:Math.round(yPct*10)/10, w:Math.round(wPct*10)/10, h:Math.round(hPct*10)/10, targetScreenId:null, clickType:"left" };
   const screen = dm.quiz[qi].simScreens[si];
   if(!screen.zones) screen.zones = [];
   screen.zones.push(zone);
