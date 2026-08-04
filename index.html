@@ -414,7 +414,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r74";
+const BUILD_VERSION = "2026-07-27T00:00Z-r75";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -4887,6 +4887,7 @@ function wireRichEditor(id){
           const lesson = draftModule.lessons[+lessonIdxMatch[1]];
           if(!lesson || !lesson.id){ alert("Save the lesson first, then add an interactive picture."); return; }
           const dataUrl = await compressImageFile(file);
+          if(!dataUrl) return; // compressImageFile already alerted the user about what went wrong
           const ipId = 'ip'+Date.now()+Math.random().toString(36).slice(2,8);
           const { error } = await supabase.from("interactive_pictures").insert({ id:ipId, lesson_id:lesson.id, image:dataUrl, hotspots:[] });
           if(error){ alert("Couldn't create interactive picture: " + error.message); return; }
@@ -4959,6 +4960,7 @@ function wireRichEditor(id){
   fileInput.addEventListener("change", async ()=>{
     const file = fileInput.files[0]; if(!file) return;
     const dataUrl = await compressImageFile(file);
+    if(!dataUrl) return; // compressImageFile already alerted the user about what went wrong
     await insertResizableImage(editorEl, dataUrl);
     attachImageResizeHandles(editorEl);
     fileInput.value = "";
@@ -4978,6 +4980,7 @@ function wireRichEditor(id){
           e.preventDefault();
           const file = item.getAsFile();
           const dataUrl = await compressImageFile(file);
+          if(!dataUrl) return; // compressImageFile already alerted the user about what went wrong
           await insertResizableImage(editorEl, dataUrl);
           attachImageResizeHandles(editorEl);
           return;
@@ -5349,6 +5352,115 @@ document.addEventListener("mouseup", (e)=>{
   const box = { id:'hs'+Date.now()+Math.random().toString(36).slice(2,7), x:Math.round(xPct*10)/10, y:Math.round(yPct*10)/10, w:Math.round(wPct*10)/10, h:Math.round(hPct*10)/10, title:"", body:"" };
   if(onBoxAdded) onBoxAdded(box);
 });
+
+// ============================================================
+// ONE-TIME MIGRATION — moves images that were embedded as base64
+// directly in database text/jsonb columns out to actual file
+// storage, replacing them with a short URL instead. Existing
+// content saved before compressImageFile() switched to uploading
+// still has these embedded, which is what was inflating the lessons
+// table alone to ~17MB fetched on every login. Safe to re-run —
+// anything already migrated (a real URL, not a data: URL) is
+// skipped automatically.
+// ============================================================
+async function migrateOneBase64Image(dataUrl){
+  try{
+    const blob = await (await fetch(dataUrl)).blob();
+    const ext = (blob.type.split("/")[1] || "png").split("+")[0];
+    const path = `img_${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`;
+    const { error } = await supabase.storage.from("lesson-images").upload(path, blob, { contentType: blob.type || "image/png" });
+    if(error) return null;
+    const { data } = supabase.storage.from("lesson-images").getPublicUrl(path);
+    return data.publicUrl;
+  }catch(e){ return null; }
+}
+async function migrateBase64InHtml(html){
+  if(!html || !html.includes("data:image")) return html; // fast path — nothing to do, most rows won't have any
+  const regex = /src="(data:image\/[a-zA-Z0-9.+-]+;base64,[^"]+)"/g;
+  const dataUrls = [...new Set([...html.matchAll(regex)].map(m=>m[1]))]; // de-duped — an image pasted twice shouldn't upload twice
+  let updated = html;
+  for(const dataUrl of dataUrls){
+    const url = await migrateOneBase64Image(dataUrl);
+    if(url) updated = updated.split(dataUrl).join(url); // split/join replaces every occurrence, not just the first
+  }
+  return updated;
+}
+async function runImageMigration(onProgress){
+  let migratedCount = 0, failedCount = 0;
+  const bump = (label)=>{ migratedCount++; onProgress(`${label} (${migratedCount} migrated so far)…`); };
+
+  const { data: lessons } = await supabase.from("lessons").select("id,body");
+  for(const l of (lessons||[])){
+    if(!l.body || !l.body.includes("data:image")) continue;
+    const updated = await migrateBase64InHtml(l.body);
+    if(updated !== l.body){
+      const { error } = await supabase.from("lessons").update({ body: updated }).eq("id", l.id);
+      if(error) failedCount++; else bump("Migrating lesson content");
+    }
+  }
+
+  const { data: refPages } = await supabase.from("reference_pages").select("id,body");
+  for(const r of (refPages||[])){
+    if(!r.body || !r.body.includes("data:image")) continue;
+    const updated = await migrateBase64InHtml(r.body);
+    if(updated !== r.body){
+      const { error } = await supabase.from("reference_pages").update({ body: updated }).eq("id", r.id);
+      if(error) failedCount++; else bump("Migrating reference guide content");
+    }
+  }
+
+  const { data: ipics } = await supabase.from("interactive_pictures").select("id,image");
+  for(const ip of (ipics||[])){
+    if(!ip.image || !ip.image.startsWith("data:image")) continue;
+    const url = await migrateOneBase64Image(ip.image);
+    if(!url){ failedCount++; continue; }
+    const { error } = await supabase.from("interactive_pictures").update({ image: url }).eq("id", ip.id);
+    if(error){ failedCount++; continue; }
+    if(INTERACTIVE_PICTURES[ip.id]) INTERACTIVE_PICTURES[ip.id].image = url;
+    bump("Migrating interactive pictures");
+  }
+
+  const { data: simQuestions } = await supabase.from("quiz_questions").select("id,sim_screens").eq("question_type","simulation");
+  for(const q of (simQuestions||[])){
+    if(!q.sim_screens || !q.sim_screens.length) continue;
+    let changed = false;
+    for(const scr of q.sim_screens){
+      if(scr.image && scr.image.startsWith("data:image")){
+        const url = await migrateOneBase64Image(scr.image);
+        if(url){ scr.image = url; changed = true; } else failedCount++;
+      }
+    }
+    if(changed){
+      const { error } = await supabase.from("quiz_questions").update({ sim_screens: q.sim_screens }).eq("id", q.id);
+      if(error) failedCount++; else bump("Migrating simulation screenshots");
+    }
+  }
+
+  return { migratedCount, failedCount };
+}
+function openImageMigrationModal(){
+  openModal(`
+    <h3>Move embedded images to storage</h3>
+    <p class="sub">Scans lessons, the reference guide, interactive pictures, and simulation screenshots for images still saved as embedded data rather than uploaded files, and moves them to storage. This is what's currently making the lessons data alone ~17MB on every login. Safe to run more than once — anything already migrated is skipped.</p>
+    <p class="sub" style="color:var(--amber);">Note: personal notes aren't included — they're private per person, so each person would need to migrate their own. Ask me if you'd like that added separately.</p>
+    <div class="modal-actions"><button class="btn" id="img-migrate-cancel">Cancel</button><button class="btn primary" id="img-migrate-go">Start</button></div>
+  `, false, true);
+  document.getElementById("img-migrate-cancel").addEventListener("click", closeModal);
+  document.getElementById("img-migrate-go").addEventListener("click", async ()=>{
+    document.querySelector("#app-modal-overlay .modal").innerHTML = `
+      <h3>Migrating…</h3>
+      <p class="sub" id="img-migrate-status">Starting…</p>
+    `;
+    const statusEl = document.getElementById("img-migrate-status");
+    const { migratedCount, failedCount } = await runImageMigration((label)=>{ if(statusEl) statusEl.textContent = label; });
+    document.querySelector("#app-modal-overlay .modal").innerHTML = `
+      <h3>${migratedCount ? "Done" : "Nothing to migrate"}</h3>
+      <p class="sub">${migratedCount ? `Moved ${migratedCount} item${migratedCount===1?'':'s'} to storage.` : "No embedded images were found — everything's already migrated, or there was nothing to move."}${failedCount ? ` ${failedCount} item${failedCount===1?'':'s'} failed and were left as-is — safe to run again to retry just those.` : ""}</p>
+      <div class="modal-actions"><button class="btn primary" id="img-migrate-done">Done</button></div>
+    `;
+    document.getElementById("img-migrate-done").addEventListener("click", async ()=>{ closeModal(); await loadEverything(); if(view==="editor") renderEditor(); else render(); });
+  });
+}
 
 function openHotspotEditModal(ip, hi, onSaved){
   const h = ip.hotspots[hi];
@@ -5867,14 +5979,23 @@ function compressImageFile(file, maxDim){
   // where you need it sharpest). PNG is lossless, ideal for UI/text screenshots.
   // Also raised the max dimension substantially so real screenshots aren't
   // downscaled at all unless they're unusually large.
+  //
+  // Uploads to Supabase Storage and returns a URL, rather than returning the
+  // image itself as a base64 data URL to be embedded directly in whatever
+  // database column it ends up in. Base64 embedding was inflating the
+  // lessons table alone to ~17MB fetched on every single login — every
+  // image in every lesson downloaded again by everyone, every time, since
+  // it was baked into the same text column as the lesson content itself. A
+  // short URL in that column instead means the actual image bytes only
+  // transfer when that specific image is actually rendered.
   maxDim = maxDim || 1800;
   return new Promise((resolve, reject)=>{
     const reader = new FileReader();
-    reader.onerror = reject;
+    reader.onerror = ()=> resolve(null);
     reader.onload = (e)=>{
       const img = new Image();
-      img.onerror = reject;
-      img.onload = ()=>{
+      img.onerror = ()=> resolve(null);
+      img.onload = async ()=>{
         let w = img.width, h = img.height;
         if(w > h && w > maxDim){ h = Math.round(h*maxDim/w); w = maxDim; }
         else if(h >= w && h > maxDim){ w = Math.round(w*maxDim/h); h = maxDim; }
@@ -5884,7 +6005,14 @@ function compressImageFile(file, maxDim){
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
         ctx.drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/png"));
+        canvas.toBlob(async (blob)=>{
+          if(!blob){ alert("Couldn't process that image."); resolve(null); return; }
+          const path = `img_${Date.now()}_${Math.random().toString(36).slice(2,8)}.png`;
+          const { error } = await supabase.storage.from("lesson-images").upload(path, blob, { contentType:"image/png" });
+          if(error){ alert("Couldn't upload image: " + error.message); resolve(null); return; }
+          const { data } = supabase.storage.from("lesson-images").getPublicUrl(path);
+          resolve(data.publicUrl);
+        }, "image/png");
       };
       img.src = e.target.result;
     };
@@ -6167,6 +6295,7 @@ function wireEditorEvents(){
     const file = el.files[0]; if(!file) return;
     const [qi,si]=el.dataset.simUpload.split(":").map(Number);
     const dataUrl = await compressImageFile(file);
+    if(!dataUrl) return; // compressImageFile already alerted the user — don't overwrite any existing screenshot with a failed upload
     d.quiz[qi].simScreens[si].image = dataUrl;
     scheduleQuizAutosave(qi); renderEditor();
   }));
@@ -6510,6 +6639,13 @@ function renderSettings(){
         })()}
       </div>
 
+      ${(isAdmin() && !guestMode) ? `
+      <div class="editor-section">
+        <div class="editor-section-head"><h3>Move embedded images to storage</h3></div>
+        <p style="color:var(--text-dim);font-size:13px;margin:0 0 12px;">Older lessons, reference pages, interactive pictures, and simulation screenshots may still have images saved as embedded data rather than uploaded files — this is what makes the lessons data alone roughly 17MB on every login. Run this once to move them to storage instead. Safe to run more than once.</p>
+        <button class="btn" id="open-img-migrate">Move embedded images to storage</button>
+      </div>` : ""}
+
       ${(!isAdmin() && !guestMode) ? `
       <div class="editor-section">
         <div class="editor-section-head"><h3>Admin access</h3></div>
@@ -6525,6 +6661,8 @@ function renderSettings(){
   document.getElementById("back-dash-settings").addEventListener("click", ()=>{ view="home"; render(); });
 
   const reqAdminBtn = document.getElementById("request-admin-btn");
+  const imgMigrateBtn = document.getElementById("open-img-migrate");
+  if(imgMigrateBtn) imgMigrateBtn.addEventListener("click", openImageMigrationModal);
   if(reqAdminBtn) reqAdminBtn.addEventListener("click", async ()=>{
     const status = document.getElementById("admin-req-status");
     reqAdminBtn.disabled = true;
