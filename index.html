@@ -414,7 +414,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r71";
+const BUILD_VERSION = "2026-07-27T00:00Z-r73";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5298,13 +5298,22 @@ let scheduleQuizAutosaveGlobal = ()=>{}; // reassigned by wireEditorEvents each 
 let _ipBoxDrawing = null;
 document.addEventListener("mousemove", (e)=>{
   if(!_ipBoxDrawing) return;
-  const { rect, startX, startY, previewEl } = _ipBoxDrawing;
+  const { rect, startX, startY, previewEl, scale } = _ipBoxDrawing;
+  const s = scale || 1;
   const x1 = Math.min(startX, e.clientX), x2 = Math.max(startX, e.clientX);
   const y1 = Math.min(startY, e.clientY), y2 = Math.max(startY, e.clientY);
-  previewEl.style.left = (x1 - rect.left) + "px";
-  previewEl.style.top = (y1 - rect.top) + "px";
-  previewEl.style.width = (x2-x1) + "px";
-  previewEl.style.height = (y2-y1) + "px";
+  // previewEl lives inside the zoomable canvas, which now carries a CSS
+  // transform (scale) — its own left/top/width/height are interpreted in
+  // that parent's local, unscaled coordinate space, then visually scaled
+  // up by the transform when rendered. Dividing by the current scale here
+  // converts the viewport-pixel delta into that local space, so the
+  // preview box actually appears at the size/position it should — without
+  // this, it renders at the wrong size (invisible or huge) whenever
+  // zoomed in at all, exactly when precise placement matters most.
+  previewEl.style.left = ((x1 - rect.left) / s) + "px";
+  previewEl.style.top = ((y1 - rect.top) / s) + "px";
+  previewEl.style.width = ((x2-x1) / s) + "px";
+  previewEl.style.height = ((y2-y1) / s) + "px";
 });
 document.addEventListener("mouseup", (e)=>{
   if(!_ipBoxDrawing) return;
@@ -5378,6 +5387,13 @@ function openInteractivePicConfigFullscreen(ipId){
   const onKeyUp = (e)=>{ if(e.code==="Space"){ spaceHeld = false; if(currentCanvas && !panning) currentCanvas.style.cursor = ""; } };
   const onWindowMouseMove = (e)=>{
     if(!panning) return;
+    // e.buttons===0 means no mouse button is actually pressed right now —
+    // this catches the case where mouseup fired outside the browser window
+    // entirely (dragged off the edge of the screen and released there),
+    // which the browser never reports back to the page at all. Without
+    // this check, panning state gets stuck "on" indefinitely since the
+    // mouseup listener below would simply never run.
+    if(e.buttons === 0){ panning = false; if(currentCanvas) currentCanvas.style.cursor = spaceHeld ? "grab" : ""; return; }
     const nx = e.clientX - startX, ny = e.clientY - startY;
     if(Math.abs(nx-panX) > 3 || Math.abs(ny-panY) > 3) panMoved = true;
     if(!panMoved) return;
@@ -5438,7 +5454,7 @@ function openInteractivePicConfigFullscreen(ipId){
       const previewEl = document.createElement("div");
       previewEl.style.cssText = "position:absolute;border:2px solid var(--amber);background:#f5a62333;pointer-events:none;";
       currentCanvas.appendChild(previewEl);
-      _ipBoxDrawing = { rect, startX:e.clientX, startY:e.clientY, previewEl, onBoxAdded:(box)=>{
+      _ipBoxDrawing = { rect, startX:e.clientX, startY:e.clientY, previewEl, scale, onBoxAdded:(box)=>{
         ip.hotspots.push(box);
         scheduleSave();
         draw();
@@ -5502,6 +5518,10 @@ async function openInteractivePicViewer(ipId){
   }
   function onWindowMouseMove(e){
     if(!dragging) return;
+    // Same reasoning as the config tool's version — catches a mouseup that
+    // happened outside the browser window entirely, which never reaches
+    // this page at all and would otherwise leave panning stuck "on."
+    if(e.buttons === 0){ dragging = false; if(currentViewport) currentViewport.style.cursor = scale > 1 ? "grab" : ""; return; }
     const nx = e.clientX - startX, ny = e.clientY - startY;
     if(Math.abs(nx-panX) > 3 || Math.abs(ny-panY) > 3) dragMoved = true;
     if(!dragMoved) return;
