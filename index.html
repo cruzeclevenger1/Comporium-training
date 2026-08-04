@@ -414,7 +414,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r73";
+const BUILD_VERSION = "2026-07-27T00:00Z-r74";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -677,10 +677,22 @@ function canEdit(){ return canEditContent() && editMode; }
    ============================================================ */
 async function loadEverything(){
   if(guestMode) return;
-  const [modsRes, lessonsRes, quizRes] = await Promise.all([
+  // All eight of these are independent of each other — none reads a result
+  // from any of the others, only session.user.id, which is already
+  // available before this function even runs. Previously split into two
+  // sequential Promise.all batches even though the second batch never
+  // actually needed anything from the first; combining them into one cuts
+  // the wait down to the single slowest query instead of the sum of two
+  // separate round-trip groups.
+  const [modsRes, lessonsRes, quizRes, progRes, dismissalsRes, ipicsRes, ipProgressRes, quizInProgressRes] = await Promise.all([
     supabase.from("modules").select("*").order("sort_order"),
     supabase.from("lessons").select("*").order("sort_order"),
-    supabase.from("quiz_questions").select("id,module_id,sort_order,question,options,correct_index,explanation,question_type,end_goal,final_screen_id").order("sort_order")
+    supabase.from("quiz_questions").select("id,module_id,sort_order,question,options,correct_index,explanation,question_type,end_goal,final_screen_id").order("sort_order"),
+    supabase.from("progress").select("*").eq("user_id", session.user.id),
+    supabase.from("module_popup_dismissals").select("module_id").eq("user_id", session.user.id),
+    supabase.from("interactive_pictures").select("id,lesson_id,hotspots"),
+    supabase.from("interactive_picture_progress").select("*").eq("user_id", session.user.id),
+    supabase.from("quiz_in_progress").select("module_id").eq("user_id", session.user.id)
   ]);
   const mods = modsRes.data, lessons = lessonsRes.data, quiz = quizRes.data;
   MODULES = (mods||[]).map(m=>({
@@ -693,14 +705,6 @@ async function loadEverything(){
     // (starting that quiz, or opening that module in the editor) — see ensureQuizSimScreens().
     quiz:(quiz||[]).filter(q=>q.module_id===m.id).map(q=>({id:q.id,q:q.question,opts:q.options,correct:q.correct_index,explain:q.explanation,type:q.question_type||'multiple_choice',simScreens:null,endGoal:q.end_goal||'button',finalScreenId:q.final_screen_id||null}))
   }));
-
-  const [progRes, dismissalsRes, ipicsRes, ipProgressRes, quizInProgressRes] = await Promise.all([
-    supabase.from("progress").select("*").eq("user_id", session.user.id),
-    supabase.from("module_popup_dismissals").select("module_id").eq("user_id", session.user.id),
-    supabase.from("interactive_pictures").select("id,lesson_id,hotspots"),
-    supabase.from("interactive_picture_progress").select("*").eq("user_id", session.user.id),
-    supabase.from("quiz_in_progress").select("module_id").eq("user_id", session.user.id)
-  ]);
 
   modulesWithResumableQuiz = new Set((quizInProgressRes.data||[]).map(r=>r.module_id));
 
@@ -3039,11 +3043,13 @@ let expandedQuizQuestionIdx = null;
 
 async function loadStandaloneQuizzes(){
   if(guestMode){ QUIZZES = []; return; }
-  const { data: quizzes } = await supabase.from("standalone_quizzes").select("*").order("created_at", { ascending:false });
-  const { data: questions } = await supabase.from("standalone_quiz_questions").select("*").order("sort_order");
-  const { data: myAttempts } = await supabase.from("standalone_quiz_attempts").select("*").eq("user_id", session.user.id);
-  const { data: myTeamMemberships } = await supabase.from("team_members").select("team_id").eq("user_id", session.user.id);
-  const { data: myRecipientRows } = await supabase.from("standalone_quiz_recipients").select("quiz_id").eq("user_id", session.user.id);
+  const [{ data: quizzes }, { data: questions }, { data: myAttempts }, { data: myTeamMemberships }, { data: myRecipientRows }] = await Promise.all([
+    supabase.from("standalone_quizzes").select("*").order("created_at", { ascending:false }),
+    supabase.from("standalone_quiz_questions").select("*").order("sort_order"),
+    supabase.from("standalone_quiz_attempts").select("*").eq("user_id", session.user.id),
+    supabase.from("team_members").select("team_id").eq("user_id", session.user.id),
+    supabase.from("standalone_quiz_recipients").select("quiz_id").eq("user_id", session.user.id)
+  ]);
   const myTeamIds = new Set((myTeamMemberships||[]).map(m=>m.team_id));
   const myRecipientQuizIds = new Set((myRecipientRows||[]).map(r=>r.quiz_id));
 
@@ -3559,23 +3565,37 @@ function renderQuizAnalyze(){
 async function loadAllNotifications(){
   if(guestMode) return;
   const joinCutoff = (profile && profile.created_at) ? profile.created_at : "1970-01-01T00:00:00Z";
-  const { data: announcements, error: announceErr } = await supabase.from("messages").select("*").eq("audience","all").gte("created_at", joinCutoff).order("created_at",{ascending:false}).limit(15);
+  const admin = isAdmin();
+  // None of these seven depend on each other's results — only followUps
+  // below does (it needs rootIds, computed from these). Previously run one
+  // at a time, up to 8 round trips in a row; now a single batch, cutting
+  // the wait to the slowest individual query plus one extra round trip for
+  // followUps, instead of the sum of all of them.
+  const [
+    { data: announcements, error: announceErr },
+    { data: dismissals },
+    { data: myRoots },
+    { data: directSent },
+    { data: directReceived },
+    ucRes,
+    mcRes
+  ] = await Promise.all([
+    supabase.from("messages").select("*").eq("audience","all").gte("created_at", joinCutoff).order("created_at",{ascending:false}).limit(15),
+    supabase.from("announcement_dismissals").select("message_id").eq("user_id", session.user.id),
+    supabase.from("messages").select("*").eq("audience","admins").is("thread_id", null).eq("sender_id", session.user.id).order("created_at",{ascending:false}),
+    supabase.from("messages").select("*").eq("audience","user").is("thread_id", null).eq("sender_id", session.user.id).order("created_at",{ascending:false}),
+    supabase.from("messages").select("*").eq("audience","user").is("thread_id", null).eq("recipient_id", session.user.id).order("created_at",{ascending:false}),
+    admin ? supabase.from("messages").select("*").eq("audience","admins").is("thread_id", null).is("claimed_by", null).order("created_at",{ascending:false}) : Promise.resolve({ data: null }),
+    admin ? supabase.from("messages").select("*").eq("audience","admins").is("thread_id", null).eq("claimed_by", session.user.id).order("created_at",{ascending:false}) : Promise.resolve({ data: null })
+  ]);
   if(announceErr) console.error("Failed to load announcements:", announceErr);
-  const { data: dismissals } = await supabase.from("announcement_dismissals").select("message_id").eq("user_id", session.user.id);
   const dismissedIds = new Set((dismissals||[]).map(d=>d.message_id));
   NOTIF_ANNOUNCEMENTS = (announcements||[]).filter(a=> !dismissedIds.has(a.id));
 
-  const { data: myRoots } = await supabase.from("messages").select("*").eq("audience","admins").is("thread_id", null).eq("sender_id", session.user.id).order("created_at",{ascending:false});
-
-  const { data: directSent } = await supabase.from("messages").select("*").eq("audience","user").is("thread_id", null).eq("sender_id", session.user.id).order("created_at",{ascending:false});
-  const { data: directReceived } = await supabase.from("messages").select("*").eq("audience","user").is("thread_id", null).eq("recipient_id", session.user.id).order("created_at",{ascending:false});
-
   let claimedRoots = [];
-  if(isAdmin()){
-    const { data: uc } = await supabase.from("messages").select("*").eq("audience","admins").is("thread_id", null).is("claimed_by", null).order("created_at",{ascending:false});
-    NOTIF_UNCLAIMED = (uc||[]).filter(m=> !m.department || canAccessDepartment(m.department));
-    const { data: mc } = await supabase.from("messages").select("*").eq("audience","admins").is("thread_id", null).eq("claimed_by", session.user.id).order("created_at",{ascending:false});
-    claimedRoots = (mc||[]).filter(m=> !m.department || canAccessDepartment(m.department));
+  if(admin){
+    NOTIF_UNCLAIMED = (ucRes.data||[]).filter(m=> !m.department || canAccessDepartment(m.department));
+    claimedRoots = (mcRes.data||[]).filter(m=> !m.department || canAccessDepartment(m.department));
   } else {
     NOTIF_UNCLAIMED = [];
   }
