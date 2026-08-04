@@ -299,6 +299,14 @@
   .rte-img-wrap[data-align="right"]{ margin:8px 0 8px auto; }
   .rte-body a, .body a, .chat-bubble-body a{ color:var(--cyan); text-decoration:underline; }
   .rte-body hr, .body hr, .chat-bubble-body hr{ border:none; border-top:1px solid var(--text-dim); width:100%; margin:18px 0; }
+  .rte-table, .body .rte-table, .chat-bubble-body .rte-table{ border-collapse:collapse; width:100%; margin:14px 0; }
+  .rte-table td{ border:1px solid var(--stroke); padding:8px 10px; min-width:60px; vertical-align:top; }
+  .rte-table tr:first-child td{ background:var(--input-bg); font-weight:600; }
+  .rte-table-toolbar{ display:flex; gap:4px; flex-wrap:wrap; align-items:center; padding:5px 6px; margin-top:10px; border:1px solid var(--stroke); border-radius:8px 8px 0 0; border-bottom:none; background:var(--input-bg); user-select:none; }
+  .rte-table-toolbar button{ font-family:var(--sans); font-size:11.5px; padding:5px 8px; border-radius:6px; border:1px solid var(--stroke); background:var(--panel); color:var(--text-dim); cursor:pointer; white-space:nowrap; }
+  .rte-table-toolbar button:hover{ color:var(--text); border-color:var(--cyan); }
+  .rte-table-toolbar button[data-t="del-table"]{ color:var(--red); }
+  .rte-table-toolbar .rte-table-toolbar-sep{ width:1px; align-self:stretch; background:var(--stroke); margin:0 2px; }
   /* Content saved with an inline text color — from the color tool, or from
      content pasted in from elsewhere — locks that exact color in, which
      overrides theme switching entirely since inline styles always win over
@@ -402,7 +410,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r66";
+const BUILD_VERSION = "2026-07-27T00:00Z-r68";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -3893,7 +3901,7 @@ function renderChat(){
 
 async function sendThreadMessage(rootId){
   const editorEl = document.getElementById(`thread-rte-${rootId}`);
-  const body = editorEl.innerHTML.trim();
+  const body = getCleanEditorHtml(editorEl).trim();
   if(!body || body === "<br>") return;
   const root = NOTIF_UNCLAIMED.find(m=>m.id===rootId) || (NOTIF_THREADS.find(t=>t.root.id===rootId)||{}).root;
   if(!root) return;
@@ -4364,7 +4372,7 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
     if(isFinalScreen){
       overlay.innerHTML = `
         <div style="width:100%;max-width:1300px;margin-bottom:14px;">
-          <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 10px;">${escapeHtml(q.q)}</p>
+          <h2 style="color:var(--text);font-size:20px;font-weight:700;margin:0 0 12px;">${escapeHtml(q.q)}</h2>
           <div style="display:flex;justify-content:flex-end;"><button class="btn" id="sim-play-fullscreen-close">✕ Exit fullscreen</button></div>
         </div>
         <div style="position:relative;display:inline-block;max-width:min(94vw,1300px);max-height:76vh;border-radius:12px;box-shadow:0 0 0 3px var(--green), 0 0 34px 6px #2ecc7166;">
@@ -4383,7 +4391,7 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
     const zonesHtml = (screen.zones||[]).map((z,zi)=>`<div class="sim-play-zone" data-sim-play-zone-fs="${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;cursor:pointer;"></div>`).join("");
     overlay.innerHTML = `
       <div style="width:100%;max-width:1300px;margin-bottom:14px;">
-        <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 10px;">${escapeHtml(q.q)}</p>
+        <h2 style="color:var(--text);font-size:20px;font-weight:700;margin:0 0 12px;">${escapeHtml(q.q)}</h2>
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <span style="color:var(--text-faint);font-family:var(--mono);font-size:12px;">MISCLICKS: ${quizSimMisclicks[quizIdx]}/3</span>
           <button class="btn" id="sim-play-fullscreen-close">✕ Exit fullscreen</button>
@@ -4585,6 +4593,37 @@ function promptModal(title, placeholder, defaultValue){
   });
 }
 
+function promptTableSizeModal(){
+  return new Promise((resolve)=>{
+    openModal(`
+      <h3>Insert table</h3>
+      <div class="field"><label>Rows</label><input type="number" id="table-rows-input" value="3" min="1" max="30"></div>
+      <div class="field"><label>Columns</label><input type="number" id="table-cols-input" value="3" min="1" max="12"></div>
+      <div class="modal-actions"><button class="btn" id="table-size-cancel">Cancel</button><button class="btn primary" id="table-size-ok">Insert</button></div>
+    `);
+    let settled = false;
+    const finish = (val)=>{ if(settled) return; settled = true; closeModal(); resolve(val); };
+    document.getElementById("table-size-cancel").addEventListener("click", ()=> finish(null));
+    document.getElementById("table-size-ok").addEventListener("click", ()=>{
+      const rows = Math.max(1, Math.min(30, parseInt(document.getElementById("table-rows-input").value) || 3));
+      const cols = Math.max(1, Math.min(12, parseInt(document.getElementById("table-cols-input").value) || 3));
+      finish({ rows, cols });
+    });
+    document.getElementById("app-modal-overlay").addEventListener("mousedown", (e)=>{
+      if(e.target.id === "app-modal-overlay") finish(null);
+    });
+  });
+}
+function buildTableHtml(rows, cols){
+  // <br> in each empty cell — some browsers won't let the cursor land in a
+  // genuinely empty <td>, which makes an otherwise-fine table feel broken
+  // to click into. The trailing empty paragraph guarantees there's always
+  // somewhere to keep typing below the table, rather than the cursor
+  // getting stuck with no way out if the table lands at the very end.
+  const rowHtml = ()=> `<tr>${Array.from({length:cols}).map(()=>'<td><br></td>').join('')}</tr>`;
+  return `<table class="rte-table">${Array.from({length:rows}).map(rowHtml).join('')}</table><p><br></p>`;
+}
+
 /* ============================================================
    ANONYMOUS FEEDBACK
    ============================================================ */
@@ -4733,6 +4772,7 @@ function richEditorHtml(id, initialHtml){
       <button type="button" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
       <button type="button" data-cmd="blockquote" title="Quote block">❝</button>
       <button type="button" data-cmd="hr" title="Horizontal line">―</button>
+      <button type="button" data-cmd="table" title="Insert table">⊞ Table</button>
       <div class="rte-sep"></div>
       <button type="button" data-cmd="link" title="Insert link">🔗</button>
       <button type="button" data-cmd="unlink" title="Remove link">Unlink</button>
@@ -4835,6 +4875,16 @@ function wireRichEditor(id){
         return;
       }
       if(cmd === "hr"){ document.execCommand("insertHTML", false, "<hr>"); return; }
+      if(cmd === "table"){
+        saveCurrentRange();
+        const size = await promptTableSizeModal();
+        if(size){
+          restoreRange(); editorEl.focus();
+          document.execCommand("insertHTML", false, buildTableHtml(size.rows, size.cols));
+          editorEl.dispatchEvent(new Event("input", { bubbles:true }));
+        }
+        return;
+      }
       if(cmd === "clearFormat"){ clearFormatting(editorEl); return; }
       if(cmd === "link"){
         saveCurrentRange();
@@ -4916,7 +4966,103 @@ function wireRichEditor(id){
     setTimeout(()=>{ normalizePastedImages(editorEl); attachImageResizeHandles(editorEl); }, 0);
     setTimeout(()=>{ normalizePastedImages(editorEl); attachImageResizeHandles(editorEl); }, 200);
   });
+  attachTableControls(editorEl);
   attachImageResizeHandles(editorEl);
+}
+
+// A small persistent toolbar appears directly above whichever table the
+// cursor is currently in, rather than a floating tooltip that has to track
+// scroll position — simpler and more robust inside a hand-rolled
+// contenteditable editor. Operates directly on the DOM (this isn't backed
+// by execCommand, since there's no native table-editing command), then
+// dispatches a synthetic input event afterward so the existing debounced
+// autosave picks up the change exactly like any other edit would.
+function attachTableControls(editorEl){
+  let toolbarEl = null;
+  let activeCell = null;
+
+  function colIndexOf(cell){ return Array.from(cell.parentNode.children).indexOf(cell); }
+  function emptyCellHtml(){ return "<td><br></td>"; }
+
+  function ensureToolbar(){
+    if(toolbarEl) return toolbarEl;
+    toolbarEl = document.createElement("div");
+    toolbarEl.className = "rte-table-toolbar";
+    toolbarEl.setAttribute("contenteditable", "false");
+    toolbarEl.innerHTML = `
+      <button type="button" data-t="row-above" title="Insert row above">+Row ↑</button>
+      <button type="button" data-t="row-below" title="Insert row below">+Row ↓</button>
+      <button type="button" data-t="col-left" title="Insert column left">+Col ←</button>
+      <button type="button" data-t="col-right" title="Insert column right">+Col →</button>
+      <span class="rte-table-toolbar-sep"></span>
+      <button type="button" data-t="del-row" title="Delete this row">−Row</button>
+      <button type="button" data-t="del-col" title="Delete this column">−Col</button>
+      <span class="rte-table-toolbar-sep"></span>
+      <button type="button" data-t="del-table" title="Delete table">✕ Table</button>
+    `;
+    toolbarEl.querySelectorAll("button[data-t]").forEach(btn=>{
+      btn.addEventListener("mousedown", (e)=> e.preventDefault()); // don't steal focus/selection away from the cell
+      btn.addEventListener("click", ()=>{ if(activeCell && activeCell.isConnected) runTableAction(btn.getAttribute("data-t")); });
+    });
+    return toolbarEl;
+  }
+
+  function hideToolbar(){
+    if(toolbarEl) toolbarEl.remove();
+    activeCell = null;
+  }
+
+  function runTableAction(action){
+    const table = activeCell.closest(".rte-table");
+    if(!table){ hideToolbar(); return; }
+    const row = activeCell.closest("tr");
+    const colIdx = colIndexOf(activeCell);
+    const rows = Array.from(table.rows);
+
+    if(action==="row-above" || action==="row-below"){
+      const newRow = document.createElement("tr");
+      for(let i=0;i<row.children.length;i++) newRow.insertAdjacentHTML("beforeend", emptyCellHtml());
+      const rowIdx = rows.indexOf(row);
+      row.parentNode.insertBefore(newRow, action==="row-above" ? row : (rows[rowIdx+1] || null));
+    } else if(action==="col-left" || action==="col-right"){
+      rows.forEach(r=>{
+        const cell = r.children[colIdx];
+        if(cell) cell.insertAdjacentHTML(action==="col-left" ? "beforebegin" : "afterend", emptyCellHtml());
+      });
+    } else if(action==="del-row"){
+      if(rows.length<=1){ table.remove(); hideToolbar(); editorEl.dispatchEvent(new Event("input",{bubbles:true})); return; }
+      row.remove();
+    } else if(action==="del-col"){
+      if(row.children.length<=1){ table.remove(); hideToolbar(); editorEl.dispatchEvent(new Event("input",{bubbles:true})); return; }
+      rows.forEach(r=>{ const cell = r.children[colIdx]; if(cell) cell.remove(); });
+    } else if(action==="del-table"){
+      table.remove(); hideToolbar();
+      editorEl.dispatchEvent(new Event("input",{bubbles:true}));
+      return;
+    }
+    editorEl.dispatchEvent(new Event("input",{bubbles:true}));
+  }
+
+  function showToolbarFor(cell){
+    activeCell = cell;
+    const table = cell.closest(".rte-table");
+    if(!table) return;
+    table.parentNode.insertBefore(ensureToolbar(), table);
+  }
+
+  editorEl.addEventListener("click", (e)=>{
+    const cell = e.target.closest("td");
+    const table = e.target.closest(".rte-table");
+    if(cell && table && editorEl.contains(table)) showToolbarFor(cell);
+    else if(toolbarEl && !e.target.closest(".rte-table-toolbar")) hideToolbar();
+  });
+  editorEl.addEventListener("keyup", ()=>{
+    const sel = window.getSelection();
+    if(!sel.anchorNode) return;
+    const node = sel.anchorNode.nodeType===1 ? sel.anchorNode : sel.anchorNode.parentElement;
+    const cell = node && node.closest ? node.closest("td") : null;
+    if(cell && cell.closest(".rte-table") && editorEl.contains(cell)) showToolbarFor(cell);
+  });
 }
 
 /* ============================================================
@@ -4932,7 +5078,7 @@ function wireRichEditor(id){
 function getCleanEditorHtml(editorEl){
   if(!editorEl) return "";
   const clone = editorEl.cloneNode(true);
-  clone.querySelectorAll(".rte-resize-handle, .rte-img-delete").forEach(el=> el.remove());
+  clone.querySelectorAll(".rte-resize-handle, .rte-img-delete, .rte-table-toolbar").forEach(el=> el.remove());
   return clone.innerHTML;
 }
 function fixImageSizing(wrap){
