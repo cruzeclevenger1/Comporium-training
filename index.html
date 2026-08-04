@@ -414,7 +414,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r70";
+const BUILD_VERSION = "2026-07-27T00:00Z-r71";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5354,6 +5354,53 @@ function openInteractivePicConfigFullscreen(ipId){
     saveTimer = setTimeout(async ()=>{ await silentSave(()=> supabase.from("interactive_pictures").update({ hotspots: ip.hotspots }).eq("id", ipId)); }, 500);
   }
 
+  // Same transform-based zoom as the trainee viewer. Panning here is gated
+  // behind holding Space, since plain drag already means "draw a new
+  // hotspot box" — wheel-zoom has no such conflict and works identically
+  // to everywhere else. getBoundingClientRect() (used below for box-draw
+  // coordinate math) automatically accounts for the transform, so the
+  // existing drawing logic needs no changes at all to work correctly zoomed in.
+  let scale = 1, panX = 0, panY = 0;
+  let spaceHeld = false, panning = false, panMoved = false, startX = 0, startY = 0;
+  let currentViewport = null, currentCanvas = null;
+
+  function applyTransform(){
+    if(currentCanvas) currentCanvas.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+  }
+  function onWheel(e){
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.2 : -0.2;
+    scale = Math.min(4, Math.max(1, scale + delta));
+    if(scale === 1){ panX = 0; panY = 0; }
+    applyTransform();
+  }
+  const onKeyDown = (e)=>{ if(e.code==="Space" && !e.target.closest("input,textarea")){ spaceHeld = true; if(currentCanvas) currentCanvas.style.cursor = "grab"; } };
+  const onKeyUp = (e)=>{ if(e.code==="Space"){ spaceHeld = false; if(currentCanvas && !panning) currentCanvas.style.cursor = ""; } };
+  const onWindowMouseMove = (e)=>{
+    if(!panning) return;
+    const nx = e.clientX - startX, ny = e.clientY - startY;
+    if(Math.abs(nx-panX) > 3 || Math.abs(ny-panY) > 3) panMoved = true;
+    if(!panMoved) return;
+    panX = nx; panY = ny;
+    if(currentCanvas) currentCanvas.style.cursor = "grabbing";
+    applyTransform();
+  };
+  const onWindowMouseUp = ()=>{
+    panning = false;
+    if(currentCanvas) currentCanvas.style.cursor = spaceHeld ? "grab" : "";
+  };
+  document.addEventListener("keydown", onKeyDown);
+  document.addEventListener("keyup", onKeyUp);
+  window.addEventListener("mousemove", onWindowMouseMove);
+  window.addEventListener("mouseup", onWindowMouseUp);
+  function cleanupZoomListeners(){
+    document.removeEventListener("keydown", onKeyDown);
+    document.removeEventListener("keyup", onKeyUp);
+    window.removeEventListener("mousemove", onWindowMouseMove);
+    window.removeEventListener("mouseup", onWindowMouseUp);
+  }
+  window.activeFullscreenCleanups.push(cleanupZoomListeners);
+
   function draw(){
     const boxesHtml = ip.hotspots.map((h,hi)=>`
       <div class="sim-zone" data-ip-box="${hi}" style="position:absolute;left:${h.x}%;top:${h.y}%;width:${h.w}%;height:${h.h}%;border:2px dashed var(--red);cursor:pointer;">
@@ -5365,21 +5412,32 @@ function openInteractivePicConfigFullscreen(ipId){
         <span style="color:var(--text-dim);font-family:var(--mono);font-size:12px;">INTERACTIVE PICTURE · ${ip.hotspots.length} hotspot${ip.hotspots.length===1?'':'s'} — drag to add one</span>
         <button class="btn primary" id="ip-config-done">Done</button>
       </div>
-      <div style="overflow:auto;max-width:94vw;max-height:80vh;border-radius:8px;">
+      <div class="ip-config-viewport" style="overflow:hidden;width:min(94vw,1200px);height:76vh;border-radius:8px;position:relative;display:flex;align-items:center;justify-content:center;">
         <div class="sim-screen-canvas" data-ip-canvas style="position:relative;display:inline-block;">
-          <img src="${ip.image}" style="max-width:94vw;max-height:80vh;display:block;pointer-events:none;user-select:none;" draggable="false">
-          <div class="sim-canvas-hint">✛ Drag to add a hotspot</div>
+          <img src="${ip.image}" style="max-width:min(94vw,1200px);max-height:76vh;display:block;pointer-events:none;user-select:none;" draggable="false">
+          <div class="sim-canvas-hint">✛ Drag to add a hotspot · hold Space to pan when zoomed in</div>
           ${boxesHtml}
         </div>
       </div>`;
-    document.getElementById("ip-config-done").addEventListener("click", ()=>{ scheduleSave(); overlay.remove(); if(view==="editor") renderEditor(); });
-    const canvas = overlay.querySelector("[data-ip-canvas]");
-    canvas.addEventListener("mousedown", (e)=>{
+    document.getElementById("ip-config-done").addEventListener("click", ()=>{ scheduleSave(); cleanupZoomListeners(); overlay.remove(); if(view==="editor") renderEditor(); });
+
+    currentViewport = overlay.querySelector(".ip-config-viewport");
+    currentCanvas = overlay.querySelector("[data-ip-canvas]");
+    applyTransform();
+    if(spaceHeld) currentCanvas.style.cursor = "grab";
+    currentViewport.addEventListener("wheel", onWheel, { passive:false });
+    currentCanvas.addEventListener("mousedown", (e)=>{
+      if(spaceHeld){
+        panning = true; panMoved = false;
+        startX = e.clientX - panX; startY = e.clientY - panY;
+        e.preventDefault();
+        return;
+      }
       if(e.target.closest(".sim-zone")) return;
-      const rect = canvas.getBoundingClientRect();
+      const rect = currentCanvas.getBoundingClientRect();
       const previewEl = document.createElement("div");
       previewEl.style.cssText = "position:absolute;border:2px solid var(--amber);background:#f5a62333;pointer-events:none;";
-      canvas.appendChild(previewEl);
+      currentCanvas.appendChild(previewEl);
       _ipBoxDrawing = { rect, startX:e.clientX, startY:e.clientY, previewEl, onBoxAdded:(box)=>{
         ip.hotspots.push(box);
         scheduleSave();
@@ -5416,6 +5474,60 @@ async function openInteractivePicViewer(ipId){
   document.body.appendChild(overlay);
   window.activeFullscreenCleanups.push(()=> overlay.remove());
 
+  // Same transform-based approach as the plain image lightbox (a proven,
+  // working pattern) rather than the earlier scrollbar/width% version that
+  // kept causing issues: overflow:hidden on the viewport means there are
+  // never scrollbars, wheel adjusts scale, holding the mouse down and
+  // dragging pans via translate(). The image and hotspots share one
+  // transformed container so they always move in perfect sync.
+  let scale = 1, panX = 0, panY = 0;
+  let dragging = false, dragMoved = false, startX = 0, startY = 0;
+  let currentPanInner = null, currentViewport = null;
+
+  function applyTransform(){
+    if(currentPanInner) currentPanInner.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    if(currentViewport) currentViewport.style.cursor = scale > 1 ? "grab" : "";
+  }
+  function onWheel(e){
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.2 : -0.2;
+    scale = Math.min(4, Math.max(1, scale + delta));
+    if(scale === 1){ panX = 0; panY = 0; }
+    applyTransform();
+  }
+  function onMouseDown(e){
+    if(scale <= 1) return;
+    dragging = true; dragMoved = false;
+    startX = e.clientX - panX; startY = e.clientY - panY;
+  }
+  function onWindowMouseMove(e){
+    if(!dragging) return;
+    const nx = e.clientX - startX, ny = e.clientY - startY;
+    if(Math.abs(nx-panX) > 3 || Math.abs(ny-panY) > 3) dragMoved = true;
+    if(!dragMoved) return;
+    panX = nx; panY = ny;
+    if(currentViewport) currentViewport.style.cursor = "grabbing";
+    applyTransform();
+  }
+  function onWindowMouseUp(){
+    dragging = false;
+    if(currentViewport) currentViewport.style.cursor = scale > 1 ? "grab" : "";
+    // Deferred, not immediate — a click event fires synchronously right
+    // after mouseup, and the hotspot handler below needs to still see
+    // dragMoved=true at that moment to correctly suppress opening the
+    // hotspot when this mouseup was actually the end of a pan, not a
+    // genuine click. Clearing it on the next tick lets that check land
+    // first, then resets cleanly for the next real interaction.
+    if(dragMoved) setTimeout(()=>{ dragMoved = false; }, 0);
+  }
+  window.addEventListener("mousemove", onWindowMouseMove);
+  window.addEventListener("mouseup", onWindowMouseUp);
+  function cleanupZoomListeners(){
+    window.removeEventListener("mousemove", onWindowMouseMove);
+    window.removeEventListener("mouseup", onWindowMouseUp);
+  }
+  window.activeFullscreenCleanups.push(cleanupZoomListeners);
+
   function draw(){
     const total = ip.hotspots.length;
     const done = ip.hotspots.filter(h=>readSet.has(h.id)).length;
@@ -5426,15 +5538,23 @@ async function openInteractivePicViewer(ipId){
         <span style="color:${allDone?'var(--green)':'var(--text-dim)'};font-family:var(--mono);font-size:12px;">${done}/${total} read${allDone?' — all done!':''}</span>
         <button class="btn ${allDone?'primary':''}" id="ip-viewer-close">${allDone?'Done ✓':'✕ Exit'}</button>
       </div>
-      <div style="overflow:auto;max-width:94vw;max-height:82vh;border-radius:8px;">
-        <div style="position:relative;display:inline-block;">
-          <img src="${ip.image}" style="max-width:94vw;max-height:82vh;display:block;user-select:none;border-radius:8px;pointer-events:none;" draggable="false">
+      <div class="ip-viewer-viewport" style="overflow:hidden;width:min(94vw,1300px);height:76vh;border-radius:8px;position:relative;display:flex;align-items:center;justify-content:center;">
+        <div class="ip-pan-inner" style="position:relative;display:inline-block;">
+          <img src="${ip.image}" style="max-width:min(94vw,1300px);max-height:76vh;display:block;user-select:none;border-radius:8px;pointer-events:none;" draggable="false">
           ${boxesHtml}
         </div>
       </div>
-      ${!allDone ? `<p style="color:var(--text-faint);font-size:12.5px;margin-top:10px;">Click every red box — it turns green once you've read it. All boxes must be green before you can move to the next lesson.</p>` : ''}`;
-    document.getElementById("ip-viewer-close").addEventListener("click", ()=>{ overlay.remove(); render(); });
+      ${!allDone ? `<p style="color:var(--text-faint);font-size:12.5px;margin-top:10px;">Click every red box — it turns green once you've read it. All boxes must be green before you can move to the next lesson. Scroll to zoom, hold and drag to pan.</p>` : `<p class="hint" style="margin-top:8px;">Scroll to zoom, hold and drag to pan.</p>`}`;
+    document.getElementById("ip-viewer-close").addEventListener("click", ()=>{ cleanupZoomListeners(); overlay.remove(); render(); });
+
+    currentViewport = overlay.querySelector(".ip-viewer-viewport");
+    currentPanInner = overlay.querySelector(".ip-pan-inner");
+    applyTransform();
+    currentViewport.addEventListener("wheel", onWheel, { passive:false });
+    currentViewport.addEventListener("mousedown", onMouseDown);
+
     overlay.querySelectorAll("[data-ip-hotspot]").forEach(el=> el.addEventListener("click", ()=>{
+      if(dragMoved) return; // this click was actually the tail end of a pan drag, not a genuine click
       const hi = +el.getAttribute("data-ip-hotspot");
       const h = ip.hotspots[hi];
       const alreadyRead = readSet.has(h.id);
