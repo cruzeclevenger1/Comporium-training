@@ -300,7 +300,11 @@
   .rte-body a, .body a, .chat-bubble-body a{ color:var(--cyan); text-decoration:underline; }
   .rte-body hr, .body hr, .chat-bubble-body hr{ border:none; border-top:1px solid var(--text-dim); width:100%; margin:18px 0; }
   .rte-table, .body .rte-table, .chat-bubble-body .rte-table{ border-collapse:collapse; width:100%; margin:14px 0; }
-  .rte-table td{ border:1px solid var(--stroke); padding:8px 10px; min-width:60px; vertical-align:top; }
+  .rte-table td{ border:1px solid var(--stroke); padding:8px 10px; min-width:60px; vertical-align:top; position:relative; }
+  .rte-col-resize-handle{ position:absolute; top:0; right:-3px; width:6px; height:100%; cursor:col-resize; z-index:2; }
+  .rte-col-resize-handle:hover{ background:var(--cyan-dim); }
+  .rte-row-resize-handle{ position:absolute; left:0; bottom:-3px; width:100%; height:6px; cursor:row-resize; z-index:2; }
+  .rte-row-resize-handle:hover{ background:var(--cyan-dim); }
   .rte-table tr:first-child td{ background:var(--input-bg); font-weight:600; }
   .rte-table-toolbar{ display:flex; gap:4px; flex-wrap:wrap; align-items:center; padding:5px 6px; margin-top:10px; border:1px solid var(--stroke); border-radius:8px 8px 0 0; border-bottom:none; background:var(--input-bg); user-select:none; }
   .rte-table-toolbar button{ font-family:var(--sans); font-size:11.5px; padding:5px 8px; border-radius:6px; border:1px solid var(--stroke); background:var(--panel); color:var(--text-dim); cursor:pointer; white-space:nowrap; }
@@ -410,7 +414,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r68";
+const BUILD_VERSION = "2026-07-27T00:00Z-r69";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -4881,6 +4885,7 @@ function wireRichEditor(id){
         if(size){
           restoreRange(); editorEl.focus();
           document.execCommand("insertHTML", false, buildTableHtml(size.rows, size.cols));
+          attachTableResizeHandles(editorEl);
           editorEl.dispatchEvent(new Event("input", { bubbles:true }));
         }
         return;
@@ -4967,6 +4972,7 @@ function wireRichEditor(id){
     setTimeout(()=>{ normalizePastedImages(editorEl); attachImageResizeHandles(editorEl); }, 200);
   });
   attachTableControls(editorEl);
+  attachTableResizeHandles(editorEl);
   attachImageResizeHandles(editorEl);
 }
 
@@ -5040,6 +5046,7 @@ function attachTableControls(editorEl){
       editorEl.dispatchEvent(new Event("input",{bubbles:true}));
       return;
     }
+    attachTableResizeHandles(editorEl);
     editorEl.dispatchEvent(new Event("input",{bubbles:true}));
   }
 
@@ -5065,6 +5072,84 @@ function attachTableControls(editorEl){
   });
 }
 
+// Column handles hang off the first row's cells only — setting a column's
+// width via any single row's cell is enough to size the whole column, since
+// browsers align column widths across all rows in a table automatically.
+// Row handles hang off each row's first cell for the same reason on the
+// other axis. Re-run after every insert/delete since new cells need their
+// own handles too.
+function attachTableResizeHandles(editorEl){
+  editorEl.querySelectorAll(".rte-table").forEach(table=>{
+    const rows = Array.from(table.rows);
+    if(!rows.length) return;
+    Array.from(rows[0].children).forEach(cell=>{
+      if(cell.querySelector(":scope > .rte-col-resize-handle")) return;
+      const handle = document.createElement("span");
+      handle.className = "rte-col-resize-handle";
+      handle.setAttribute("contenteditable", "false");
+      handle.setAttribute("draggable", "false");
+      cell.appendChild(handle);
+    });
+    rows.forEach(row=>{
+      const cell = row.children[0];
+      if(!cell || cell.querySelector(":scope > .rte-row-resize-handle")) return;
+      const handle = document.createElement("span");
+      handle.className = "rte-row-resize-handle";
+      handle.setAttribute("contenteditable", "false");
+      handle.setAttribute("draggable", "false");
+      cell.appendChild(handle);
+    });
+  });
+}
+let _colResizeDrag = null;
+let _rowResizeDrag = null;
+document.addEventListener("mousedown", (e)=>{
+  const colHandle = e.target.closest(".rte-col-resize-handle");
+  if(colHandle){
+    e.preventDefault(); e.stopPropagation();
+    const cell = colHandle.parentElement;
+    _colResizeDrag = { cell, startX:e.clientX, startW:cell.offsetWidth };
+    return;
+  }
+  const rowHandle = e.target.closest(".rte-row-resize-handle");
+  if(rowHandle){
+    e.preventDefault(); e.stopPropagation();
+    const cell = rowHandle.parentElement;
+    _rowResizeDrag = { row: cell.parentElement, startY:e.clientY, startH:cell.parentElement.offsetHeight };
+  }
+});
+document.addEventListener("mousemove", (e)=>{
+  if(_colResizeDrag){
+    e.preventDefault();
+    const { cell, startX, startW } = _colResizeDrag;
+    const w = Math.max(30, startW + (e.clientX - startX));
+    const table = cell.closest("table");
+    const colIdx = Array.from(cell.parentNode.children).indexOf(cell);
+    // Set on every row's cell in this column, not just the dragged one —
+    // keeps the column's width intact even if that specific row later
+    // gets deleted.
+    Array.from(table.rows).forEach(r=>{ const c = r.children[colIdx]; if(c) c.style.width = w+"px"; });
+    return;
+  }
+  if(_rowResizeDrag){
+    e.preventDefault();
+    const { row, startY, startH } = _rowResizeDrag;
+    const h = Math.max(24, startH + (e.clientY - startY));
+    Array.from(row.children).forEach(c=> c.style.height = h+"px");
+  }
+});
+document.addEventListener("mouseup", ()=>{
+  if(_colResizeDrag){
+    const editorEl = _colResizeDrag.cell.closest(".rte-body");
+    if(editorEl) editorEl.dispatchEvent(new Event("input", { bubbles:true }));
+  }
+  if(_rowResizeDrag){
+    const editorEl = _rowResizeDrag.row.closest(".rte-body");
+    if(editorEl) editorEl.dispatchEvent(new Event("input", { bubbles:true }));
+  }
+  _colResizeDrag = null; _rowResizeDrag = null;
+});
+
 /* ============================================================
    CUSTOM IMAGE RESIZE — replaces native CSS `resize`, which
    behaves inconsistently inside contenteditable regions across
@@ -5078,7 +5163,7 @@ function attachTableControls(editorEl){
 function getCleanEditorHtml(editorEl){
   if(!editorEl) return "";
   const clone = editorEl.cloneNode(true);
-  clone.querySelectorAll(".rte-resize-handle, .rte-img-delete, .rte-table-toolbar").forEach(el=> el.remove());
+  clone.querySelectorAll(".rte-resize-handle, .rte-img-delete, .rte-table-toolbar, .rte-col-resize-handle, .rte-row-resize-handle").forEach(el=> el.remove());
   return clone.innerHTML;
 }
 function fixImageSizing(wrap){
