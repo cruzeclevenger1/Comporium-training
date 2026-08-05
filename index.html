@@ -414,7 +414,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r77";
+const BUILD_VERSION = "2026-07-27T00:00Z-r78";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1725,6 +1725,15 @@ async function finishQuiz(){
 
   quizInProgressModId = null;
   modulesWithResumableQuiz.delete(m.id);
+  // Cancel any pending debounced save from scheduleQuizProgressSave() —
+  // without this, a save queued right as the last question was answered
+  // (a very plausible timing on a short quiz) can fire *after* this delete
+  // runs, silently re-creating the row via upsert with the now-stale,
+  // already-completed state still in it. The next "Retake" would then find
+  // that resurrected row and restore it as an in-progress session, showing
+  // whatever was already answered — including a simulation question
+  // appearing permanently "done" even on a fresh attempt.
+  clearTimeout(quizProgressSaveTimer);
   await supabase.from("quiz_in_progress").delete().eq("user_id", session.user.id).eq("module_id", m.id);
 
   const prior = progressMap[m.id];
