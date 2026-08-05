@@ -414,7 +414,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r76";
+const BUILD_VERSION = "2026-07-27T00:00Z-r77";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -4461,7 +4461,23 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
       el.addEventListener("contextmenu", wantsRight ? activate : wrongButton);
     });
   }
-  draw();
+  // Screenshots are now storage URLs (not base64 embedded directly in the
+  // question data), so the very first time each one displays, the browser
+  // has to actually fetch it over the network — that's the delay after
+  // clicking a zone. Preloading every screen's image up front, before
+  // showing the first one, means by the time someone starts clicking
+  // through, they're all already sitting in the browser's own image cache
+  // — no explicit "unload" step needed afterward either, since letting the
+  // preloaded Image objects go out of scope here is enough for the browser
+  // to garbage-collect them normally once this fullscreen view closes.
+  overlay.innerHTML = `<div style="color:var(--text-dim);font-family:var(--mono);font-size:13.5px;">Loading simulated navigation…</div>`;
+  const preloadUrls = q.simScreens.map(s=> s.image).filter(Boolean);
+  Promise.all(preloadUrls.map(url=> new Promise(resolve=>{
+    const img = new Image();
+    img.onload = resolve;
+    img.onerror = resolve; // don't let one broken/missing image block the whole simulation from ever loading
+    img.src = url;
+  }))).then(()=>{ if(overlay.isConnected) draw(); });
 }
 
 function openSimEditFullscreen(qi, si){
