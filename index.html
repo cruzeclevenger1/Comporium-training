@@ -414,7 +414,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r75";
+const BUILD_VERSION = "2026-07-27T00:00Z-r76";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -6639,13 +6639,6 @@ function renderSettings(){
         })()}
       </div>
 
-      ${(isAdmin() && !guestMode) ? `
-      <div class="editor-section">
-        <div class="editor-section-head"><h3>Move embedded images to storage</h3></div>
-        <p style="color:var(--text-dim);font-size:13px;margin:0 0 12px;">Older lessons, reference pages, interactive pictures, and simulation screenshots may still have images saved as embedded data rather than uploaded files — this is what makes the lessons data alone roughly 17MB on every login. Run this once to move them to storage instead. Safe to run more than once.</p>
-        <button class="btn" id="open-img-migrate">Move embedded images to storage</button>
-      </div>` : ""}
-
       ${(!isAdmin() && !guestMode) ? `
       <div class="editor-section">
         <div class="editor-section-head"><h3>Admin access</h3></div>
@@ -6661,8 +6654,6 @@ function renderSettings(){
   document.getElementById("back-dash-settings").addEventListener("click", ()=>{ view="home"; render(); });
 
   const reqAdminBtn = document.getElementById("request-admin-btn");
-  const imgMigrateBtn = document.getElementById("open-img-migrate");
-  if(imgMigrateBtn) imgMigrateBtn.addEventListener("click", openImageMigrationModal);
   if(reqAdminBtn) reqAdminBtn.addEventListener("click", async ()=>{
     const status = document.getElementById("admin-req-status");
     reqAdminBtn.disabled = true;
