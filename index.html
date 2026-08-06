@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r81";
+const BUILD_VERSION = "2026-07-27T00:00Z-r82";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1592,7 +1592,15 @@ async function startQuiz(mode){
   }
   quizAnswers = new Array(quizActiveIndices.length).fill(null);
   quizRevealed = new Array(quizActiveIndices.length).fill(false);
-  quizIdx = 0; quizInProgressModId = currentModId; view = "quiz"; render();
+  quizIdx = 0;
+  // Test runs never persist to quiz_in_progress (by design — they're not
+  // real attempts), so this marker must not get set for them either.
+  // Otherwise, leaving edit mode right after a test run and starting a
+  // real attempt would match the in-memory fast-path resume above and
+  // silently restore the test run's already-completed state instead of
+  // generating a genuinely fresh session — exactly what was happening here.
+  if(!quizIsTestRun) quizInProgressModId = currentModId;
+  view = "quiz"; render();
 }
 
 function scheduleQuizProgressSave(){
