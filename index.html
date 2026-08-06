@@ -298,6 +298,8 @@
   .rte-img-wrap[data-align="center"]{ margin:8px auto; }
   .rte-img-wrap[data-align="right"]{ margin:8px 0 8px auto; }
   .rte-body a, .body a, .chat-bubble-body a{ color:var(--cyan); text-decoration:underline; }
+  .rte-body a.internal-link, .body a.internal-link, .chat-bubble-body a.internal-link{ color:var(--green); text-decoration:none; border-bottom:1px dashed var(--green); cursor:pointer; }
+  .rte-body a.internal-link::before, .body a.internal-link::before, .chat-bubble-body a.internal-link::before{ content:"▸ "; }
   .rte-body hr, .body hr, .chat-bubble-body hr{ border:none; border-top:1px solid var(--text-dim); width:100%; margin:18px 0; }
   .rte-table, .body .rte-table, .chat-bubble-body .rte-table{ border-collapse:collapse; width:100%; margin:14px 0; }
   .rte-table td{ border:1px solid var(--stroke); padding:8px 10px; min-width:60px; vertical-align:top; position:relative; }
@@ -414,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r78";
+const BUILD_VERSION = "2026-07-27T00:00Z-r81";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1855,7 +1857,7 @@ async function openTeamProgress(){
   const { data: memberships } = await supabase.from("team_members").select("*");
 
   TEAMS_LIST = (teamsData||[]).map(t=>({
-    id: t.id, name: t.name, department: t.department||'TS',
+    id: t.id, name: t.name, accessTs: !!t.access_ts, accessCs: !!t.access_cs,
     memberIds: (memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id)
   }));
 
@@ -1890,24 +1892,23 @@ async function openTeamProgress(){
 function openTeamManageModal(teamId){
   const team = teamId ? TEAMS_LIST.find(t=>t.id===teamId) : null;
   const memberIds = new Set(team ? team.memberIds : []);
-  const initialDept = team ? team.department : currentActiveDepartment();
+  const mine = myDepartments();
+  const initialTs = team ? team.accessTs : mine.includes('TS');
+  const initialCs = team ? team.accessCs : mine.includes('CS');
 
-  function memberListHtml(dept){
-    return teamRows.filter(r=> canAccessDeptFor(r, dept)).map(r=>`
+  function memberListHtml(includeTs, includeCs){
+    return teamRows.filter(r=> (includeTs && r.canAccessTs) || (includeCs && r.canAccessCs)).map(r=>`
       <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);">
         <input type="checkbox" value="${r.id}" class="team-member-check" ${memberIds.has(r.id)?'checked':''}> ${escapeHtml(r.name)}${r.role==='admin'?' <span class="role-tag admin">ADMIN</span>':''}
-      </label>`).join("") || `<p style="color:var(--text-faint);font-size:12.5px;">Nobody has access to this department yet.</p>`;
+      </label>`).join("") || `<p style="color:var(--text-faint);font-size:12.5px;">Nobody has access to the selected department(s) yet.</p>`;
   }
-  function canAccessDeptFor(r, dept){ return dept==='CS' ? r.canAccessCs : r.canAccessTs; }
 
   const deptFieldHtml = team
-    ? `<div class="field"><label>Department</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${team.department==='CS'?'Customer Service':'Tech Support'} — set when the team was created, can't be changed after.</p></div>`
-    : `<div class="field"><label>Department</label>
-        <select id="team-dept-select">
-          <option value="TS" ${initialDept!=='CS'?'selected':''}>Tech Support</option>
-          <option value="CS" ${initialDept==='CS'?'selected':''}>Customer Service</option>
-        </select>
-        <p class="hint">Teams can't mix departments — only people with access to the chosen one will be selectable below.</p>
+    ? `<div class="field"><label>Department access</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${[team.accessTs?'Tech Support':null, team.accessCs?'Customer Service':null].filter(Boolean).join(' + ')} — set when the team was created, can't be changed after.</p></div>`
+    : `<div class="field"><label>Department access</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" id="team-dept-ts" ${initialTs?'checked':''}> Tech Support</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" id="team-dept-cs" ${initialCs?'checked':''}> Customer Service</label>
+        <p class="hint">Check one or both — only people with access to a checked department will be selectable below.</p>
       </div>`;
 
   openModal(`
@@ -1916,7 +1917,7 @@ function openTeamManageModal(teamId){
     ${deptFieldHtml}
     <div class="field"><label>Members</label>
       <div id="team-member-list" style="max-height:220px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">
-        ${memberListHtml(initialDept)}
+        ${memberListHtml(initialTs, initialCs)}
       </div>
     </div>
     <div class="modal-actions" style="justify-content:space-between;">
@@ -1924,10 +1925,11 @@ function openTeamManageModal(teamId){
       <div style="display:flex;gap:10px;"><button class="btn" id="team-cancel-btn">Cancel</button><button class="btn primary" id="team-save-btn">${team?"Save":"Create"}</button></div>
     </div>
   `, true);
-  const deptSelect = document.getElementById("team-dept-select");
-  if(deptSelect) deptSelect.addEventListener("change", (e)=>{
-    document.getElementById("team-member-list").innerHTML = memberListHtml(e.target.value);
-  });
+  const tsCheck = document.getElementById("team-dept-ts");
+  const csCheck = document.getElementById("team-dept-cs");
+  const refreshMemberList = ()=>{ document.getElementById("team-member-list").innerHTML = memberListHtml(tsCheck.checked, csCheck.checked); };
+  if(tsCheck) tsCheck.addEventListener("change", refreshMemberList);
+  if(csCheck) csCheck.addEventListener("change", refreshMemberList);
   document.getElementById("team-cancel-btn").addEventListener("click", closeModal);
   const delBtn = document.getElementById("team-delete-btn");
   if(delBtn) delBtn.addEventListener("click", async ()=>{
@@ -1944,8 +1946,8 @@ function openTeamManageModal(teamId){
     const selectedIds = Array.from(document.querySelectorAll(".team-member-check:checked")).map(cb=>cb.value);
     let tid = team ? team.id : null;
     if(!tid){
-      const dept = document.getElementById("team-dept-select").value;
-      const { data, error } = await supabase.from("teams").insert({ name, department: dept }).select().single();
+      if(!tsCheck.checked && !csCheck.checked){ alert("Check at least one department."); return; }
+      const { data, error } = await supabase.from("teams").insert({ name, access_ts: tsCheck.checked, access_cs: csCheck.checked }).select().single();
       if(error){ alert("Couldn't create team: " + error.message); return; }
       tid = data.id;
     } else {
@@ -1965,7 +1967,7 @@ function renderTeam(){
     loadQuizProgressData().then(()=> render());
   }
   const dept = currentActiveDepartment();
-  const deptTeams = guestMode ? TEAMS_LIST : TEAMS_LIST.filter(t=> t.department===dept);
+  const deptTeams = guestMode ? TEAMS_LIST : TEAMS_LIST.filter(t=> dept==='CS' ? t.accessCs : t.accessTs);
   const teamsHtml = deptTeams.length ? deptTeams.map(t=>`
     <button class="mini-btn" data-manage-team="${t.id}" style="margin:0 6px 6px 0;">${escapeHtml(t.name)} · ${t.memberIds.length}</button>
   `).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No teams yet.</p>`;
@@ -2826,7 +2828,7 @@ async function openQuizBuilder(id){
   if(!TEAMS_LIST.length){
     const { data: teamsData } = await supabase.from("teams").select("*").order("name");
     const { data: memberships } = await supabase.from("team_members").select("*");
-    TEAMS_LIST = (teamsData||[]).map(t=>({ id:t.id, name:t.name, department:t.department||'TS', memberIds:(memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id) }));
+    TEAMS_LIST = (teamsData||[]).map(t=>({ id:t.id, name:t.name, accessTs:!!t.access_ts, accessCs:!!t.access_cs, memberIds:(memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id) }));
   }
   if(!teamRows.length){
     const { data: people } = await supabase.from("profiles").select("*").order("name");
@@ -2885,7 +2887,7 @@ function renderQuizBuilder(){
         <option value="specific" ${d.audienceType==='specific'?'selected':''}>Specific people…</option>
       </select>
     </div>
-    ${d.audienceType==='team' ? `<div class="field" id="qz-team-field"><label>Team</label><select id="qz-team-select" ${locked?'disabled':''}>${TEAMS_LIST.filter(t=>t.department===d.department).map(t=>`<option value="${t.id}" ${d.teamId===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("") || '<option value="">No teams in this department yet</option>'}</select></div>` : ""}
+    ${d.audienceType==='team' ? `<div class="field" id="qz-team-field"><label>Team</label><select id="qz-team-select" ${locked?'disabled':''}>${TEAMS_LIST.filter(t=> d.department==='CS' ? t.accessCs : t.accessTs).map(t=>`<option value="${t.id}" ${d.teamId===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("") || '<option value="">No teams in this department yet</option>'}</select></div>` : ""}
     ${d.audienceType==='specific' ? `<div class="field" id="qz-people-field"><label>Choose people</label><div id="qz-people-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">${teamRows.filter(r=> d.department==='CS' ? r.canAccessCs : r.canAccessTs).map(r=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);"><input type="checkbox" value="${r.id}" class="qz-person-check" ${d.specificIds.includes(r.id)?'checked':''} ${locked?'disabled':''}> ${escapeHtml(r.name)}</label>`).join("")}</div></div>` : ""}
   `;
 
@@ -4642,6 +4644,102 @@ function promptModal(title, placeholder, defaultValue){
   });
 }
 
+function promptSiteLinkModal(){
+  return new Promise((resolve)=>{
+    const deptLabel = d=> d==='CS' ? 'Customer Service' : 'Tech Support';
+
+    const moduleOptionsByDept = {};
+    MODULES.forEach(m=>{ (moduleOptionsByDept[m.department] = moduleOptionsByDept[m.department]||[]).push(m); });
+    const moduleOptionsHtml = Object.keys(moduleOptionsByDept).sort().map(dept=>
+      `<optgroup label="${deptLabel(dept)}">${moduleOptionsByDept[dept].map(m=>`<option value="${m.id}">${escapeHtml(m.title)}</option>`).join("")}</optgroup>`
+    ).join("");
+
+    const refPagesByDept = {};
+    REFERENCE_PAGES.forEach(p=>{ (refPagesByDept[p.department] = refPagesByDept[p.department]||[]).push(p); });
+    const refOptionsHtml = Object.keys(refPagesByDept).sort().map(dept=>{
+      const pages = refPagesByDept[dept].slice().sort((a,b)=>a.sort_order-b.sort_order);
+      const tops = pages.filter(p=>!p.parent_id);
+      const rows = [];
+      tops.forEach(top=>{
+        rows.push(`<option value="${top.id}">${escapeHtml(top.title)}</option>`);
+        pages.filter(p=>p.parent_id===top.id).sort((a,b)=>a.sort_order-b.sort_order).forEach(child=>{
+          rows.push(`<option value="${child.id}">— ${escapeHtml(child.title)}</option>`);
+        });
+      });
+      return `<optgroup label="${deptLabel(dept)}">${rows.join("")}</optgroup>`;
+    }).join("");
+
+    openModal(`
+      <h3>Link to a page on this site</h3>
+      <div class="field"><label>Link to</label>
+        <select id="sitelink-type">
+          <option value="module">A module (opens its first lesson)</option>
+          <option value="lesson">A specific lesson</option>
+          <option value="reference">A reference guide page</option>
+        </select>
+      </div>
+      <div class="field" id="sitelink-module-field"><label>Module</label>
+        <select id="sitelink-module-select">${moduleOptionsHtml || '<option value="">No modules yet</option>'}</select>
+      </div>
+      <div class="field" id="sitelink-lesson-field" style="display:none;"><label>Lesson</label>
+        <select id="sitelink-lesson-select"></select>
+      </div>
+      <div class="field" id="sitelink-ref-field" style="display:none;"><label>Reference page</label>
+        <select id="sitelink-ref-select">${refOptionsHtml || '<option value="">No reference pages yet</option>'}</select>
+      </div>
+      <div class="modal-actions"><button class="btn" id="sitelink-cancel">Cancel</button><button class="btn primary" id="sitelink-go">Insert</button></div>
+    `);
+
+    const typeSelect = document.getElementById("sitelink-type");
+    const moduleField = document.getElementById("sitelink-module-field");
+    const lessonField = document.getElementById("sitelink-lesson-field");
+    const refField = document.getElementById("sitelink-ref-field");
+    const moduleSelect = document.getElementById("sitelink-module-select");
+    const lessonSelect = document.getElementById("sitelink-lesson-select");
+
+    function populateLessons(){
+      const m = modById(moduleSelect.value);
+      lessonSelect.innerHTML = (m && m.lessons.length) ? m.lessons.map((l,i)=>`<option value="${i}">${escapeHtml(l.title||l.label||('Lesson '+(i+1)))}</option>`).join("") : '<option value="">No lessons in this module</option>';
+    }
+    function updateVisibility(){
+      const t = typeSelect.value;
+      moduleField.style.display = (t==='module' || t==='lesson') ? '' : 'none';
+      lessonField.style.display = (t==='lesson') ? '' : 'none';
+      refField.style.display = (t==='reference') ? '' : 'none';
+      if(t==='lesson') populateLessons();
+    }
+    typeSelect.addEventListener("change", updateVisibility);
+    moduleSelect.addEventListener("change", populateLessons);
+    updateVisibility();
+
+    let settled = false;
+    const finish = (val)=>{ if(settled) return; settled = true; closeModal(); resolve(val); };
+    document.getElementById("sitelink-cancel").addEventListener("click", ()=> finish(null));
+    document.getElementById("sitelink-go").addEventListener("click", ()=>{
+      const t = typeSelect.value;
+      if(t==='module'){
+        const m = modById(moduleSelect.value);
+        if(!m){ alert("Pick a module."); return; }
+        finish({ type:'module', modId:m.id, label:m.title });
+      } else if(t==='lesson'){
+        const m = modById(moduleSelect.value);
+        if(!m || !m.lessons.length){ alert("Pick a module that has at least one lesson."); return; }
+        const li = +lessonSelect.value;
+        const lesson = m.lessons[li];
+        finish({ type:'lesson', modId:m.id, lessonIdx:li, label: lesson.title||lesson.label||('Lesson '+(li+1)) });
+      } else {
+        const pageId = document.getElementById("sitelink-ref-select").value;
+        const page = REFERENCE_PAGES.find(p=>p.id===pageId);
+        if(!page){ alert("Pick a reference page."); return; }
+        finish({ type:'reference', refId:page.id, label:page.title });
+      }
+    });
+    document.getElementById("app-modal-overlay").addEventListener("mousedown", (e)=>{
+      if(e.target.id === "app-modal-overlay") finish(null);
+    });
+  });
+}
+
 function promptTableSizeModal(){
   return new Promise((resolve)=>{
     openModal(`
@@ -4824,6 +4922,7 @@ function richEditorHtml(id, initialHtml){
       <button type="button" data-cmd="table" title="Insert table">⊞ Table</button>
       <div class="rte-sep"></div>
       <button type="button" data-cmd="link" title="Insert link">🔗</button>
+      <button type="button" data-cmd="sitelink" title="Link to a page on this site">🔗▸</button>
       <button type="button" data-cmd="unlink" title="Remove link">Unlink</button>
       <button type="button" data-cmd="image" title="Insert image">🖼</button>
       <input type="file" accept="image/*" style="display:none" id="${id}-file">
@@ -4946,6 +5045,24 @@ function wireRichEditor(id){
           const anchorEl = sel.anchorNode && (sel.anchorNode.nodeType===1 ? sel.anchorNode : sel.anchorNode.parentElement);
           const link = anchorEl && anchorEl.closest ? anchorEl.closest("a[href]") : null;
           if(link){ link.setAttribute("target","_blank"); link.setAttribute("rel","noopener noreferrer"); }
+        }
+        updateToolbarState();
+        return;
+      }
+      if(cmd === "sitelink"){
+        saveCurrentRange();
+        const target = await promptSiteLinkModal();
+        if(target){
+          restoreRange(); editorEl.focus();
+          const sel = window.getSelection();
+          const hasSelection = sel && !sel.isCollapsed && editorEl.contains(sel.anchorNode);
+          const linkText = hasSelection ? sel.toString() : target.label;
+          const attrs = [`data-link-type="${target.type}"`];
+          if(target.modId) attrs.push(`data-link-mod="${escapeHtml(target.modId)}"`);
+          if(target.lessonIdx!==undefined) attrs.push(`data-link-lesson="${target.lessonIdx}"`);
+          if(target.refId) attrs.push(`data-link-ref="${escapeHtml(target.refId)}"`);
+          document.execCommand("insertHTML", false, `<a href="#" class="internal-link" ${attrs.join(" ")}>${escapeHtml(linkText)}</a>`);
+          editorEl.dispatchEvent(new Event("input", { bubbles:true }));
         }
         updateToolbarState();
         return;
@@ -5520,59 +5637,32 @@ function openInteractivePicConfigFullscreen(ipId){
     saveTimer = setTimeout(async ()=>{ await silentSave(()=> supabase.from("interactive_pictures").update({ hotspots: ip.hotspots }).eq("id", ipId)); }, 500);
   }
 
-  // Same transform-based zoom as the trainee viewer. Panning here is gated
-  // behind holding Space, since plain drag already means "draw a new
-  // hotspot box" — wheel-zoom has no such conflict and works identically
-  // to everywhere else. getBoundingClientRect() (used below for box-draw
-  // coordinate math) automatically accounts for the transform, so the
-  // existing drawing logic needs no changes at all to work correctly zoomed in.
-  let scale = 1, panX = 0, panY = 0;
-  let spaceHeld = false, panning = false, panMoved = false, startX = 0, startY = 0;
-  let currentViewport = null, currentCanvas = null;
+  // Zoom capped so the image can never exceed the viewport in either
+  // dimension — same reasoning as the trainee viewer. Since the image can
+  // never overflow, there's genuinely nothing to pan to, which removes the
+  // need for the previous Space-to-pan gating entirely. getBoundingClientRect()
+  // (used below for box-draw coordinate math) automatically accounts for
+  // the scale transform, so the existing drawing logic needs no changes to
+  // keep working correctly zoomed in.
+  let scale = 1;
+  let currentViewport = null, currentCanvas = null, currentImg = null;
 
+  function maxScale(){
+    if(!currentViewport || !currentImg || !currentImg.naturalWidth) return 1;
+    const vw = currentViewport.clientWidth, vh = currentViewport.clientHeight;
+    const iw = currentImg.offsetWidth, ih = currentImg.offsetHeight;
+    if(!iw || !ih) return 1;
+    return Math.max(1, Math.min(vw/iw, vh/ih));
+  }
   function applyTransform(){
-    if(currentCanvas) currentCanvas.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    if(currentCanvas) currentCanvas.style.transform = `scale(${scale})`;
   }
   function onWheel(e){
     e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.2 : -0.2;
-    scale = Math.min(4, Math.max(1, scale + delta));
-    if(scale === 1){ panX = 0; panY = 0; }
+    const cap = maxScale();
+    scale = Math.min(cap, Math.max(1, scale + (e.deltaY < 0 ? 0.15 : -0.15)));
     applyTransform();
   }
-  const onKeyDown = (e)=>{ if(e.code==="Space" && !e.target.closest("input,textarea")){ spaceHeld = true; if(currentCanvas) currentCanvas.style.cursor = "grab"; } };
-  const onKeyUp = (e)=>{ if(e.code==="Space"){ spaceHeld = false; if(currentCanvas && !panning) currentCanvas.style.cursor = ""; } };
-  const onWindowMouseMove = (e)=>{
-    if(!panning) return;
-    // e.buttons===0 means no mouse button is actually pressed right now —
-    // this catches the case where mouseup fired outside the browser window
-    // entirely (dragged off the edge of the screen and released there),
-    // which the browser never reports back to the page at all. Without
-    // this check, panning state gets stuck "on" indefinitely since the
-    // mouseup listener below would simply never run.
-    if(e.buttons === 0){ panning = false; if(currentCanvas) currentCanvas.style.cursor = spaceHeld ? "grab" : ""; return; }
-    const nx = e.clientX - startX, ny = e.clientY - startY;
-    if(Math.abs(nx-panX) > 3 || Math.abs(ny-panY) > 3) panMoved = true;
-    if(!panMoved) return;
-    panX = nx; panY = ny;
-    if(currentCanvas) currentCanvas.style.cursor = "grabbing";
-    applyTransform();
-  };
-  const onWindowMouseUp = ()=>{
-    panning = false;
-    if(currentCanvas) currentCanvas.style.cursor = spaceHeld ? "grab" : "";
-  };
-  document.addEventListener("keydown", onKeyDown);
-  document.addEventListener("keyup", onKeyUp);
-  window.addEventListener("mousemove", onWindowMouseMove);
-  window.addEventListener("mouseup", onWindowMouseUp);
-  function cleanupZoomListeners(){
-    document.removeEventListener("keydown", onKeyDown);
-    document.removeEventListener("keyup", onKeyUp);
-    window.removeEventListener("mousemove", onWindowMouseMove);
-    window.removeEventListener("mouseup", onWindowMouseUp);
-  }
-  window.activeFullscreenCleanups.push(cleanupZoomListeners);
 
   function draw(){
     const boxesHtml = ip.hotspots.map((h,hi)=>`
@@ -5582,30 +5672,25 @@ function openInteractivePicConfigFullscreen(ipId){
       </div>`).join("");
     overlay.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:1200px;margin-bottom:14px;gap:12px;">
-        <span style="color:var(--text-dim);font-family:var(--mono);font-size:12px;">INTERACTIVE PICTURE · ${ip.hotspots.length} hotspot${ip.hotspots.length===1?'':'s'} — drag to add one</span>
+        <span style="color:var(--text-dim);font-family:var(--mono);font-size:12px;">INTERACTIVE PICTURE · ${ip.hotspots.length} hotspot${ip.hotspots.length===1?'':'s'} — drag to add one · scroll to zoom</span>
         <button class="btn primary" id="ip-config-done">Done</button>
       </div>
       <div class="ip-config-viewport" style="overflow:hidden;width:min(94vw,1200px);height:76vh;border-radius:8px;position:relative;display:flex;align-items:center;justify-content:center;">
-        <div class="sim-screen-canvas" data-ip-canvas style="position:relative;display:inline-block;">
+        <div class="sim-screen-canvas" data-ip-canvas style="position:relative;display:inline-block;transform-origin:center center;">
           <img src="${ip.image}" style="max-width:min(94vw,1200px);max-height:76vh;display:block;pointer-events:none;user-select:none;" draggable="false">
-          <div class="sim-canvas-hint">✛ Drag to add a hotspot · hold Space to pan when zoomed in</div>
+          <div class="sim-canvas-hint">✛ Drag to add a hotspot</div>
           ${boxesHtml}
         </div>
       </div>`;
-    document.getElementById("ip-config-done").addEventListener("click", ()=>{ scheduleSave(); cleanupZoomListeners(); overlay.remove(); if(view==="editor") renderEditor(); });
+    document.getElementById("ip-config-done").addEventListener("click", ()=>{ scheduleSave(); overlay.remove(); if(view==="editor") renderEditor(); });
 
     currentViewport = overlay.querySelector(".ip-config-viewport");
     currentCanvas = overlay.querySelector("[data-ip-canvas]");
+    currentImg = currentCanvas.querySelector("img");
+    scale = Math.min(scale, maxScale()); // clamp in case content or window size changed since last draw
     applyTransform();
-    if(spaceHeld) currentCanvas.style.cursor = "grab";
     currentViewport.addEventListener("wheel", onWheel, { passive:false });
     currentCanvas.addEventListener("mousedown", (e)=>{
-      if(spaceHeld){
-        panning = true; panMoved = false;
-        startX = e.clientX - panX; startY = e.clientY - panY;
-        e.preventDefault();
-        return;
-      }
       if(e.target.closest(".sim-zone")) return;
       const rect = currentCanvas.getBoundingClientRect();
       const previewEl = document.createElement("div");
@@ -5647,63 +5732,31 @@ async function openInteractivePicViewer(ipId){
   document.body.appendChild(overlay);
   window.activeFullscreenCleanups.push(()=> overlay.remove());
 
-  // Same transform-based approach as the plain image lightbox (a proven,
-  // working pattern) rather than the earlier scrollbar/width% version that
-  // kept causing issues: overflow:hidden on the viewport means there are
-  // never scrollbars, wheel adjusts scale, holding the mouse down and
-  // dragging pans via translate(). The image and hotspots share one
-  // transformed container so they always move in perfect sync.
-  let scale = 1, panX = 0, panY = 0;
-  let dragging = false, dragMoved = false, startX = 0, startY = 0;
-  let currentPanInner = null, currentViewport = null;
+  // Zoom is capped so the image can never exceed the viewport in either
+  // dimension — scaling out from the image's own center keeps it fully
+  // visible and centered at every zoom level, so there's genuinely
+  // nothing that could ever need panning. Only an element-level wheel
+  // listener here, no window-level drag listeners, so there's nothing
+  // that needs its own explicit cleanup beyond the overlay itself.
+  let scale = 1;
+  let currentViewport = null, currentInner = null, currentImg = null;
 
+  function maxScale(){
+    if(!currentViewport || !currentImg || !currentImg.naturalWidth) return 1;
+    const vw = currentViewport.clientWidth, vh = currentViewport.clientHeight;
+    const iw = currentImg.offsetWidth, ih = currentImg.offsetHeight;
+    if(!iw || !ih) return 1;
+    return Math.max(1, Math.min(vw/iw, vh/ih));
+  }
   function applyTransform(){
-    if(currentPanInner) currentPanInner.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
-    if(currentViewport) currentViewport.style.cursor = scale > 1 ? "grab" : "";
+    if(currentInner) currentInner.style.transform = `scale(${scale})`;
   }
   function onWheel(e){
     e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.2 : -0.2;
-    scale = Math.min(4, Math.max(1, scale + delta));
-    if(scale === 1){ panX = 0; panY = 0; }
+    const cap = maxScale();
+    scale = Math.min(cap, Math.max(1, scale + (e.deltaY < 0 ? 0.15 : -0.15)));
     applyTransform();
   }
-  function onMouseDown(e){
-    if(scale <= 1) return;
-    dragging = true; dragMoved = false;
-    startX = e.clientX - panX; startY = e.clientY - panY;
-  }
-  function onWindowMouseMove(e){
-    if(!dragging) return;
-    // Same reasoning as the config tool's version — catches a mouseup that
-    // happened outside the browser window entirely, which never reaches
-    // this page at all and would otherwise leave panning stuck "on."
-    if(e.buttons === 0){ dragging = false; if(currentViewport) currentViewport.style.cursor = scale > 1 ? "grab" : ""; return; }
-    const nx = e.clientX - startX, ny = e.clientY - startY;
-    if(Math.abs(nx-panX) > 3 || Math.abs(ny-panY) > 3) dragMoved = true;
-    if(!dragMoved) return;
-    panX = nx; panY = ny;
-    if(currentViewport) currentViewport.style.cursor = "grabbing";
-    applyTransform();
-  }
-  function onWindowMouseUp(){
-    dragging = false;
-    if(currentViewport) currentViewport.style.cursor = scale > 1 ? "grab" : "";
-    // Deferred, not immediate — a click event fires synchronously right
-    // after mouseup, and the hotspot handler below needs to still see
-    // dragMoved=true at that moment to correctly suppress opening the
-    // hotspot when this mouseup was actually the end of a pan, not a
-    // genuine click. Clearing it on the next tick lets that check land
-    // first, then resets cleanly for the next real interaction.
-    if(dragMoved) setTimeout(()=>{ dragMoved = false; }, 0);
-  }
-  window.addEventListener("mousemove", onWindowMouseMove);
-  window.addEventListener("mouseup", onWindowMouseUp);
-  function cleanupZoomListeners(){
-    window.removeEventListener("mousemove", onWindowMouseMove);
-    window.removeEventListener("mouseup", onWindowMouseUp);
-  }
-  window.activeFullscreenCleanups.push(cleanupZoomListeners);
 
   function draw(){
     const total = ip.hotspots.length;
@@ -5716,22 +5769,22 @@ async function openInteractivePicViewer(ipId){
         <button class="btn ${allDone?'primary':''}" id="ip-viewer-close">${allDone?'Done ✓':'✕ Exit'}</button>
       </div>
       <div class="ip-viewer-viewport" style="overflow:hidden;width:min(94vw,1300px);height:76vh;border-radius:8px;position:relative;display:flex;align-items:center;justify-content:center;">
-        <div class="ip-pan-inner" style="position:relative;display:inline-block;">
+        <div class="ip-pan-inner" style="position:relative;display:inline-block;transform-origin:center center;">
           <img src="${ip.image}" style="max-width:min(94vw,1300px);max-height:76vh;display:block;user-select:none;border-radius:8px;pointer-events:none;" draggable="false">
           ${boxesHtml}
         </div>
       </div>
-      ${!allDone ? `<p style="color:var(--text-faint);font-size:12.5px;margin-top:10px;">Click every red box — it turns green once you've read it. All boxes must be green before you can move to the next lesson. Scroll to zoom, hold and drag to pan.</p>` : `<p class="hint" style="margin-top:8px;">Scroll to zoom, hold and drag to pan.</p>`}`;
-    document.getElementById("ip-viewer-close").addEventListener("click", ()=>{ cleanupZoomListeners(); overlay.remove(); render(); });
+      ${!allDone ? `<p style="color:var(--text-faint);font-size:12.5px;margin-top:10px;">Click every red box — it turns green once you've read it. All boxes must be green before you can move to the next lesson. Scroll to zoom in and out.</p>` : `<p class="hint" style="margin-top:8px;">Scroll to zoom in and out.</p>`}`;
+    document.getElementById("ip-viewer-close").addEventListener("click", ()=>{ overlay.remove(); render(); });
 
     currentViewport = overlay.querySelector(".ip-viewer-viewport");
-    currentPanInner = overlay.querySelector(".ip-pan-inner");
+    currentInner = overlay.querySelector(".ip-pan-inner");
+    currentImg = currentInner.querySelector("img");
+    scale = Math.min(scale, maxScale()); // clamp in case content or window size changed since last draw
     applyTransform();
     currentViewport.addEventListener("wheel", onWheel, { passive:false });
-    currentViewport.addEventListener("mousedown", onMouseDown);
 
     overlay.querySelectorAll("[data-ip-hotspot]").forEach(el=> el.addEventListener("click", ()=>{
-      if(dragMoved) return; // this click was actually the tail end of a pan drag, not a genuine click
       const hi = +el.getAttribute("data-ip-hotspot");
       const h = ip.hotspots[hi];
       const alreadyRead = readSet.has(h.id);
@@ -5796,6 +5849,30 @@ function normalizeInteractivePicEmbeds(root){
     }
   });
 }
+async function navigateToSiteLink(linkEl){
+  const type = linkEl.getAttribute("data-link-type");
+  if(type === "module" || type === "lesson"){
+    const modId = linkEl.getAttribute("data-link-mod");
+    const m = modById(modId);
+    if(!m){ alert("That module isn't available — it may have been removed, or belongs to a department you don't have access to."); return; }
+    if(!guestMode) activeDepartment = m.department; // switch tabs to match, so the target module is actually visible
+    currentModId = modId;
+    currentLessonIdx = type === "lesson" ? (+linkEl.getAttribute("data-link-lesson") || 0) : 0;
+    if(currentLessonIdx >= m.lessons.length) currentLessonIdx = 0; // stale link (that lesson's since been removed) — fall back rather than crash
+    view = "lesson";
+    render();
+  } else if(type === "reference"){
+    const refId = linkEl.getAttribute("data-link-ref");
+    await loadReference(); // may not have been fetched yet this session, since it's normally only loaded on opening the Reference Guide
+    const page = REFERENCE_PAGES.find(p=>p.id===refId);
+    if(!page){ alert("That reference page isn't available — it may have been removed or moved."); return; }
+    if(!guestMode) refActiveDepartment = page.department;
+    currentRefId = refId;
+    refEditing = false;
+    view = "reference";
+    render();
+  }
+}
 document.addEventListener("click", (e)=>{
   const configureBtn = e.target.closest("[data-ip-configure]");
   if(configureBtn){ openInteractivePicConfigFullscreen(configureBtn.getAttribute("data-ip-configure")); return; }
@@ -5815,6 +5892,17 @@ document.addEventListener("click", (e)=>{
   }
   const playEmbed = e.target.closest('.interactive-pic-embed[data-ip-hydrated="play"]');
   if(playEmbed){ openInteractivePicViewer(playEmbed.getAttribute("data-interactive-pic-id")); return; }
+  const internalLink = e.target.closest("a.internal-link");
+  if(internalLink){
+    // Only intercept outside the editor itself — inside a contenteditable
+    // .rte-body, a click should just place the cursor for editing, not
+    // navigate away and lose whatever they were working on.
+    if(!internalLink.closest(".rte-body")){
+      e.preventDefault();
+      navigateToSiteLink(internalLink);
+    }
+    return;
+  }
 });
 document.addEventListener("click", (e)=>{
   if(!themeDropdownOpen) return;
