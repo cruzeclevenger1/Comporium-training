@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r82";
+const BUILD_VERSION = "2026-07-27T00:00Z-r85";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -436,6 +436,22 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   let activeRequests = 0;
   let completeTimer = null;
   window.silentSaveDepth = 0;
+  // Shared across every autosave function in the app (lessons, modules, quiz
+  // questions, reference pages, notes) — each adds its own unique key here
+  // the moment a debounced save is scheduled, and removes it once that save
+  // actually completes. A Set rather than a counter specifically so rapid
+  // repeated keystrokes on the same field (which reschedule the same debounce
+  // over and over) don't inflate the count — only genuinely new pending saves
+  // add a new key. window.onbeforeunload below warns if anything is still in
+  // here when someone tries to leave, so a debounce that hasn't fired yet
+  // can't silently lose work the way navigating away mid-edit otherwise could.
+  window.pendingAutosaveKeys = new Set();
+  window.addEventListener("beforeunload", (e)=>{
+    if(window.pendingAutosaveKeys.size > 0){
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
   function showBar(){
     if(window.loadingBarSuppressed || window.silentSaveDepth > 0) return;
     activeRequests++;
@@ -1810,6 +1826,9 @@ function renderResults(){
    TEAMS (admin only) — progress roster + group management
    ============================================================ */
 let teamExpandedRows = new Set();
+let attemptDetailFor = null; // { userId, moduleId } — which person+module's attempt detail is showing inline, or null
+let attemptDetailData = null; // array of up to 3 attempts (newest first) for attemptDetailFor, or "loading"
+let attemptDetailActiveIdx = 0; // which attempt tab (0 = newest) is currently selected
 let TEAMS_LIST = [];
 let teamRosterFilter = "";
 let pendingRoleChanges = {}; // userId -> { role, perms:{editContent,createQuizzes,managePeople} }, staged until explicitly saved
@@ -2099,6 +2118,7 @@ function renderTeam(){
         <div style="display:flex;flex-wrap:wrap;gap:8px;padding:6px 4px 14px;">
           ${moduleGrid || `<span style="color:var(--text-faint);font-size:12.5px;">No modules yet.</span>`}
         </div>
+        ${(attemptDetailFor && attemptDetailFor.userId===r.id) ? renderInlineAttemptDetailHtml(r) : ""}
       </td></tr>` : "";
     return mainRow + detailRow;
   }).join("");
@@ -2206,12 +2226,10 @@ function renderTeam(){
             </select>
             <button class="btn" id="go-analyze-btn" style="margin-left:auto;">📊 Analyze</button>
           </div>
-          <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">${focusModule ? `Showing progress on <strong style="color:var(--text);">${escapeHtml(focusModule.title)}</strong> only.` : "Click a person to see their module-by-module breakdown."} Click a module pill to see missed questions on their latest attempt.</p>
+          <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">${focusModule ? `Showing progress on <strong style="color:var(--text);">${escapeHtml(focusModule.title)}</strong> only.` : "Click a person to see their module-by-module breakdown."} Click a module pill to see any of their attempts, right here.</p>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>${focusModule ? escapeHtml(focusModule.title) : "Overall"}</th><th>${focusModule ? "Score" : "Mastered"}</th><th></th></tr></thead><tbody>${moduleRows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
         </div>` : ""}
     </div>` : ""}
-
-    <div id="attempt-detail" style="margin-top:16px;"></div>
 
     ${(canManagePeople() || canCreateQuizzes()) ? `
     <div class="card" style="margin-top:16px;">
@@ -2348,7 +2366,23 @@ function renderTeam(){
   root.querySelectorAll("[data-view-attempt]").forEach(el=> el.addEventListener("click", async (e)=>{
     e.stopPropagation();
     const [userId, moduleId] = el.getAttribute("data-view-attempt").split(":");
-    await showAttemptDetail(userId, moduleId);
+    await openInlineAttemptDetail(userId, moduleId);
+  }));
+  root.querySelectorAll("[data-attempt-tab]").forEach(el=> el.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    attemptDetailActiveIdx = +el.getAttribute("data-attempt-tab");
+    render();
+  }));
+  root.querySelectorAll("[data-coach]").forEach(el=> el.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    if(!attemptDetailFor || !attemptDetailData || attemptDetailData==="loading") return;
+    const person = teamRows.find(r=>r.id===attemptDetailFor.userId);
+    const m = modById(attemptDetailFor.moduleId);
+    const a = attemptDetailData[Math.min(attemptDetailActiveIdx, attemptDetailData.length-1)];
+    const missed = (a.answers||[]).filter(x=>!x.is_correct);
+    const q = missed[+el.getAttribute("data-coach")];
+    if(!q) return;
+    openCoachingModal(attemptDetailFor.userId, person ? person.name : "this person", `${m ? m.title : ''} — ${q.question}`);
   }));
   root.querySelectorAll("[data-quiz-team-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
     const id = el.getAttribute("data-quiz-team-toggle");
@@ -2362,59 +2396,72 @@ function renderTeam(){
   }));
 }
 
-async function showAttemptDetail(userId, moduleId){
-  const holder = document.getElementById("attempt-detail");
-  holder.innerHTML = `<div class="card"><p style="color:var(--text-faint);font-family:var(--mono);font-size:12px;">Loading latest attempt…</p></div>`;
-  const person = teamRows.find(r=>r.id===userId);
-  const m = modById(moduleId);
-
-  let a;
-  if(!m || !m.quiz.length){
-    holder.innerHTML = `<div class="card"><p style="color:var(--text-dim);font-size:13.5px;">There is not a quiz for this module.</p></div>`;
+async function openInlineAttemptDetail(userId, moduleId){
+  // Toggle closed if clicking the same person+module's pill again
+  if(attemptDetailFor && attemptDetailFor.userId===userId && attemptDetailFor.moduleId===moduleId){
+    attemptDetailFor = null; attemptDetailData = null;
+    render();
     return;
   }
+  attemptDetailFor = { userId, moduleId };
+  attemptDetailActiveIdx = 0;
+  attemptDetailData = "loading";
+  render();
+
+  const m = modById(moduleId);
+  if(!m || !m.quiz.length){ attemptDetailData = []; render(); return; }
+
   if(guestMode){
+    const person = teamRows.find(r=>r.id===userId);
     const raw = person ? person.perModuleRaw[moduleId] : null;
-    if(!raw || !raw.attempts){
-      holder.innerHTML = `<div class="card"><p style="color:var(--text-dim);font-size:13.5px;">${escapeHtml(person?person.name:'This person')} hasn't taken the ${escapeHtml(m?m.title:'')} quiz yet.</p></div>`;
-      return;
-    }
-    // Simulate which questions were "missed" so the count matches their displayed score.
+    if(!raw || !raw.attempts){ attemptDetailData = []; render(); return; }
+    // Simulate which questions were "missed" so the count matches their displayed score — guest mode has no real attempt rows to show.
     const answers = m.quiz.map((q,i)=>{
       const isCorrect = i < raw.best;
       const selected = isCorrect ? q.correct : (q.correct === 0 ? 1 : 0);
       return { question: q.q, options: q.opts, selected, correct: q.correct, is_correct: isCorrect };
     });
-    a = { score: raw.best, total: raw.total, answers };
-  } else {
-    const { data: attempts } = await supabase.from("quiz_attempts").select("*").eq("user_id", userId).eq("module_id", moduleId).order("created_at", { ascending:false }).limit(1);
-    if(!attempts || !attempts.length){
-      holder.innerHTML = `<div class="card"><p style="color:var(--text-dim);font-size:13.5px;">${escapeHtml(person?person.name:'This person')} hasn't taken the ${escapeHtml(m?m.title:'')} quiz yet.</p></div>`;
-      return;
-    }
-    a = attempts[0];
+    attemptDetailData = [{ score: raw.best, total: raw.total, answers }];
+    render();
+    return;
   }
-
+  const { data: attempts } = await supabase.from("quiz_attempts").select("*").eq("user_id", userId).eq("module_id", moduleId).order("created_at", { ascending:false }).limit(MAX_QUIZ_ATTEMPTS);
+  // Only apply the fetch if this is still the module someone's looking at —
+  // clicking a different pill while this was in flight shouldn't have a
+  // stale, late-arriving response overwrite what they're now viewing.
+  if(!attemptDetailFor || attemptDetailFor.userId!==userId || attemptDetailFor.moduleId!==moduleId) return;
+  attemptDetailData = attempts || [];
+  render();
+}
+function renderInlineAttemptDetailHtml(person){
+  const m = modById(attemptDetailFor.moduleId);
+  if(attemptDetailData === "loading"){
+    return `<div class="sub-card" style="margin:0 4px 14px;"><p style="color:var(--text-faint);font-family:var(--mono);font-size:12px;margin:0;">Loading attempts…</p></div>`;
+  }
+  if(!m || !m.quiz.length){
+    return `<div class="sub-card" style="margin:0 4px 14px;"><p style="color:var(--text-dim);font-size:13.5px;margin:0;">There is not a quiz for this module.</p></div>`;
+  }
+  if(!attemptDetailData || !attemptDetailData.length){
+    return `<div class="sub-card" style="margin:0 4px 14px;"><p style="color:var(--text-dim);font-size:13.5px;margin:0;">${escapeHtml(person.name)} hasn't taken the ${escapeHtml(m.title)} quiz yet.</p></div>`;
+  }
+  const total = attemptDetailData.length;
+  const tabsHtml = attemptDetailData.map((a,i)=>`<button class="dept-tab ${attemptDetailActiveIdx===i?'active':''}" data-attempt-tab="${i}">Attempt ${total-i}${i===0?' (latest)':''}</button>`).join("");
+  const a = attemptDetailData[Math.min(attemptDetailActiveIdx, total-1)];
   const missed = (a.answers||[]).filter(x=>!x.is_correct);
   const missedHtml = missed.length ? missed.map((x,i)=>`
     <div class="sub-card">
       <div style="font-size:14px;margin-bottom:8px;">${escapeHtml(x.question)}</div>
       <div style="font-size:13px;color:var(--red);margin-bottom:4px;">Their answer: ${escapeHtml(x.options[x.selected] ?? '(no answer)')}</div>
       <div style="font-size:13px;color:var(--green);margin-bottom:10px;">Correct answer: ${escapeHtml(x.options[x.correct])}</div>
-      <button class="mini-btn" data-coach="${i}">💬 Discuss with ${escapeHtml(person?person.name:'them')}</button>
+      <button class="mini-btn" data-coach="${i}">💬 Discuss with ${escapeHtml(person.name)}</button>
     </div>
-  `).join("") : `<p style="color:var(--green);font-size:13.5px;">No missed questions on their latest attempt — clean sweep.</p>`;
-  holder.innerHTML = `
-    <div class="card">
-      <div class="k-label">LATEST ATTEMPT · ${escapeHtml(person?person.name:'')} · ${escapeHtml(m?m.title:'')}</div>
+  `).join("") : `<p style="color:var(--green);font-size:13.5px;">No missed questions on this attempt — clean sweep.</p>`;
+  return `
+    <div class="card" style="margin:0 4px 14px;">
+      <div class="dept-tabs" style="margin-bottom:14px;border-bottom:none;">${tabsHtml}</div>
       <h2 style="margin-bottom:16px;">${a.score}/${a.total} (${a.total?Math.round((a.score/a.total)*100):0}%) correct</h2>
       ${missedHtml}
-    </div>
-  `;
-  holder.querySelectorAll("[data-coach]").forEach(el=> el.addEventListener("click", ()=>{
-    const q = missed[+el.getAttribute("data-coach")];
-    openCoachingModal(userId, person ? person.name : "this person", `${m ? m.title : ''} — ${q.question}`);
-  }));
+    </div>`;
 }
 
 let pendingGrades = {};
@@ -2963,6 +3010,7 @@ function wireQuizBuilderEvents(){
     const statusEl = document.getElementById(`qz-save-status-${i}`);
     if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
     clearTimeout(quizQuestionAutosaveTimers[q.id]);
+    window.pendingAutosaveKeys.add("qzquestion:"+q.id);
     quizQuestionAutosaveTimers[q.id] = setTimeout(async ()=>{
       const { error } = await silentSave(()=> supabase.from("standalone_quiz_questions").update({
         question_type:q.type, question:q.question,
@@ -2970,6 +3018,7 @@ function wireQuizBuilderEvents(){
         correct_index: q.type==="multiple_choice" ? q.correct : null,
         explanation: q.explain
       }).eq("id", q.id));
+      window.pendingAutosaveKeys.delete("qzquestion:"+q.id);
       const el = document.getElementById(`qz-save-status-${i}`);
       if(el){ if(error){ el.textContent="Couldn't save: "+error.message; el.style.color="var(--red)"; } else { el.textContent="Saved"; el.style.color="var(--green)"; } }
     }, 600);
@@ -3047,6 +3096,9 @@ function wireQuizBuilderEvents(){
 let ANALYZE_MODULE_STATS = [];
 let ANALYZE_MISSED_QUESTIONS = [];
 let ANALYZE_TOTALS = { totalPeople:0, notStarted:0, totalAttempts:0, totalFlags:0 };
+let ANALYZE_FLAGGED = [];
+let ANALYZE_TEAM_STATS = [];
+let ANALYZE_NEEDS_ATTENTION = [];
 
 /* ============================================================
    STANDALONE QUIZZES — admin-authored, no module attached.
@@ -3248,14 +3300,20 @@ async function openAnalyze(){
   const dept = currentActiveDepartment();
   const deptModules = MODULES.filter(m=> m.department===dept);
   const deptModuleIds = new Set(deptModules.map(m=>m.id));
-  const { data: profilesData } = await supabase.from("profiles").select("id,can_access_ts,can_access_cs");
+  const { data: profilesData } = await supabase.from("profiles").select("id,name,can_access_ts,can_access_cs");
   const { data: allProgressRaw } = await supabase.from("progress").select("*");
   const { data: allAttemptsRaw } = await supabase.from("quiz_attempts").select("*");
-  const { data: flagRows } = await supabase.from("messages").select("department").in("type", ["flag","comment","highlight"]);
+  const { data: flagRows } = await supabase.from("messages").select("*").in("type", ["flag","comment","highlight"]).order("created_at",{ascending:false});
+  if(!TEAMS_LIST.length){
+    const { data: teamsData } = await supabase.from("teams").select("*");
+    const { data: memberships } = await supabase.from("team_members").select("*");
+    TEAMS_LIST = (teamsData||[]).map(t=>({ id:t.id, name:t.name, accessTs:!!t.access_ts, accessCs:!!t.access_cs, memberIds:(memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id) }));
+  }
   const allProgress = (allProgressRaw||[]).filter(p=> deptModuleIds.has(p.module_id));
   const allAttempts = (allAttemptsRaw||[]).filter(a=> deptModuleIds.has(a.module_id));
 
-  const totalPeople = (profilesData||[]).filter(p=> dept==='CS' ? p.can_access_cs : p.can_access_ts).length;
+  const deptPeople = (profilesData||[]).filter(p=> dept==='CS' ? p.can_access_cs : p.can_access_ts);
+  const totalPeople = deptPeople.length;
   const startedUserIds = new Set(allProgress.map(p=>p.user_id));
   const notStarted = Math.max(totalPeople - startedUserIds.size, 0);
 
@@ -3303,14 +3361,61 @@ async function openAnalyze(){
     .sort((a,b)=> b.missed - a.missed)
     .slice(0, 50); // kept broader than the old top-10 so filtering by a specific module below isn't starved of results
 
-  const flagCount = (flagRows||[]).filter(m=> !m.department || m.department===dept).length;
-  ANALYZE_TOTALS = { totalPeople, notStarted, totalAttempts: allAttempts.length, totalFlags: flagCount };
+  const deptFlags = (flagRows||[]).filter(f=> !f.department || f.department===dept);
+  ANALYZE_TOTALS = { totalPeople, notStarted, totalAttempts: allAttempts.length, totalFlags: deptFlags.length };
+  ANALYZE_FLAGGED = deptFlags.slice(0, 15);
+
+  // ---- Team/cohort comparison ----
+  // A person's overall completion, averaged per team, so cohorts can be
+  // compared side by side — genuinely new information, not another view of
+  // per-person or per-module numbers that already exist elsewhere.
+  const overallByUser = {};
+  deptPeople.forEach(p=>{
+    const rows = allProgress.filter(pr=>pr.user_id===p.id);
+    const vals = deptModules.map(m=>{
+      const row = rows.find(r=>r.module_id===m.id);
+      if(!row) return 0;
+      const totalLessons = m.lessons.length || 1;
+      const viewedCount = row.lessons_viewed ? row.lessons_viewed.length : 0;
+      const lessonFraction = Math.min(viewedCount/totalLessons, 1);
+      if(!m.quiz.length) return lessonFraction * 100;
+      const quizFraction = (row.best_score||0)/m.quiz.length;
+      return (lessonFraction*0.5 + quizFraction*0.5) * 100;
+    });
+    overallByUser[p.id] = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
+  });
+  const deptTeams = TEAMS_LIST.filter(t=> dept==='CS' ? t.accessCs : t.accessTs);
+  ANALYZE_TEAM_STATS = deptTeams.map(t=>{
+    const memberVals = t.memberIds.map(id=> overallByUser[id]).filter(v=> v!==undefined);
+    const avg = memberVals.length ? Math.round(memberVals.reduce((a,b)=>a+b,0)/memberVals.length) : 0;
+    return { id:t.id, name:t.name, avgCompletion:avg, memberCount: t.memberIds.length };
+  }).sort((a,b)=> b.avgCompletion - a.avgCompletion);
+
+  // ---- Needs attention ----
+  // People with either zero activity at all, or meaningfully below-average
+  // progress relative to their peers — an actionable list of who to check
+  // in with, rather than a single "notStarted" count with no names attached.
+  const avgOverall = totalPeople ? Object.values(overallByUser).reduce((a,b)=>a+b,0) / totalPeople : 0;
+  ANALYZE_NEEDS_ATTENTION = deptPeople.map(p=>({ id:p.id, name:p.name, overall: Math.round(overallByUser[p.id]||0) }))
+    .filter(p=> p.overall===0 || (avgOverall>10 && p.overall < avgOverall*0.4))
+    .sort((a,b)=> a.overall - b.overall)
+    .slice(0, 20);
 
   view = "analyze"; render();
 }
 
 let analyzeModuleFilter = "";
 let analyzeMissedFilter = "";
+function renderBarChartRows(items, labelKey, valueKey, colorVar){
+  return items.map(i=>`
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+      <div style="width:170px;flex:none;font-size:13px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(String(i[labelKey]))}">${escapeHtml(String(i[labelKey]))}</div>
+      <div style="flex:1;background:var(--input-bg);border-radius:6px;height:22px;position:relative;overflow:hidden;">
+        <div style="width:${i[valueKey]}%;height:100%;background:${colorVar||'var(--cyan)'};border-radius:6px;"></div>
+      </div>
+      <div style="width:42px;flex:none;text-align:right;font-family:var(--mono);font-size:12px;color:var(--text-dim);">${i[valueKey]}%</div>
+    </div>`).join("");
+}
 function renderAnalyze(){
   const filteredModuleStats = analyzeModuleFilter.trim()
     ? ANALYZE_MODULE_STATS.filter(m=> m.title.toLowerCase().includes(analyzeModuleFilter.trim().toLowerCase()))
@@ -3332,6 +3437,27 @@ function renderAnalyze(){
     </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">${analyzeMissedFilter ? "No missed questions for this module." : "Not enough quiz attempts yet to show trends."}</p>`;
   const missedModuleOptions = ANALYZE_MODULE_STATS.map(m=>`<option value="${m.id}" ${analyzeMissedFilter===m.id?'selected':''}>${escapeHtml(m.title)}</option>`).join("");
 
+  const sortedModuleStats = ANALYZE_MODULE_STATS.slice().sort((a,b)=> b.avgCompletion - a.avgCompletion);
+  const moduleChartHtml = sortedModuleStats.length ? renderBarChartRows(sortedModuleStats, "title", "avgCompletion", "var(--cyan)") : `<p style="color:var(--text-faint);font-size:13px;">No modules yet.</p>`;
+
+  const teamChartHtml = ANALYZE_TEAM_STATS.length ? renderBarChartRows(ANALYZE_TEAM_STATS.map(t=>({ ...t, label:`${t.name} (${t.memberCount})` })), "label", "avgCompletion", "var(--green)") : `<p style="color:var(--text-faint);font-size:13px;">No teams in this department yet — create one under Teams to compare cohorts here.</p>`;
+
+  const attentionHtml = ANALYZE_NEEDS_ATTENTION.length ? `
+    <div style="display:flex;flex-direction:column;gap:2px;">
+      ${ANALYZE_NEEDS_ATTENTION.map(p=>`
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 4px;border-bottom:1px solid var(--stroke);">
+          <span style="font-size:13.5px;color:var(--text);">${escapeHtml(p.name)}</span>
+          <span style="font-family:var(--mono);font-size:12px;color:${p.overall===0?'var(--red)':'var(--amber)'};">${p.overall===0 ? "hasn't started" : p.overall+"% overall"}</span>
+        </div>`).join("")}
+    </div>` : `<p style="color:var(--green);font-size:13.5px;">Nobody's meaningfully behind right now.</p>`;
+
+  const flaggedHtml = ANALYZE_FLAGGED.length ? ANALYZE_FLAGGED.map(f=>`
+    <div class="sub-card">
+      <div class="sub-card-head"><span class="tag" style="background:${f.type==='flag'?'var(--red-dim)':'var(--cyan-dim)'};color:${f.type==='flag'?'var(--red)':'var(--cyan)'};">${f.type==='flag'?'FLAGGED':f.type==='comment'?'COMMENT':'HIGHLIGHT'}</span><span style="font-family:var(--mono);font-size:11px;color:var(--text-faint);">${escapeHtml(f.sender_name||'Someone')} · ${new Date(f.created_at).toLocaleDateString()}</span></div>
+      <div style="font-size:13px;color:var(--text-dim);margin-bottom:4px;">${escapeHtml(f.context||'')}</div>
+      ${f.body ? `<div style="font-size:14px;color:var(--text);">${escapeHtml(f.body)}</div>` : ""}
+    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">Nothing flagged or commented on recently.</p>`;
+
   const deptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
       <button class="dept-tab ${currentActiveDepartment()==='TS'?'active':''}" data-analyze-dept="TS">Tech Support</button>
       <button class="dept-tab ${currentActiveDepartment()==='CS'?'active':''}" data-analyze-dept="CS">Customer Service</button>
@@ -3351,6 +3477,21 @@ function renderAnalyze(){
       </div>
     </div>
     <div class="card" style="margin-top:16px;">
+      <h2 style="margin-bottom:4px;">Module completion</h2>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">Average completion across everyone with access, highest first.</p>
+      ${moduleChartHtml}
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <h2 style="margin-bottom:4px;">Team comparison</h2>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">Average overall completion per team — member count shown next to each name.</p>
+      ${teamChartHtml}
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <h2 style="margin-bottom:4px;">Needs attention</h2>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 12px;">Anyone who hasn't started anything, or is meaningfully behind the group average.</p>
+      ${attentionHtml}
+    </div>
+    <div class="card" style="margin-top:16px;">
       <h2 style="margin-bottom:4px;">Module performance</h2>
       <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 14px;">Click a module to see everyone who's attempted it — up to 3 attempts each — and which questions they missed on any given attempt.</p>
       <input type="text" id="analyze-module-search" data-no-enter-submit placeholder="Search modules…" value="${escapeHtml(analyzeModuleFilter)}" class="search-input" style="width:240px;margin-bottom:12px;">
@@ -3366,6 +3507,11 @@ function renderAnalyze(){
       </div>
       <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">Based on everyone's latest attempt only — a question someone got wrong but later corrected on a retake doesn't count here. A high miss rate usually means the content needs a second look, not the reps.</p>
       ${missedHtml}
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <h2 style="margin-bottom:4px;">Recently flagged or commented on</h2>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">What people explicitly said was confusing, separate from what they statistically got wrong above — these two often point at different problems.</p>
+      ${flaggedHtml}
     </div>
   `);
   root.querySelectorAll("[data-analyze-dept]").forEach(el=> el.addEventListener("click", async ()=>{
@@ -4997,6 +5143,19 @@ function wireRichEditor(id){
     });
     const quoteBtn = toolbar.querySelector('button[data-cmd="blockquote"]');
     if(quoteBtn){ try{ quoteBtn.classList.toggle("active", document.queryCommandValue("formatBlock").toLowerCase()==="blockquote"); }catch(e){} }
+    const sizeSelect = toolbar.querySelector('select[data-cmd="fontSize"]');
+    if(sizeSelect){
+      try{
+        const val = document.queryCommandValue("fontSize");
+        // queryCommandValue can return "" (no selection yet) or a size that
+        // doesn't match any of the four options here (browsers sometimes
+        // report the raw computed size rather than an execCommand size
+        // level) — default to Normal rather than leaving the dropdown
+        // showing whatever it last happened to display.
+        const hasOption = [...sizeSelect.options].some(o=>o.value===val);
+        sizeSelect.value = hasOption ? val : "3";
+      }catch(e){}
+    }
   };
   editorEl.addEventListener("click", updateToolbarState);
   editorEl.addEventListener("mouseup", ()=>{ saveCurrentRange(); updateToolbarState(); });
@@ -6259,8 +6418,10 @@ function wireEditorEvents(){
     const statusEl = document.getElementById("mod-save-status");
     if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
     clearTimeout(modAutosaveTimer);
+    window.pendingAutosaveKeys.add("mod:"+editingExistingId);
     modAutosaveTimer = setTimeout(async ()=>{
       const { error } = await silentSave(()=> supabase.from("modules").update({ title:d.title, short:d.short, department:d.department, popup_enabled:d.popupEnabled, popup_title:d.popupTitle, popup_body:d.popupBody }).eq("id", editingExistingId));
+      window.pendingAutosaveKeys.delete("mod:"+editingExistingId);
       const el = document.getElementById("mod-save-status");
       if(el){
         if(error){ el.textContent = "Couldn't save: " + error.message; el.style.color = "var(--red)"; }
@@ -6283,8 +6444,10 @@ function wireEditorEvents(){
     const statusEl = document.getElementById(`lesson-save-status-${i}`);
     if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
     clearTimeout(lessonAutosaveTimers[l.id]);
+    window.pendingAutosaveKeys.add("lesson:"+l.id);
     lessonAutosaveTimers[l.id] = setTimeout(async ()=>{
       const { error } = await silentSave(()=> supabase.from("lessons").update({ label:l.label, title:l.title, body:l.body }).eq("id", l.id));
+      window.pendingAutosaveKeys.delete("lesson:"+l.id);
       const el = document.getElementById(`lesson-save-status-${i}`);
       if(el){
         if(error){ el.textContent = "Couldn't save: " + error.message; el.style.color = "var(--red)"; }
@@ -6371,8 +6534,10 @@ function wireEditorEvents(){
     const statusEl = document.getElementById(`q-save-status-${i}`);
     if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
     clearTimeout(quizAutosaveTimers[q.id]);
+    window.pendingAutosaveKeys.add("modquestion:"+q.id);
     quizAutosaveTimers[q.id] = setTimeout(async ()=>{
       const { error } = await silentSave(()=> supabase.from("quiz_questions").update({ question:q.q, options:q.opts, correct_index:q.correct, explanation:q.explain, question_type:q.type, sim_screens:q.simScreens, end_goal:q.endGoal, final_screen_id:q.finalScreenId }).eq("id", q.id));
+      window.pendingAutosaveKeys.delete("modquestion:"+q.id);
       const el = document.getElementById(`q-save-status-${i}`);
       if(el){
         if(error){ el.textContent = "Couldn't save: " + error.message; el.style.color = "var(--red)"; }
@@ -7102,6 +7267,7 @@ function renderReference(){
 let refSaveTimer = null;
 async function flushRefSave(pageId, titleInput, bodyRte){
   clearTimeout(refSaveTimer);
+  window.pendingAutosaveKeys.delete("ref:"+pageId);
   const title = titleInput.value.trim() || "Untitled page";
   const body = getCleanEditorHtml(bodyRte);
   const { error } = await silentSave(()=> supabase.from("reference_pages").update({ title, body }).eq("id", pageId));
@@ -7121,6 +7287,7 @@ function scheduleRefAutosave(pageId, titleInput, bodyRte){
   const statusEl = document.getElementById("ref-save-status");
   if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
   clearTimeout(refSaveTimer);
+  window.pendingAutosaveKeys.add("ref:"+pageId);
   refSaveTimer = setTimeout(()=>{ flushRefSave(pageId, titleInput, bodyRte); }, 700);
 }
 
@@ -7353,10 +7520,12 @@ function scheduleNoteAutosave(noteId, titleInput, bodyRte){
   const statusEl = document.getElementById("note-save-status");
   if(statusEl){ statusEl.textContent = "Saving…"; statusEl.style.color = "var(--text-faint)"; }
   clearTimeout(noteSaveTimer);
+  window.pendingAutosaveKeys.add("note:"+noteId);
   noteSaveTimer = setTimeout(async ()=>{
     const title = titleInput.value.trim() || "Untitled note";
     const body = getCleanEditorHtml(bodyRte);
     const { error } = await silentSave(()=> supabase.from("personal_notes").update({ title, body, updated_at: new Date().toISOString() }).eq("id", noteId));
+    window.pendingAutosaveKeys.delete("note:"+noteId);
     const statusElNow = document.getElementById("note-save-status");
     if(error){
       if(statusElNow){ statusElNow.textContent = "Couldn't save: " + error.message; statusElNow.style.color = "var(--red)"; }
