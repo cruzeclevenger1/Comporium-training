@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r85";
+const BUILD_VERSION = "2026-07-27T00:00Z-r86";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5145,16 +5145,24 @@ function wireRichEditor(id){
     if(quoteBtn){ try{ quoteBtn.classList.toggle("active", document.queryCommandValue("formatBlock").toLowerCase()==="blockquote"); }catch(e){} }
     const sizeSelect = toolbar.querySelector('select[data-cmd="fontSize"]');
     if(sizeSelect){
-      try{
-        const val = document.queryCommandValue("fontSize");
-        // queryCommandValue can return "" (no selection yet) or a size that
-        // doesn't match any of the four options here (browsers sometimes
-        // report the raw computed size rather than an execCommand size
-        // level) — default to Normal rather than leaving the dropdown
-        // showing whatever it last happened to display.
-        const hasOption = [...sizeSelect.options].some(o=>o.value===val);
-        sizeSelect.value = hasOption ? val : "3";
-      }catch(e){}
+      // Walks up from the cursor looking for the nearest explicit font-size
+      // style, rather than relying on queryCommandValue("fontSize") — that
+      // reads the legacy HTML <font size> attribute, which the apply logic
+      // below no longer uses (switched to CSS spans specifically because
+      // <font> tags don't cleanly replace each other when nested, which is
+      // what was silently breaking "switch back to Normal").
+      let node = window.getSelection().anchorNode;
+      if(node && node.nodeType===3) node = node.parentElement;
+      let sizeOption = "3";
+      while(node && node!==editorEl){
+        if(node.style && node.style.fontSize){
+          const px = parseInt(node.style.fontSize);
+          sizeOption = px<=12 ? "2" : px>=24 ? "7" : px>=18 ? "5" : "3";
+          break;
+        }
+        node = node.parentElement;
+      }
+      sizeSelect.value = sizeOption;
     }
   };
   editorEl.addEventListener("click", updateToolbarState);
@@ -5252,7 +5260,43 @@ function wireRichEditor(id){
     });
   });
   const sizeSelect = toolbar.querySelector('select[data-cmd="fontSize"]');
-  if(sizeSelect) sizeSelect.addEventListener("change", ()=>{ editorEl.focus(); document.execCommand("fontSize", false, sizeSelect.value); });
+  const FONT_SIZE_PX = { "2":"12px", "3":"14px", "5":"19px", "7":"26px" };
+  if(sizeSelect){
+    // mousedown, not just relying on the change handler's own focus() call —
+    // clicking into the <select> itself can otherwise lose the selection
+    // before change even fires, same pattern already used for the color pickers.
+    sizeSelect.addEventListener("mousedown", (e)=>{ e.stopPropagation(); saveCurrentRange(); });
+    sizeSelect.addEventListener("change", ()=>{
+      editorEl.focus();
+      restoreRange();
+      // execCommand("fontSize", ...) wraps the selection in a legacy <font
+      // size> tag, but doesn't cleanly replace a previous one — reapplying
+      // it over already-sized text nests a new tag inside the old one
+      // instead of replacing it, which is what was silently breaking
+      // "switch back to Normal" (the dropdown would apply, but the
+      // underlying nested tag meant nothing actually changed). Using a
+      // single fixed marker value here regardless of the target size, then
+      // converting whatever <font size="7"> tags that produced into a
+      // clean CSS span with the actual target size, sidesteps the nesting
+      // problem entirely — a span with an explicit size always wins over
+      // anything it's nested inside, cleanly, every time.
+      //
+      // Captured before the command runs, specifically so any *pre-existing*
+      // "Huge" text elsewhere in the same lesson (also a real <font size="7">
+      // tag) doesn't get swept up and incorrectly resized too — only tags
+      // genuinely new from this specific operation should convert.
+      const preExisting = new Set(editorEl.querySelectorAll('font[size="7"]'));
+      document.execCommand("fontSize", false, "7");
+      editorEl.querySelectorAll('font[size="7"]').forEach(f=>{
+        if(preExisting.has(f)) return;
+        const span = document.createElement("span");
+        span.style.fontSize = FONT_SIZE_PX[sizeSelect.value] || FONT_SIZE_PX["3"];
+        while(f.firstChild) span.appendChild(f.firstChild);
+        f.replaceWith(span);
+      });
+      editorEl.dispatchEvent(new Event("input", { bubbles:true }));
+    });
+  }
   const blockSelect = toolbar.querySelector('select[data-cmd="formatBlock"]');
   if(blockSelect) blockSelect.addEventListener("change", ()=>{ editorEl.focus(); document.execCommand("formatBlock", false, blockSelect.value); blockSelect.value = "P"; });
   toolbar.querySelectorAll('input[type="color"][data-cmd]').forEach(colorInput=>{
