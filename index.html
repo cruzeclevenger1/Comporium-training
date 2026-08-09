@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r87";
+const BUILD_VERSION = "2026-07-27T00:00Z-r88";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5265,11 +5265,10 @@ function wireRichEditor(id){
       let px = parseInt(sizeInput.value);
       if(!px || px<8) px = 8;
       if(px>96) px = 96;
-      sizeInput.value = px;
       editorEl.focus();
       restoreRange();
       const sel = window.getSelection();
-      if(!sel.rangeCount || !editorEl.contains(sel.anchorNode)) return;
+      if(!sel.rangeCount || !editorEl.contains(sel.anchorNode)){ sizeInput.value = px; return; }
       const range = sel.getRangeAt(0);
       if(range.collapsed){
         // No text selected, just a cursor position — insert an empty sized
@@ -5303,6 +5302,15 @@ function wireRichEditor(id){
         sel.addRange(newRange);
       }
       editorEl.dispatchEvent(new Event("input", { bubbles:true }));
+      // Set last, deliberately — editorEl.focus() above synchronously fires
+      // the editor's own "focus" listener, which calls updateToolbarState()
+      // immediately, before restoreRange() or the actual resize even runs.
+      // At that moment the selection is still stale, so that premature sync
+      // reads the wrong size and would otherwise silently overwrite this
+      // input's displayed value back to the old number right after applying
+      // a change — this final assignment guarantees it shows what was
+      // actually just applied, regardless of what happened in between.
+      sizeInput.value = px;
     });
   }
   const blockSelect = toolbar.querySelector('select[data-cmd="formatBlock"]');
