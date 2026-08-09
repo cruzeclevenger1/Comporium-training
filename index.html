@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r86";
+const BUILD_VERSION = "2026-07-27T00:00Z-r87";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5050,12 +5050,9 @@ function richEditorHtml(id, initialHtml){
         <option value="H2">Heading</option>
         <option value="H3">Subheading</option>
       </select>
-      <select data-cmd="fontSize" title="Text size">
-        <option value="2">Small</option>
-        <option value="3" selected>Normal</option>
-        <option value="5">Large</option>
-        <option value="7">Huge</option>
-      </select>
+      <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-dim);font-family:var(--sans);white-space:nowrap;padding:0 2px;">Font Size:
+        <input type="number" data-cmd="fontSizeNum" min="8" max="96" step="1" value="14" style="width:52px;padding:4px 5px;border-radius:5px;border:1px solid var(--stroke);background:var(--panel);color:var(--text);font-size:12px;font-family:var(--mono);">
+      </label>
       <div class="rte-sep"></div>
       <button type="button" data-cmd="bold" title="Bold"><b>B</b></button>
       <button type="button" data-cmd="italic" title="Italic"><i>I</i></button>
@@ -5143,26 +5140,19 @@ function wireRichEditor(id){
     });
     const quoteBtn = toolbar.querySelector('button[data-cmd="blockquote"]');
     if(quoteBtn){ try{ quoteBtn.classList.toggle("active", document.queryCommandValue("formatBlock").toLowerCase()==="blockquote"); }catch(e){} }
-    const sizeSelect = toolbar.querySelector('select[data-cmd="fontSize"]');
-    if(sizeSelect){
-      // Walks up from the cursor looking for the nearest explicit font-size
-      // style, rather than relying on queryCommandValue("fontSize") — that
-      // reads the legacy HTML <font size> attribute, which the apply logic
-      // below no longer uses (switched to CSS spans specifically because
-      // <font> tags don't cleanly replace each other when nested, which is
-      // what was silently breaking "switch back to Normal").
+    const sizeInput = toolbar.querySelector('input[data-cmd="fontSizeNum"]');
+    if(sizeInput && document.activeElement !== sizeInput){
+      // Walk up from the cursor looking for the nearest explicit font-size
+      // style. Skipped while the input itself is focused so it doesn't
+      // fight with someone actively typing a new number into it.
       let node = window.getSelection().anchorNode;
       if(node && node.nodeType===3) node = node.parentElement;
-      let sizeOption = "3";
+      let px = 14; // editor's own default (.rte-body font-size)
       while(node && node!==editorEl){
-        if(node.style && node.style.fontSize){
-          const px = parseInt(node.style.fontSize);
-          sizeOption = px<=12 ? "2" : px>=24 ? "7" : px>=18 ? "5" : "3";
-          break;
-        }
+        if(node.style && node.style.fontSize){ px = parseInt(node.style.fontSize) || 14; break; }
         node = node.parentElement;
       }
-      sizeSelect.value = sizeOption;
+      sizeInput.value = px;
     }
   };
   editorEl.addEventListener("click", updateToolbarState);
@@ -5259,41 +5249,59 @@ function wireRichEditor(id){
       updateToolbarState();
     });
   });
-  const sizeSelect = toolbar.querySelector('select[data-cmd="fontSize"]');
-  const FONT_SIZE_PX = { "2":"12px", "3":"14px", "5":"19px", "7":"26px" };
-  if(sizeSelect){
-    // mousedown, not just relying on the change handler's own focus() call —
-    // clicking into the <select> itself can otherwise lose the selection
-    // before change even fires, same pattern already used for the color pickers.
-    sizeSelect.addEventListener("mousedown", (e)=>{ e.stopPropagation(); saveCurrentRange(); });
-    sizeSelect.addEventListener("change", ()=>{
+  const sizeInput = toolbar.querySelector('input[data-cmd="fontSizeNum"]');
+  if(sizeInput){
+    // Deliberately not using execCommand("fontSize", ...) at all this time —
+    // that command wraps the selection in a legacy <font size> tag, and
+    // proved unreliable in practice for cleanly replacing an already-sized
+    // selection (nested/nesting-adjacent nesting quirks). This instead
+    // manually extracts the selected content, strips any font-size styling
+    // already inside it (so re-applying can't nest or conflict with itself),
+    // and wraps the whole thing in exactly one clean span with the exact
+    // pixel value requested — full control, no reliance on a specific
+    // browser's legacy-command behavior.
+    sizeInput.addEventListener("mousedown", (e)=>{ e.stopPropagation(); saveCurrentRange(); });
+    sizeInput.addEventListener("change", ()=>{
+      let px = parseInt(sizeInput.value);
+      if(!px || px<8) px = 8;
+      if(px>96) px = 96;
+      sizeInput.value = px;
       editorEl.focus();
       restoreRange();
-      // execCommand("fontSize", ...) wraps the selection in a legacy <font
-      // size> tag, but doesn't cleanly replace a previous one — reapplying
-      // it over already-sized text nests a new tag inside the old one
-      // instead of replacing it, which is what was silently breaking
-      // "switch back to Normal" (the dropdown would apply, but the
-      // underlying nested tag meant nothing actually changed). Using a
-      // single fixed marker value here regardless of the target size, then
-      // converting whatever <font size="7"> tags that produced into a
-      // clean CSS span with the actual target size, sidesteps the nesting
-      // problem entirely — a span with an explicit size always wins over
-      // anything it's nested inside, cleanly, every time.
-      //
-      // Captured before the command runs, specifically so any *pre-existing*
-      // "Huge" text elsewhere in the same lesson (also a real <font size="7">
-      // tag) doesn't get swept up and incorrectly resized too — only tags
-      // genuinely new from this specific operation should convert.
-      const preExisting = new Set(editorEl.querySelectorAll('font[size="7"]'));
-      document.execCommand("fontSize", false, "7");
-      editorEl.querySelectorAll('font[size="7"]').forEach(f=>{
-        if(preExisting.has(f)) return;
+      const sel = window.getSelection();
+      if(!sel.rangeCount || !editorEl.contains(sel.anchorNode)) return;
+      const range = sel.getRangeAt(0);
+      if(range.collapsed){
+        // No text selected, just a cursor position — insert an empty sized
+        // span there so whatever gets typed next inherits the new size,
+        // rather than silently doing nothing.
         const span = document.createElement("span");
-        span.style.fontSize = FONT_SIZE_PX[sizeSelect.value] || FONT_SIZE_PX["3"];
-        while(f.firstChild) span.appendChild(f.firstChild);
-        f.replaceWith(span);
-      });
+        span.style.fontSize = px + "px";
+        span.appendChild(document.createTextNode("\u200b"));
+        range.insertNode(span);
+        const newRange = document.createRange();
+        newRange.setStart(span.firstChild, 1);
+        newRange.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+      } else {
+        const frag = range.extractContents();
+        const temp = document.createElement("div");
+        temp.appendChild(frag);
+        temp.querySelectorAll("[style]").forEach(el=>{
+          el.style.fontSize = "";
+          if(!el.getAttribute("style")) el.removeAttribute("style");
+        });
+        temp.querySelectorAll("font[size]").forEach(el=> el.removeAttribute("size")); // legacy tags from older content
+        const span = document.createElement("span");
+        span.style.fontSize = px + "px";
+        while(temp.firstChild) span.appendChild(temp.firstChild);
+        range.insertNode(span);
+        const newRange = document.createRange();
+        newRange.selectNodeContents(span);
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+      }
       editorEl.dispatchEvent(new Event("input", { bubbles:true }));
     });
   }
