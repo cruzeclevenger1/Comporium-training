@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r89";
+const BUILD_VERSION = "2026-07-27T00:00Z-r91";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1183,8 +1183,8 @@ async function logout(){
 function renderShell(inner){
   const inModulesFlow = ["lesson","quiz","results","editor"].includes(view);
   const inQuizFlow = ["quiz-take","quiz-result-standalone","quiz-builder","quiz-sent-detail"].includes(view);
-  const crumbLabel = inModulesFlow ? "TRAINING MODULES" : inQuizFlow ? "QUIZZES" : (view==="quiz-analyze") ? "TEAMS" : "HOME";
-  const crumbTarget = inModulesFlow ? "dashboard" : inQuizFlow ? "quizzes" : (view==="quiz-analyze") ? "team" : "home";
+  const crumbLabel = inModulesFlow ? "TRAINING MODULES" : inQuizFlow ? "QUIZZES" : "HOME";
+  const crumbTarget = inModulesFlow ? "dashboard" : inQuizFlow ? "quizzes" : "home";
   const section = view==="home" ? "home" : ["dashboard","lesson","quiz","results","editor"].includes(view) ? "modules" : view==="reference" ? "reference" : view==="notes" ? "notes" : null;
 
   root.innerHTML = `
@@ -1225,7 +1225,7 @@ function renderShell(inner){
         <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
       </div>
     </header>
-    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes"||view==="guest-features") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='quiz-analyze'?'QUIZ ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='quiz-sent-detail'?'SENT QUIZ':view==='edit-log'?'EDIT LOG':''))}`}</nav>`}
+    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes"||view==="guest-features") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='quiz-sent-detail'?'SENT QUIZ':view==='edit-log'?'EDIT LOG':''))}`}</nav>`}
     <div class="top-nav">
       <button class="top-nav-btn ${section==='home'?'active':''}" id="nav-home">${T('nav.dashboard','Dashboard')}</button>
       <button class="top-nav-btn ${section==='modules'?'active':''}" id="nav-modules">${T('nav.modules','Training Modules')}</button>
@@ -2252,7 +2252,6 @@ function renderTeam(){
               <option value="asc" ${teamQuizSort==='asc'?'selected':''}>Least completed first</option>
               <option value="desc" ${teamQuizSort==='desc'?'selected':''}>Most completed first</option>
             </select>
-            <button class="btn" id="go-quiz-analyze-btn" style="margin-left:auto;">📊 Analyze</button>
           </div>
           <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Percent of sent quizzes each person has completed. Click a completed quiz to see their answers.</p>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Completion</th><th></th><th></th></tr></thead><tbody>${quizRowsHtml}</tbody></table></div>
@@ -2272,7 +2271,6 @@ function renderTeam(){
     render();
   }));
 
-  document.getElementById("go-quiz-analyze-btn")?.addEventListener("click", openQuizAnalyze);
   document.getElementById("new-team-btn")?.addEventListener("click", ()=> openTeamManageModal(null));
   root.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
   document.getElementById("module-filter")?.addEventListener("change", (e)=>{ teamModuleFilter = e.target.value; render(); });
@@ -3293,101 +3291,6 @@ function renderEditLog(){
   });
 }
 
-let QUIZ_ANALYZE_ROWS = [];
-let QUIZ_ANALYZE_MISSED = [];
-let QUIZ_ANALYZE_TOTALS = { totalQuizzes:0, totalPeople:0, avgCompletion:0, totalSubmissions:0 };
-
-async function openQuizAnalyze(){
-  if(!QUIZ_PROGRESS_ROWS) await loadQuizProgressData();
-  const { data: quizzes } = await supabase.from("standalone_quizzes").select("*").eq("sent", true);
-  const { data: questions } = await supabase.from("standalone_quiz_questions").select("*");
-  const { data: attempts } = await supabase.from("standalone_quiz_attempts").select("*");
-
-  const totalPeople = QUIZ_PROGRESS_ROWS.length;
-  const avgCompletion = totalPeople ? Math.round(QUIZ_PROGRESS_ROWS.reduce((a,r)=>a+r.pct,0)/totalPeople) : 0;
-
-  QUIZ_ANALYZE_ROWS = (quizzes||[]).map(q=>{
-    const qAttempts = (attempts||[]).filter(a=>a.quiz_id===q.id);
-    const eligibleCount = QUIZ_PROGRESS_ROWS.filter(r=> r.perQuiz.some(pq=>pq.quizId===q.id)).length;
-    return { id:q.id, title:q.title, submissions:qAttempts.length, eligibleCount };
-  });
-
-  const questionTally = {};
-  (attempts||[]).forEach(a=>{
-    (a.answers||[]).forEach(ans=>{
-      if(ans.type !== "multiple_choice") return;
-      const key = a.quiz_id + "::" + ans.question;
-      if(!questionTally[key]) questionTally[key] = { quizId:a.quiz_id, question:ans.question, total:0, missed:0 };
-      questionTally[key].total++;
-      if(!ans.is_correct) questionTally[key].missed++;
-    });
-  });
-  QUIZ_ANALYZE_MISSED = Object.values(questionTally)
-    .filter(q=>q.missed>0)
-    .map(q=>({ ...q, missRate: Math.round((q.missed/q.total)*100), quizTitle: (quizzes||[]).find(x=>x.id===q.quizId)?.title || "Unknown quiz" }))
-    .sort((a,b)=> b.missed - a.missed)
-    .slice(0, 50);
-
-  QUIZ_ANALYZE_TOTALS = { totalQuizzes: (quizzes||[]).length, totalPeople, avgCompletion, totalSubmissions: (attempts||[]).length };
-  view = "quiz-analyze"; render();
-}
-
-let quizAnalyzeSearch = "";
-let quizAnalyzeMissedFilter = "";
-function renderQuizAnalyze(){
-  const filteredQuizRows = quizAnalyzeSearch.trim()
-    ? QUIZ_ANALYZE_ROWS.filter(q=> q.title.toLowerCase().includes(quizAnalyzeSearch.trim().toLowerCase()))
-    : QUIZ_ANALYZE_ROWS;
-  const quizRows = filteredQuizRows.map(q=>{
-    const pct = q.eligibleCount ? Math.round((q.submissions/q.eligibleCount)*100) : 0;
-    return `
-    <tr>
-      <td>${escapeHtml(q.title)}</td>
-      <td style="min-width:150px;"><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="flex:1;"><div style="width:${pct}%"></div></div><span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${q.submissions}/${q.eligibleCount} completed</span></div></td>
-    </tr>`;
-  }).join("");
-
-  const filteredMissed = quizAnalyzeMissedFilter ? QUIZ_ANALYZE_MISSED.filter(q=> q.quizId===quizAnalyzeMissedFilter) : QUIZ_ANALYZE_MISSED.slice(0, 10);
-  const missedHtml = filteredMissed.length ? filteredMissed.map(q=>`
-    <div class="sub-card">
-      <div class="sub-card-head"><span class="tag">${escapeHtml(q.quizTitle)}</span><span style="font-family:var(--mono);font-size:11px;color:var(--red);">${q.missed} misses · ${q.missRate}% miss rate</span></div>
-      <div style="font-size:14px;color:var(--text);">${escapeHtml(q.question)}</div>
-    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">${quizAnalyzeMissedFilter ? "No missed questions for this quiz." : "Not enough quiz submissions yet to show trends."}</p>`;
-  const missedQuizOptions = QUIZ_ANALYZE_ROWS.map(q=>`<option value="${q.id}" ${quizAnalyzeMissedFilter===q.id?'selected':''}>${escapeHtml(q.title)}</option>`).join("");
-
-  renderShell(`
-    <div class="card">
-      <div class="k-label">ADMIN</div>
-      <h2 style="margin-bottom:4px;">Quiz Analyze</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Trends across every standalone quiz that's been sent out.</p>
-      <div class="panel-row">
-        <div class="stat"><div class="num">${QUIZ_ANALYZE_TOTALS.totalQuizzes}</div><div class="lbl">QUIZZES SENT</div></div>
-        <div class="stat"><div class="num">${QUIZ_ANALYZE_TOTALS.avgCompletion}%</div><div class="lbl">AVG COMPLETION</div></div>
-        <div class="stat"><div class="num">${QUIZ_ANALYZE_TOTALS.totalSubmissions}</div><div class="lbl">TOTAL SUBMISSIONS</div></div>
-        <div class="stat"><div class="num">${QUIZ_ANALYZE_TOTALS.totalPeople}</div><div class="lbl">PEOPLE</div></div>
-      </div>
-    </div>
-    <div class="card" style="margin-top:16px;">
-      <h2 style="margin-bottom:14px;">Quiz completion</h2>
-      <input type="text" id="quiz-analyze-search" data-no-enter-submit placeholder="Search quizzes…" value="${escapeHtml(quizAnalyzeSearch)}" class="search-input" style="width:240px;margin-bottom:12px;">
-      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Quiz</th><th>Completed</th></tr></thead><tbody>${quizRows || `<tr><td colspan="2" style="color:var(--text-faint);font-size:13px;">${quizAnalyzeSearch ? "No quizzes match that search." : "No quizzes sent yet."}</td></tr>`}</tbody></table></div>
-    </div>
-    <div class="card" style="margin-top:16px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px;">
-        <h2 style="margin:0;">Most commonly missed questions</h2>
-        <select id="quiz-analyze-missed-filter" style="width:auto;">
-          <option value="">Top 10 across every quiz</option>
-          ${missedQuizOptions}
-        </select>
-      </div>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">Across every submission, everyone.</p>
-      ${missedHtml}
-    </div>
-  `);
-  document.getElementById("quiz-analyze-search").addEventListener("input", (e)=>{ quizAnalyzeSearch = e.target.value; render(); });
-  document.getElementById("quiz-analyze-missed-filter").addEventListener("change", (e)=>{ quizAnalyzeMissedFilter = e.target.value; render(); });
-}
-
 /* ============================================================
    NOTIFICATIONS / MESSAGING
    ============================================================ */
@@ -4160,11 +4063,17 @@ function openSimZoneTargetModal(d, qi, si, zi, onSaved){
 function renderSimZonesHtml(screens, si, qi){
   const screen = screens[si];
   return (screen.zones||[]).map((z,zi)=>{
+    if(z.isFake){
+      return `<div class="sim-zone" data-sim-zone="${qi}:${si}:${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;border:2px dashed var(--red);cursor:pointer;">
+        <button class="sim-zone-del" data-sim-zone-del="${qi}:${si}:${zi}" style="position:absolute;top:-10px;right:-10px;width:18px;height:18px;border-radius:50%;background:#c0392bdd;color:#fff;font-size:11px;line-height:18px;text-align:center;cursor:pointer;border:none;">✕</button>
+        <span style="position:absolute;bottom:2px;left:2px;background:#000000cc;color:var(--red);font-size:10px;padding:1px 4px;border-radius:3px;font-family:var(--mono);white-space:nowrap;">✕ Fake — always a strike</span>
+      </div>`;
+    }
     const targetScreenIdx = z.targetScreenId ? screens.findIndex(s=>s.id===z.targetScreenId) : -1;
     const targetLabel = (targetScreenIdx>=0 ? `→ Screen ${targetScreenIdx+1}` : "→ Finish") + (z.clickType==='right' ? ' · Right-click' : '');
-    return `<div class="sim-zone" data-sim-zone="${qi}:${si}:${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;border:2px dashed var(--cyan);cursor:pointer;">
+    return `<div class="sim-zone" data-sim-zone="${qi}:${si}:${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;border:2px dashed var(--green);cursor:pointer;">
       <button class="sim-zone-del" data-sim-zone-del="${qi}:${si}:${zi}" style="position:absolute;top:-10px;right:-10px;width:18px;height:18px;border-radius:50%;background:#c0392bdd;color:#fff;font-size:11px;line-height:18px;text-align:center;cursor:pointer;border:none;">✕</button>
-      <span style="position:absolute;bottom:2px;left:2px;background:#000000cc;color:var(--cyan);font-size:10px;padding:1px 4px;border-radius:3px;font-family:var(--mono);white-space:nowrap;">${escapeHtml(targetLabel)}</span>
+      <span style="position:absolute;bottom:2px;left:2px;background:#000000cc;color:var(--green);font-size:10px;padding:1px 4px;border-radius:3px;font-family:var(--mono);white-space:nowrap;">${escapeHtml(targetLabel)}</span>
     </div>`;
   }).join("");
 }
@@ -4275,7 +4184,8 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
     });
     overlay.querySelectorAll("[data-sim-play-zone-fs]").forEach(el=>{
       const zi = +el.getAttribute("data-sim-play-zone-fs");
-      const wantsRight = (screen.zones[zi].clickType||"left") === "right";
+      const zone = screen.zones[zi];
+      const wantsRight = (zone.clickType||"left") === "right";
       const activate = (e)=>{
         e.preventDefault(); e.stopPropagation();
         if(!handleZoneClick(zi)) return;
@@ -4286,8 +4196,16 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
         e.preventDefault(); e.stopPropagation();
         registerMisclick(e);
       };
-      el.addEventListener("click", wantsRight ? wrongButton : activate);
-      el.addEventListener("contextmenu", wantsRight ? activate : wrongButton);
+      if(zone.isFake){
+        // Looks and feels exactly like a real button — same hover cursor,
+        // same click responsiveness — but neither click type ever actually
+        // activates it. Always a strike, by design.
+        el.addEventListener("click", wrongButton);
+        el.addEventListener("contextmenu", wrongButton);
+      } else {
+        el.addEventListener("click", wantsRight ? wrongButton : activate);
+        el.addEventListener("contextmenu", wantsRight ? activate : wrongButton);
+      }
     });
   }
   // Screenshots are now storage URLs (not base64 embedded directly in the
@@ -4322,24 +4240,33 @@ function openSimEditFullscreen(qi, si){
     const zonesHtml = renderSimZonesHtml(screens, si, qi);
     overlay.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:1200px;margin-bottom:14px;">
-        <span style="color:var(--text-dim);font-family:var(--mono);font-size:12px;">SCREEN ${si+1} · EDITING FULLSCREEN — drag to add a button</span>
+        <span style="color:var(--text-dim);font-family:var(--mono);font-size:12px;">SCREEN ${si+1} · EDITING FULLSCREEN — drag to add a button, right-click-drag for a fake one</span>
         <button class="btn primary" id="sim-fullscreen-close">Done</button>
       </div>
       <div class="sim-screen-canvas" data-sim-canvas-fs style="max-width:min(94vw,1200px);max-height:80vh;">
         <img src="${screen.image}" style="max-width:min(94vw,1200px);max-height:80vh;display:block;pointer-events:none;user-select:none;" draggable="false">
-        <div class="sim-canvas-hint">✛ Drag to add a button</div>
+        <div class="sim-canvas-hint">✛ Drag for a real button · right-click-drag for a fake one</div>
         ${zonesHtml}
       </div>`;
     document.getElementById("sim-fullscreen-close").addEventListener("click", ()=>{ overlay.remove(); renderEditor(); });
     const canvas = overlay.querySelector("[data-sim-canvas-fs]");
+    canvas.addEventListener("contextmenu", (e)=> e.preventDefault()); // suppress the native right-click menu — right-click-drag here means "draw a fake button" instead
     canvas.addEventListener("mousedown", (e)=>{
       if(e.target.closest(".sim-zone")) return;
+      if(e.button!==0 && e.button!==2) return; // only left (real zone) or right (fake zone) — ignore middle-click etc.
+      const isFake = e.button===2;
       const rect = canvas.getBoundingClientRect();
       const previewEl = document.createElement("div");
-      previewEl.style.cssText = "position:absolute;border:2px solid var(--amber);background:#f5a62333;pointer-events:none;";
+      previewEl.style.cssText = `position:absolute;border:2px solid ${isFake?'var(--red)':'var(--green)'};background:${isFake?'#e74c3c33':'#2ecc7133'};pointer-events:none;`;
       canvas.appendChild(previewEl);
-      _simZoneDrawing = { qi, si, rect, startX:e.clientX, startY:e.clientY, previewEl, draftModule,
-        onZoneAdded: (newIdx)=>{ draw(); openSimZoneTargetModal(draftModule, qi, si, newIdx, ()=>{ scheduleQuizAutosaveGlobal(qi); draw(); }); } };
+      _simZoneDrawing = { qi, si, rect, startX:e.clientX, startY:e.clientY, previewEl, draftModule, isFake,
+        onZoneAdded: (newIdx)=>{
+          draw();
+          // Fake zones have nothing to configure — no target screen, no
+          // click type — so there's no modal to open for them at all,
+          // unlike real zones which need a target picked immediately.
+          if(!isFake) openSimZoneTargetModal(draftModule, qi, si, newIdx, ()=>{ scheduleQuizAutosaveGlobal(qi); draw(); });
+        } };
       e.preventDefault();
     });
     overlay.querySelectorAll("[data-sim-zone-del]").forEach(el=> el.addEventListener("click", (e)=>{
@@ -4352,6 +4279,8 @@ function openSimEditFullscreen(qi, si){
     overlay.querySelectorAll("[data-sim-zone]").forEach(el=> el.addEventListener("click", (e)=>{
       if(e.target.closest("[data-sim-zone-del]")) return;
       const [, , zi] = el.getAttribute("data-sim-zone").split(":").map(Number);
+      const zone = draftModule.quiz[qi].simScreens[si].zones[zi];
+      if(zone && zone.isFake) return; // nothing to configure on a fake zone besides deleting it
       openSimZoneTargetModal(draftModule, qi, si, zi, ()=>{ scheduleQuizAutosaveGlobal(qi); draw(); });
     }));
   }
@@ -5332,7 +5261,7 @@ document.addEventListener("mousemove", (e)=>{
 });
 document.addEventListener("mouseup", (e)=>{
   if(!_simZoneDrawing) return;
-  const { qi, si, rect, startX, startY, previewEl, draftModule: dm, onZoneAdded } = _simZoneDrawing;
+  const { qi, si, rect, startX, startY, previewEl, draftModule: dm, onZoneAdded, isFake } = _simZoneDrawing;
   _simZoneDrawing = null;
   previewEl.remove();
   const x1 = Math.min(startX, e.clientX), x2 = Math.max(startX, e.clientX);
@@ -5341,7 +5270,7 @@ document.addEventListener("mouseup", (e)=>{
   if(wPx < 10 || hPx < 10) return; // too small — treat as an accidental click, not a real zone
   const xPct = ((x1-rect.left)/rect.width)*100, yPct = ((y1-rect.top)/rect.height)*100;
   const wPct = (wPx/rect.width)*100, hPct = (hPx/rect.height)*100;
-  const zone = { x:Math.round(xPct*10)/10, y:Math.round(yPct*10)/10, w:Math.round(wPct*10)/10, h:Math.round(hPct*10)/10, targetScreenId:null, clickType:"left" };
+  const zone = { x:Math.round(xPct*10)/10, y:Math.round(yPct*10)/10, w:Math.round(wPct*10)/10, h:Math.round(hPct*10)/10, targetScreenId:null, clickType:"left", isFake:!!isFake };
   const screen = dm.quiz[qi].simScreens[si];
   if(!screen.zones) screen.zones = [];
   screen.zones.push(zone);
@@ -6318,18 +6247,26 @@ function wireEditorEvents(){
   root.querySelectorAll("[data-sim-zone]").forEach(el=> el.addEventListener("click", (e)=>{
     if(e.target.closest("[data-sim-zone-del]")) return;
     const [qi,si,zi]=el.getAttribute("data-sim-zone").split(":").map(Number);
+    const zone = d.quiz[qi].simScreens[si].zones[zi];
+    if(zone && zone.isFake) return; // nothing to configure on a fake zone besides deleting it
     openSimZoneTargetModal(d, qi, si, zi, ()=>{ scheduleQuizAutosave(qi); renderEditor(); });
   }));
   root.querySelectorAll("[data-sim-canvas]").forEach(canvas=>{
     const [qi,si] = canvas.getAttribute("data-sim-canvas").split(":").map(Number);
+    canvas.addEventListener("contextmenu", (e)=> e.preventDefault()); // suppress the native right-click menu — right-click-drag here means "draw a fake button" instead
     canvas.addEventListener("mousedown", (e)=>{
       if(e.target.closest(".sim-zone")) return; // clicking an existing zone, not drawing a new one
+      if(e.button!==0 && e.button!==2) return;
+      const isFake = e.button===2;
       const rect = canvas.getBoundingClientRect();
       const previewEl = document.createElement("div");
-      previewEl.style.cssText = "position:absolute;border:2px solid var(--amber);background:#f5a62333;pointer-events:none;";
+      previewEl.style.cssText = `position:absolute;border:2px solid ${isFake?'var(--red)':'var(--green)'};background:${isFake?'#e74c3c33':'#2ecc7133'};pointer-events:none;`;
       canvas.appendChild(previewEl);
-      _simZoneDrawing = { qi, si, rect, startX:e.clientX, startY:e.clientY, previewEl, draftModule:d,
-        onZoneAdded: (newIdx)=>{ renderEditor(); openSimZoneTargetModal(d, qi, si, newIdx, ()=>{ scheduleQuizAutosave(qi); renderEditor(); }); } };
+      _simZoneDrawing = { qi, si, rect, startX:e.clientX, startY:e.clientY, previewEl, draftModule:d, isFake,
+        onZoneAdded: (newIdx)=>{
+          renderEditor();
+          if(!isFake) openSimZoneTargetModal(d, qi, si, newIdx, ()=>{ scheduleQuizAutosave(qi); renderEditor(); });
+        } };
       e.preventDefault();
     });
   });
@@ -7312,7 +7249,6 @@ function render(){
   else if(view==="quiz-take") renderQuizTake();
   else if(view==="quiz-result-standalone") renderQuizResultStandalone();
   else if(view==="quiz-builder") renderQuizBuilder();
-  else if(view==="quiz-analyze") renderQuizAnalyze();
   else if(view==="edit-log") renderEditLog();
   else if(view==="quiz-sent-detail") renderQuizSentDetail();
 }
