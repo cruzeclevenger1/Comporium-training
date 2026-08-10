@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r94";
+const BUILD_VERSION = "2026-07-27T00:00Z-r95";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -4186,7 +4186,7 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
     const registerMisclick = (e)=>{
       showMisclickX(e.clientX, e.clientY);
       quizSimMisclicks[quizIdx]++;
-      if(quizSimMisclicks[quizIdx] >= 3){ tooManyMisclicks(); }
+      if(quizSimMisclicks[quizIdx] >= 3){ tooManyMisclicks(); } else { draw(); }
     };
     // Right-click is repurposed here (some zones expect it), so the native
     // context menu is always suppressed inside the simulation, not just on
