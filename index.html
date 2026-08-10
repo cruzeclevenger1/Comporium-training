@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r91";
+const BUILD_VERSION = "2026-07-27T00:00Z-r92";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -4066,14 +4066,10 @@ function renderSimZonesHtml(screens, si, qi){
     if(z.isFake){
       return `<div class="sim-zone" data-sim-zone="${qi}:${si}:${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;border:2px dashed var(--red);cursor:pointer;">
         <button class="sim-zone-del" data-sim-zone-del="${qi}:${si}:${zi}" style="position:absolute;top:-10px;right:-10px;width:18px;height:18px;border-radius:50%;background:#c0392bdd;color:#fff;font-size:11px;line-height:18px;text-align:center;cursor:pointer;border:none;">✕</button>
-        <span style="position:absolute;bottom:2px;left:2px;background:#000000cc;color:var(--red);font-size:10px;padding:1px 4px;border-radius:3px;font-family:var(--mono);white-space:nowrap;">✕ Fake — always a strike</span>
       </div>`;
     }
-    const targetScreenIdx = z.targetScreenId ? screens.findIndex(s=>s.id===z.targetScreenId) : -1;
-    const targetLabel = (targetScreenIdx>=0 ? `→ Screen ${targetScreenIdx+1}` : "→ Finish") + (z.clickType==='right' ? ' · Right-click' : '');
     return `<div class="sim-zone" data-sim-zone="${qi}:${si}:${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;border:2px dashed var(--green);cursor:pointer;">
       <button class="sim-zone-del" data-sim-zone-del="${qi}:${si}:${zi}" style="position:absolute;top:-10px;right:-10px;width:18px;height:18px;border-radius:50%;background:#c0392bdd;color:#fff;font-size:11px;line-height:18px;text-align:center;cursor:pointer;border:none;">✕</button>
-      <span style="position:absolute;bottom:2px;left:2px;background:#000000cc;color:var(--green);font-size:10px;padding:1px 4px;border-radius:3px;font-family:var(--mono);white-space:nowrap;">${escapeHtml(targetLabel)}</span>
     </div>`;
   }).join("");
 }
