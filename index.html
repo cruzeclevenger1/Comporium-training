@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r93";
+const BUILD_VERSION = "2026-07-27T00:00Z-r94";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1790,10 +1790,18 @@ function renderResults(){
     return;
   }
 
-  const s = progressMap[m.id]; const p = pct(s);
-  if(quizJustFinished){ quizJustFinished = false; if(p===100) launchConfetti(); }
-  const leds = Array.from({length:5}).map((_,i)=>{ const lit = i < Math.round((s.lastScore/s.total)*5); const color = p===100?"on-green":p>=60?"on-amber":"on-red"; return `<span class="led ${lit?color:''}"></span>`; }).join("");
-  const verdict = p===100?"Fully registered. This module is locked in.":p>=60?"Mostly holding — worth a second pass before it's live-call ready.":"Signal's not there yet. Revisit the lessons and retake when ready.";
+  const s = progressMap[m.id];
+  // Deliberately based on s.lastScore (this specific attempt), not pct(s)
+  // (which reflects the best score ever achieved on this quiz) — the score
+  // number and LED count shown below already use lastScore, so using the
+  // best-ever percentage here for confetti/color/verdict was a real
+  // mismatch: retaking a quiz you'd once gotten 100% on, and failing it
+  // this time, could still show a green "fully registered" verdict and
+  // launch confetti, since the best score never actually changed.
+  const currentPct = s.total ? Math.round((s.lastScore/s.total)*100) : 0;
+  if(quizJustFinished){ quizJustFinished = false; if(currentPct===100) launchConfetti(); }
+  const leds = Array.from({length:5}).map((_,i)=>{ const lit = i < Math.round((s.lastScore/s.total)*5); const color = currentPct===100?"on-green":currentPct>=60?"on-amber":"on-red"; return `<span class="led ${lit?color:''}"></span>`; }).join("");
+  const verdict = currentPct===100?"Fully registered. This module is locked in.":currentPct>=60?"Mostly holding — worth a second pass before it's live-call ready.":"Signal's not there yet. Revisit the lessons and retake when ready.";
   const attemptsUsed = s.attempts || 0;
   const attemptsExhausted = attemptsUsed >= MAX_QUIZ_ATTEMPTS && !canEditContent();
   const hasMissed = s.lastScore < s.total && !attemptsExhausted;
@@ -4119,24 +4127,16 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
     overlay.remove();
     quizAnswers[quizIdx] = "failed";
     scheduleQuizProgressSave();
-    openModal(`
-      <h3>Too many missed clicks</h3>
-      <p class="sub">You've missed too many clicks — this question is marked incorrect, same as a wrong multiple-choice answer. You can keep going, or retake the full quiz afterward if you'd like another shot at it.</p>
-      <div class="modal-actions"><button class="btn primary" id="sim-misclick-ok">Continue</button></div>
-    `);
-    document.getElementById("sim-misclick-ok").addEventListener("click", ()=>{
-      closeModal();
-      // Deliberately just re-rendering the inline quiz view here rather than
-      // trying to advance to the next question directly — quizIdx is a
-      // parameter of this function, which shadows the actual global quizIdx
-      // that renderQuiz()'s own Next/Finish button logic reads and advances.
-      // Incrementing it here would silently touch a local copy about to be
-      // discarded, never the real counter. Re-rendering shows this same
-      // question in its now-failed state (matching how a revealed wrong
-      // multiple-choice answer looks), with that existing, correctly-wired
-      // button available to move forward.
-      render();
-    });
+    // Deliberately just re-rendering the inline quiz view here rather than
+    // trying to advance to the next question directly — quizIdx is a
+    // parameter of this function, which shadows the actual global quizIdx
+    // that renderQuiz()'s own Next/Finish button logic reads and advances.
+    // Incrementing it here would silently touch a local copy about to be
+    // discarded, never the real counter. Re-rendering shows this same
+    // question in its now-failed state (matching how a revealed wrong
+    // multiple-choice answer looks), with that existing, correctly-wired
+    // button available to move forward.
+    render();
   }
 
   function draw(){
@@ -4164,11 +4164,16 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
     }
 
     const zonesHtml = (screen.zones||[]).map((z,zi)=>`<div class="sim-play-zone" data-sim-play-zone-fs="${zi}" style="position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;cursor:pointer;"></div>`).join("");
+    const misclickCount = quizSimMisclicks[quizIdx];
+    // Bigger and color-escalating (dim → amber → red as strikes approach the
+    // limit) rather than small and uniformly faint — the count needs to
+    // actually catch the eye during a fast-moving exercise, not blend in.
+    const misclickColor = misclickCount>=2 ? "var(--red)" : misclickCount>=1 ? "var(--amber)" : "var(--text-dim)";
     overlay.innerHTML = `
       <div style="width:100%;max-width:1300px;margin-bottom:14px;">
         <h2 style="color:var(--text);font-size:20px;font-weight:700;margin:0 0 12px;">${escapeHtml(q.q)}</h2>
         <div style="display:flex;justify-content:space-between;align-items:center;">
-          <span style="color:var(--text-faint);font-family:var(--mono);font-size:12px;">MISCLICKS: ${quizSimMisclicks[quizIdx]}/3</span>
+          <span style="color:${misclickColor};font-family:var(--mono);font-size:18px;font-weight:700;">MISCLICKS: ${misclickCount}/3</span>
           <button class="btn" id="sim-play-fullscreen-close">✕ Exit fullscreen</button>
         </div>
       </div>
