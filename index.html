@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r92";
+const BUILD_VERSION = "2026-07-27T00:00Z-r93";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1650,10 +1650,14 @@ function renderQuiz(){
     const screen = screens[quizSimScreenIndex[quizIdx]];
     if(!screen || !screen.image){
       bodyHtml = `<p style="color:var(--text-faint);">This simulation hasn't been set up yet.</p>`;
-    } else if(selected){
+    } else if(selected === "done"){
       bodyHtml = `<div style="position:relative;display:inline-block;max-width:100%;border-radius:8px;box-shadow:0 0 0 3px var(--green), 0 0 22px 4px #2ecc7155;">
         <img src="${screen.image}" style="max-width:100%;display:block;user-select:none;border-radius:8px;opacity:.75;" draggable="false">
       </div><p style="color:var(--green);font-size:13px;margin-top:12px;">✓ Done — you found it.</p>`;
+    } else if(selected === "failed"){
+      bodyHtml = `<div style="position:relative;display:inline-block;max-width:100%;border-radius:8px;box-shadow:0 0 0 3px var(--red), 0 0 22px 4px #e74c3c55;">
+        <img src="${screen.image}" style="max-width:100%;display:block;user-select:none;border-radius:8px;opacity:.75;" draggable="false">
+      </div><p style="color:var(--red);font-size:13px;margin-top:12px;">✗ Incorrect — too many missed clicks.</p>`;
     } else {
       bodyHtml = `<p style="color:var(--text-dim);font-size:13.5px;margin-bottom:10px;">This exercise only works in fullscreen. Click the screenshot to begin.</p>
       <div style="position:relative;display:inline-block;max-width:100%;cursor:pointer;" id="sim-play-inline-trigger">
@@ -1724,7 +1728,7 @@ async function finishQuiz(){
   quizActiveIndices.forEach((realIdx, i)=>{
     const q = m.quiz[realIdx];
     if(q.type === 'simulation'){
-      answerDetail[realIdx] = { question:q.q, type:'simulation', is_correct: true };
+      answerDetail[realIdx] = { question:q.q, type:'simulation', is_correct: quizAnswers[i] === "done" };
     } else {
       answerDetail[realIdx] = { question:q.q, options:q.opts, selected:quizAnswers[i], correct:q.correct, is_correct: quizAnswers[i]===q.correct };
     }
@@ -2457,8 +2461,10 @@ function renderInlineAttemptDetailHtml(person){
   const missedHtml = missed.length ? missed.map((x,i)=>`
     <div class="sub-card">
       <div style="font-size:14px;margin-bottom:8px;">${escapeHtml(x.question)}</div>
-      <div style="font-size:13px;color:var(--red);margin-bottom:4px;">Their answer: ${escapeHtml(x.options[x.selected] ?? '(no answer)')}</div>
-      <div style="font-size:13px;color:var(--green);margin-bottom:10px;">Correct answer: ${escapeHtml(x.options[x.correct])}</div>
+      ${x.type==='simulation'
+        ? `<div style="font-size:13px;color:var(--red);margin-bottom:10px;">Missed too many clicks in the simulation — marked incorrect.</div>`
+        : `<div style="font-size:13px;color:var(--red);margin-bottom:4px;">Their answer: ${escapeHtml(x.options[x.selected] ?? '(no answer)')}</div>
+      <div style="font-size:13px;color:var(--green);margin-bottom:10px;">Correct answer: ${escapeHtml(x.options[x.correct])}</div>`}
       <button class="mini-btn" data-coach="${i}">💬 Discuss with ${escapeHtml(person.name)}</button>
     </div>
   `).join("") : `<p style="color:var(--green);font-size:13.5px;">No missed questions on this attempt — clean sweep.</p>`;
@@ -4077,7 +4083,7 @@ function renderSimZonesHtml(screens, si, qi){
 function showSimWarningModal(onProceed){
   openModal(`
     <h3>⚠ Simulated Navigation</h3>
-    <p class="sub">You are about to start a Simulated Navigation question. Click the right buttons to navigate to the finish, or you get a strike. 3 strikes, and you must restart the quiz.</p>
+    <p class="sub">You are about to start a Simulated Navigation question. Click the right buttons to navigate to the finish, or you get a strike. 3 strikes, and this question is marked incorrect — same as a wrong multiple-choice answer — and the quiz continues from there.</p>
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text-dim);margin-top:10px;"><input type="checkbox" id="sim-warning-dontshow"> Don't show this again</label>
     <div class="modal-actions"><button class="btn primary" id="sim-warning-ok">Start</button></div>
   `);
@@ -4111,14 +4117,25 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
 
   function tooManyMisclicks(){
     overlay.remove();
+    quizAnswers[quizIdx] = "failed";
+    scheduleQuizProgressSave();
     openModal(`
       <h3>Too many missed clicks</h3>
-      <p class="sub">You've missed too many clicks, please reread the lesson and try again.</p>
-      <div class="modal-actions"><button class="btn primary" id="sim-misclick-ok">OK</button></div>
+      <p class="sub">You've missed too many clicks — this question is marked incorrect, same as a wrong multiple-choice answer. You can keep going, or retake the full quiz afterward if you'd like another shot at it.</p>
+      <div class="modal-actions"><button class="btn primary" id="sim-misclick-ok">Continue</button></div>
     `);
     document.getElementById("sim-misclick-ok").addEventListener("click", ()=>{
       closeModal();
-      currentLessonIdx = 0; view = "lesson"; render();
+      // Deliberately just re-rendering the inline quiz view here rather than
+      // trying to advance to the next question directly — quizIdx is a
+      // parameter of this function, which shadows the actual global quizIdx
+      // that renderQuiz()'s own Next/Finish button logic reads and advances.
+      // Incrementing it here would silently touch a local copy about to be
+      // discarded, never the real counter. Re-rendering shows this same
+      // question in its now-failed state (matching how a revealed wrong
+      // multiple-choice answer looks), with that existing, correctly-wired
+      // button available to move forward.
+      render();
     });
   }
 
