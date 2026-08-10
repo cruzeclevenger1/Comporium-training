@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r88";
+const BUILD_VERSION = "2026-07-27T00:00Z-r89";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -838,7 +838,6 @@ function exitGuestMode(){
   session = null; profile = null;
   MODULES = []; progressMap = {}; REFERENCE_PAGES = []; PERSONAL_NOTES = []; TEAMS_LIST = []; teamRows = [];
   NOTIF_ANNOUNCEMENTS = []; NOTIF_THREADS = []; NOTIF_UNCLAIMED = [];
-  ANALYZE_MODULE_STATS = []; ANALYZE_MISSED_QUESTIONS = []; ANALYZE_TOTALS = { totalPeople:0, notStarted:0, totalAttempts:0, totalFlags:0 };
   removeFeedbackButton();
   view = "auth"; authMode = "login"; render();
 }
@@ -927,15 +926,6 @@ function buildGuestFixtures(customization){
   NOTIF_ANNOUNCEMENTS = [ { id:"gann1", sender_name: srcAnn.senderName || "Admin", created_at: now, body: srcAnn.body } ];
   NOTIF_THREADS = [];
   NOTIF_UNCLAIMED = (MODULES[1] && MODULES[1].quiz[0]) ? [ { id:"gflag1", type:"flag", sender_name: teamRows[0]?teamRows[0].name:"A teammate", created_at: now, context:`${MODULES[1].title} — Q1`, body:"<p>Is this question worded confusingly? Just double-checking before I answer.</p>" } ] : [];
-
-  ANALYZE_MODULE_STATS = MODULES.map(m=>({
-    id:m.id, title:m.title,
-    avgCompletion: teamRows.length ? Math.round(teamRows.reduce((a,r)=>a+(r.perModule[m.id]||0),0)/teamRows.length) : 0,
-    masteredCount: teamRows.filter(r=>r.perModule[m.id]===100).length,
-    startedCount: teamRows.filter(r=>(r.perModule[m.id]||0)>0).length
-  }));
-  ANALYZE_MISSED_QUESTIONS = (MODULES[1] && MODULES[1].quiz[0]) ? [ { moduleId:MODULES[1].id, moduleTitle:MODULES[1].title, question:MODULES[1].quiz[0].q, missed:4, total:6, missRate:67 } ] : [];
-  ANALYZE_TOTALS = { totalPeople: teamRows.length, notStarted: teamRows.filter(r=>r.overall===0).length, totalAttempts: teamRows.length*3, totalFlags: NOTIF_UNCLAIMED.length };
 
   UI_TEXT = {}; UI_TEXT_DEFAULTS = {};
 }
@@ -1193,8 +1183,8 @@ async function logout(){
 function renderShell(inner){
   const inModulesFlow = ["lesson","quiz","results","editor"].includes(view);
   const inQuizFlow = ["quiz-take","quiz-result-standalone","quiz-builder","quiz-sent-detail"].includes(view);
-  const crumbLabel = inModulesFlow ? "TRAINING MODULES" : inQuizFlow ? "QUIZZES" : (view==="module-analyze-detail") ? "ANALYZE" : ((view==="analyze"||view==="quiz-analyze") ? "TEAMS" : "HOME");
-  const crumbTarget = inModulesFlow ? "dashboard" : inQuizFlow ? "quizzes" : (view==="module-analyze-detail") ? "analyze" : ((view==="analyze"||view==="quiz-analyze") ? "team" : "home");
+  const crumbLabel = inModulesFlow ? "TRAINING MODULES" : inQuizFlow ? "QUIZZES" : (view==="quiz-analyze") ? "TEAMS" : "HOME";
+  const crumbTarget = inModulesFlow ? "dashboard" : inQuizFlow ? "quizzes" : (view==="quiz-analyze") ? "team" : "home";
   const section = view==="home" ? "home" : ["dashboard","lesson","quiz","results","editor"].includes(view) ? "modules" : view==="reference" ? "reference" : view==="notes" ? "notes" : null;
 
   root.innerHTML = `
@@ -1235,7 +1225,7 @@ function renderShell(inner){
         <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
       </div>
     </header>
-    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes"||view==="guest-features") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='analyze'?'ANALYZE':view==='quiz-analyze'?'QUIZ ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='quiz-sent-detail'?'SENT QUIZ':view==='edit-log'?'EDIT LOG':view==='module-analyze-detail'?'MODULE PERFORMANCE':''))}`}</nav>`}
+    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes"||view==="guest-features") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='quiz-analyze'?'QUIZ ANALYZE':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='quiz-sent-detail'?'SENT QUIZ':view==='edit-log'?'EDIT LOG':''))}`}</nav>`}
     <div class="top-nav">
       <button class="top-nav-btn ${section==='home'?'active':''}" id="nav-home">${T('nav.dashboard','Dashboard')}</button>
       <button class="top-nav-btn ${section==='modules'?'active':''}" id="nav-modules">${T('nav.modules','Training Modules')}</button>
@@ -1826,6 +1816,8 @@ function renderResults(){
    TEAMS (admin only) — progress roster + group management
    ============================================================ */
 let teamExpandedRows = new Set();
+let teamModuleSort = ""; // "" = default (name) order, "asc" = least completed first, "desc" = most completed first
+let teamQuizSort = "";
 let attemptDetailFor = null; // { userId, moduleId } — which person+module's attempt detail is showing inline, or null
 let attemptDetailData = null; // array of up to 3 attempts (newest first) for attemptDetailFor, or "loading"
 let attemptDetailActiveIdx = 0; // which attempt tab (0 = newest) is currently selected
@@ -2077,7 +2069,12 @@ function renderTeam(){
   function deptMasteredFor(r){
     return deptModulesForRoster.filter(m=> r.perModule[m.id]===100).length;
   }
-  const moduleRows = filteredRows.map(r=>{
+  const moduleSortedRows = teamModuleSort ? filteredRows.slice().sort((a,b)=>{
+    const va = focusModule ? (a.perModule[focusModule.id]||0) : deptOverallFor(a);
+    const vb = focusModule ? (b.perModule[focusModule.id]||0) : deptOverallFor(b);
+    return teamModuleSort==="asc" ? va-vb : vb-va;
+  }) : filteredRows;
+  const moduleRows = moduleSortedRows.map(r=>{
     const expanded = teamExpandedRows.has(r.id);
     const moduleGrid = deptModulesForRoster.map(m=>{
       const pct = r.perModule[m.id];
@@ -2136,6 +2133,7 @@ function renderTeam(){
       const q = teamSearchQuery.trim().toLowerCase();
       filteredQuizRows = filteredQuizRows.filter(r=> r.name.toLowerCase().includes(q));
     }
+    if(teamQuizSort) filteredQuizRows = filteredQuizRows.slice().sort((a,b)=> teamQuizSort==="asc" ? a.pct-b.pct : b.pct-a.pct);
     quizRowsHtml = filteredQuizRows.map(r=>{
       const expanded = quizProgressExpandedRows.has(r.id);
       const quizPills = r.perQuiz.map(pq=>{
@@ -2224,7 +2222,11 @@ function renderTeam(){
               <option value="">All modules (overall)</option>
               ${deptModulesForRoster.map(m=>`<option value="${m.id}" ${teamModuleFilter===m.id?'selected':''}>${escapeHtml(m.title)}</option>`).join("")}
             </select>
-            <button class="btn" id="go-analyze-btn" style="margin-left:auto;">📊 Analyze</button>
+            <select id="module-sort" style="width:auto;">
+              <option value="">Sort: default order</option>
+              <option value="asc" ${teamModuleSort==='asc'?'selected':''}>Least completed first</option>
+              <option value="desc" ${teamModuleSort==='desc'?'selected':''}>Most completed first</option>
+            </select>
           </div>
           <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">${focusModule ? `Showing progress on <strong style="color:var(--text);">${escapeHtml(focusModule.title)}</strong> only.` : "Click a person to see their module-by-module breakdown."} Click a module pill to see any of their attempts, right here.</p>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>${focusModule ? escapeHtml(focusModule.title) : "Overall"}</th><th>${focusModule ? "Score" : "Mastered"}</th><th></th></tr></thead><tbody>${moduleRows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
@@ -2244,6 +2246,11 @@ function renderTeam(){
               <option value="role:editor" ${teamRosterFilter==='role:editor'?'selected':''}>Editors</option>
               <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
               ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
+            </select>
+            <select id="quiz-sort" style="width:auto;">
+              <option value="">Sort: default order</option>
+              <option value="asc" ${teamQuizSort==='asc'?'selected':''}>Least completed first</option>
+              <option value="desc" ${teamQuizSort==='desc'?'selected':''}>Most completed first</option>
             </select>
             <button class="btn" id="go-quiz-analyze-btn" style="margin-left:auto;">📊 Analyze</button>
           </div>
@@ -2265,11 +2272,12 @@ function renderTeam(){
     render();
   }));
 
-  document.getElementById("go-analyze-btn")?.addEventListener("click", openAnalyze);
   document.getElementById("go-quiz-analyze-btn")?.addEventListener("click", openQuizAnalyze);
   document.getElementById("new-team-btn")?.addEventListener("click", ()=> openTeamManageModal(null));
   root.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
   document.getElementById("module-filter")?.addEventListener("change", (e)=>{ teamModuleFilter = e.target.value; render(); });
+  document.getElementById("module-sort")?.addEventListener("change", (e)=>{ teamModuleSort = e.target.value; render(); });
+  document.getElementById("quiz-sort")?.addEventListener("change", (e)=>{ teamQuizSort = e.target.value; render(); });
   root.querySelectorAll("[data-team-dept]").forEach(el=> el.addEventListener("click", ()=>{
     activeDepartment = el.getAttribute("data-team-dept");
     teamRosterFilter = ""; teamModuleFilter = "";
@@ -3091,16 +3099,6 @@ function wireQuizBuilderEvents(){
 }
 
 /* ============================================================
-   ANALYZE (admin only) — team-wide trends
-   ============================================================ */
-let ANALYZE_MODULE_STATS = [];
-let ANALYZE_MISSED_QUESTIONS = [];
-let ANALYZE_TOTALS = { totalPeople:0, notStarted:0, totalAttempts:0, totalFlags:0 };
-let ANALYZE_FLAGGED = [];
-let ANALYZE_TEAM_STATS = [];
-let ANALYZE_NEEDS_ATTENTION = [];
-
-/* ============================================================
    STANDALONE QUIZZES — admin-authored, no module attached.
    Separate from Training Module quizzes entirely.
    ============================================================ */
@@ -3293,340 +3291,6 @@ function renderEditLog(){
       if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
     }, 200);
   });
-}
-
-async function openAnalyze(){
-  if(guestMode){ view = "analyze"; render(); return; }
-  const dept = currentActiveDepartment();
-  const deptModules = MODULES.filter(m=> m.department===dept);
-  const deptModuleIds = new Set(deptModules.map(m=>m.id));
-  const { data: profilesData } = await supabase.from("profiles").select("id,name,can_access_ts,can_access_cs");
-  const { data: allProgressRaw } = await supabase.from("progress").select("*");
-  const { data: allAttemptsRaw } = await supabase.from("quiz_attempts").select("*");
-  const { data: flagRows } = await supabase.from("messages").select("*").in("type", ["flag","comment","highlight"]).order("created_at",{ascending:false});
-  if(!TEAMS_LIST.length){
-    const { data: teamsData } = await supabase.from("teams").select("*");
-    const { data: memberships } = await supabase.from("team_members").select("*");
-    TEAMS_LIST = (teamsData||[]).map(t=>({ id:t.id, name:t.name, accessTs:!!t.access_ts, accessCs:!!t.access_cs, memberIds:(memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id) }));
-  }
-  const allProgress = (allProgressRaw||[]).filter(p=> deptModuleIds.has(p.module_id));
-  const allAttempts = (allAttemptsRaw||[]).filter(a=> deptModuleIds.has(a.module_id));
-
-  const deptPeople = (profilesData||[]).filter(p=> dept==='CS' ? p.can_access_cs : p.can_access_ts);
-  const totalPeople = deptPeople.length;
-  const startedUserIds = new Set(allProgress.map(p=>p.user_id));
-  const notStarted = Math.max(totalPeople - startedUserIds.size, 0);
-
-  ANALYZE_MODULE_STATS = deptModules.map(m=>{
-    const progRows = allProgress.filter(p=>p.module_id===m.id);
-    const totalLessons = m.lessons.length || 1;
-    const hasQuiz = m.quiz.length > 0;
-    const completions = progRows.map(p=>{
-      const viewedCount = p.lessons_viewed ? p.lessons_viewed.length : 0;
-      const lessonFraction = Math.min(viewedCount/totalLessons, 1);
-      if(!hasQuiz) return lessonFraction * 100;
-      const quizFraction = (p.best_score||0)/m.quiz.length;
-      return (lessonFraction*0.5 + quizFraction*0.5) * 100;
-    });
-    const avgCompletion = completions.length ? Math.round(completions.reduce((a,b)=>a+b,0)/completions.length) : 0;
-    const masteredCount = hasQuiz
-      ? progRows.filter(p=> p.best_score===m.quiz.length).length
-      : progRows.filter(p=> (p.lessons_viewed?p.lessons_viewed.length:0) >= m.lessons.length).length;
-    const startedCount = progRows.length;
-    return { id:m.id, title:m.title, avgCompletion, masteredCount, startedCount };
-  });
-
-  // Only count each person's most recent attempt per module — matching what
-  // showAttemptDetail shows ("their latest attempt"). Counting every historical
-  // attempt made "missed" numbers disagree with someone's current, corrected
-  // standing after a retake.
-  const latestAttemptByUserModule = {};
-  allAttempts.forEach(a=>{
-    const key = a.user_id + "::" + a.module_id;
-    const existing = latestAttemptByUserModule[key];
-    if(!existing || new Date(a.created_at) > new Date(existing.created_at)) latestAttemptByUserModule[key] = a;
-  });
-  const questionTally = {};
-  Object.values(latestAttemptByUserModule).forEach(a=>{
-    (a.answers||[]).forEach(ans=>{
-      const key = a.module_id + "::" + ans.question;
-      if(!questionTally[key]) questionTally[key] = { moduleId:a.module_id, question:ans.question, total:0, missed:0 };
-      questionTally[key].total++;
-      if(!ans.is_correct) questionTally[key].missed++;
-    });
-  });
-  ANALYZE_MISSED_QUESTIONS = Object.values(questionTally)
-    .filter(q=>q.missed>0)
-    .map(q=>({ ...q, missRate: Math.round((q.missed/q.total)*100), moduleTitle: (modById(q.moduleId)||{}).title || "Unknown module" }))
-    .sort((a,b)=> b.missed - a.missed)
-    .slice(0, 50); // kept broader than the old top-10 so filtering by a specific module below isn't starved of results
-
-  const deptFlags = (flagRows||[]).filter(f=> !f.department || f.department===dept);
-  ANALYZE_TOTALS = { totalPeople, notStarted, totalAttempts: allAttempts.length, totalFlags: deptFlags.length };
-  ANALYZE_FLAGGED = deptFlags.slice(0, 15);
-
-  // ---- Team/cohort comparison ----
-  // A person's overall completion, averaged per team, so cohorts can be
-  // compared side by side — genuinely new information, not another view of
-  // per-person or per-module numbers that already exist elsewhere.
-  const overallByUser = {};
-  deptPeople.forEach(p=>{
-    const rows = allProgress.filter(pr=>pr.user_id===p.id);
-    const vals = deptModules.map(m=>{
-      const row = rows.find(r=>r.module_id===m.id);
-      if(!row) return 0;
-      const totalLessons = m.lessons.length || 1;
-      const viewedCount = row.lessons_viewed ? row.lessons_viewed.length : 0;
-      const lessonFraction = Math.min(viewedCount/totalLessons, 1);
-      if(!m.quiz.length) return lessonFraction * 100;
-      const quizFraction = (row.best_score||0)/m.quiz.length;
-      return (lessonFraction*0.5 + quizFraction*0.5) * 100;
-    });
-    overallByUser[p.id] = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
-  });
-  const deptTeams = TEAMS_LIST.filter(t=> dept==='CS' ? t.accessCs : t.accessTs);
-  ANALYZE_TEAM_STATS = deptTeams.map(t=>{
-    const memberVals = t.memberIds.map(id=> overallByUser[id]).filter(v=> v!==undefined);
-    const avg = memberVals.length ? Math.round(memberVals.reduce((a,b)=>a+b,0)/memberVals.length) : 0;
-    return { id:t.id, name:t.name, avgCompletion:avg, memberCount: t.memberIds.length };
-  }).sort((a,b)=> b.avgCompletion - a.avgCompletion);
-
-  // ---- Needs attention ----
-  // People with either zero activity at all, or meaningfully below-average
-  // progress relative to their peers — an actionable list of who to check
-  // in with, rather than a single "notStarted" count with no names attached.
-  const avgOverall = totalPeople ? Object.values(overallByUser).reduce((a,b)=>a+b,0) / totalPeople : 0;
-  ANALYZE_NEEDS_ATTENTION = deptPeople.map(p=>({ id:p.id, name:p.name, overall: Math.round(overallByUser[p.id]||0) }))
-    .filter(p=> p.overall===0 || (avgOverall>10 && p.overall < avgOverall*0.4))
-    .sort((a,b)=> a.overall - b.overall)
-    .slice(0, 20);
-
-  view = "analyze"; render();
-}
-
-let analyzeModuleFilter = "";
-let analyzeMissedFilter = "";
-function renderBarChartRows(items, labelKey, valueKey, colorVar){
-  return items.map(i=>`
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
-      <div style="width:170px;flex:none;font-size:13px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(String(i[labelKey]))}">${escapeHtml(String(i[labelKey]))}</div>
-      <div style="flex:1;background:var(--input-bg);border-radius:6px;height:22px;position:relative;overflow:hidden;">
-        <div style="width:${i[valueKey]}%;height:100%;background:${colorVar||'var(--cyan)'};border-radius:6px;"></div>
-      </div>
-      <div style="width:42px;flex:none;text-align:right;font-family:var(--mono);font-size:12px;color:var(--text-dim);">${i[valueKey]}%</div>
-    </div>`).join("");
-}
-function renderAnalyze(){
-  const filteredModuleStats = analyzeModuleFilter.trim()
-    ? ANALYZE_MODULE_STATS.filter(m=> m.title.toLowerCase().includes(analyzeModuleFilter.trim().toLowerCase()))
-    : ANALYZE_MODULE_STATS;
-  const moduleRows = filteredModuleStats.map(m=>`
-    <tr class="team-row-main" data-analyze-module="${m.id}" style="cursor:pointer;">
-      <td>${escapeHtml(m.title)}</td>
-      <td style="min-width:150px;"><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="flex:1;"><div style="width:${m.avgCompletion}%"></div></div><span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${m.avgCompletion}%</span></div></td>
-      <td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${m.masteredCount}/${ANALYZE_TOTALS.totalPeople}</td>
-      <td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${m.startedCount}/${ANALYZE_TOTALS.totalPeople}</td>
-      <td style="text-align:center;color:var(--text-faint);">▸</td>
-    </tr>`).join("");
-
-  const filteredMissed = analyzeMissedFilter ? ANALYZE_MISSED_QUESTIONS.filter(q=> q.moduleId===analyzeMissedFilter) : ANALYZE_MISSED_QUESTIONS.slice(0, 10);
-  const missedHtml = filteredMissed.length ? filteredMissed.map(q=>`
-    <div class="sub-card">
-      <div class="sub-card-head"><span class="tag">${escapeHtml(q.moduleTitle)}</span><span style="font-family:var(--mono);font-size:11px;color:var(--red);">${q.missed} misses · ${q.missRate}% miss rate</span></div>
-      <div style="font-size:14px;color:var(--text);">${escapeHtml(q.question)}</div>
-    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">${analyzeMissedFilter ? "No missed questions for this module." : "Not enough quiz attempts yet to show trends."}</p>`;
-  const missedModuleOptions = ANALYZE_MODULE_STATS.map(m=>`<option value="${m.id}" ${analyzeMissedFilter===m.id?'selected':''}>${escapeHtml(m.title)}</option>`).join("");
-
-  const sortedModuleStats = ANALYZE_MODULE_STATS.slice().sort((a,b)=> b.avgCompletion - a.avgCompletion);
-  const moduleChartHtml = sortedModuleStats.length ? renderBarChartRows(sortedModuleStats, "title", "avgCompletion", "var(--cyan)") : `<p style="color:var(--text-faint);font-size:13px;">No modules yet.</p>`;
-
-  const teamChartHtml = ANALYZE_TEAM_STATS.length ? renderBarChartRows(ANALYZE_TEAM_STATS.map(t=>({ ...t, label:`${t.name} (${t.memberCount})` })), "label", "avgCompletion", "var(--green)") : `<p style="color:var(--text-faint);font-size:13px;">No teams in this department yet — create one under Teams to compare cohorts here.</p>`;
-
-  const attentionHtml = ANALYZE_NEEDS_ATTENTION.length ? `
-    <div style="display:flex;flex-direction:column;gap:2px;">
-      ${ANALYZE_NEEDS_ATTENTION.map(p=>`
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 4px;border-bottom:1px solid var(--stroke);">
-          <span style="font-size:13.5px;color:var(--text);">${escapeHtml(p.name)}</span>
-          <span style="font-family:var(--mono);font-size:12px;color:${p.overall===0?'var(--red)':'var(--amber)'};">${p.overall===0 ? "hasn't started" : p.overall+"% overall"}</span>
-        </div>`).join("")}
-    </div>` : `<p style="color:var(--green);font-size:13.5px;">Nobody's meaningfully behind right now.</p>`;
-
-  const flaggedHtml = ANALYZE_FLAGGED.length ? ANALYZE_FLAGGED.map(f=>`
-    <div class="sub-card">
-      <div class="sub-card-head"><span class="tag" style="background:${f.type==='flag'?'var(--red-dim)':'var(--cyan-dim)'};color:${f.type==='flag'?'var(--red)':'var(--cyan)'};">${f.type==='flag'?'FLAGGED':f.type==='comment'?'COMMENT':'HIGHLIGHT'}</span><span style="font-family:var(--mono);font-size:11px;color:var(--text-faint);">${escapeHtml(f.sender_name||'Someone')} · ${new Date(f.created_at).toLocaleDateString()}</span></div>
-      <div style="font-size:13px;color:var(--text-dim);margin-bottom:4px;">${escapeHtml(f.context||'')}</div>
-      ${f.body ? `<div style="font-size:14px;color:var(--text);">${escapeHtml(f.body)}</div>` : ""}
-    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">Nothing flagged or commented on recently.</p>`;
-
-  const deptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
-      <button class="dept-tab ${currentActiveDepartment()==='TS'?'active':''}" data-analyze-dept="TS">Tech Support</button>
-      <button class="dept-tab ${currentActiveDepartment()==='CS'?'active':''}" data-analyze-dept="CS">Customer Service</button>
-    </div>` : "";
-
-  renderShell(`
-    ${deptTabsHtml}
-    <div class="card">
-      <div class="k-label">ADMIN</div>
-      <h2 style="margin-bottom:4px;">Analyze</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Team-wide trends across every module.</p>
-      <div class="panel-row">
-        <div class="stat"><div class="num">${ANALYZE_TOTALS.totalPeople}</div><div class="lbl">PEOPLE</div></div>
-        <div class="stat"><div class="num">${ANALYZE_TOTALS.notStarted}</div><div class="lbl">HAVEN'T STARTED ANYTHING</div></div>
-        <div class="stat"><div class="num">${ANALYZE_TOTALS.totalAttempts}</div><div class="lbl">TOTAL QUIZ ATTEMPTS</div></div>
-        <div class="stat"><div class="num">${ANALYZE_TOTALS.totalFlags}</div><div class="lbl">QUESTIONS FLAGGED OR COMMENTED ON</div></div>
-      </div>
-    </div>
-    <div class="card" style="margin-top:16px;">
-      <h2 style="margin-bottom:4px;">Module completion</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">Average completion across everyone with access, highest first.</p>
-      ${moduleChartHtml}
-    </div>
-    <div class="card" style="margin-top:16px;">
-      <h2 style="margin-bottom:4px;">Team comparison</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">Average overall completion per team — member count shown next to each name.</p>
-      ${teamChartHtml}
-    </div>
-    <div class="card" style="margin-top:16px;">
-      <h2 style="margin-bottom:4px;">Needs attention</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 12px;">Anyone who hasn't started anything, or is meaningfully behind the group average.</p>
-      ${attentionHtml}
-    </div>
-    <div class="card" style="margin-top:16px;">
-      <h2 style="margin-bottom:4px;">Module performance</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 14px;">Click a module to see everyone who's attempted it — up to 3 attempts each — and which questions they missed on any given attempt.</p>
-      <input type="text" id="analyze-module-search" data-no-enter-submit placeholder="Search modules…" value="${escapeHtml(analyzeModuleFilter)}" class="search-input" style="width:240px;margin-bottom:12px;">
-      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Module</th><th>Avg. completion</th><th>Mastered</th><th>Started</th><th></th></tr></thead><tbody>${moduleRows || `<tr><td colspan="5" style="color:var(--text-faint);font-size:13px;">${analyzeModuleFilter ? "No modules match that search." : "No modules yet."}</td></tr>`}</tbody></table></div>
-    </div>
-    <div class="card" style="margin-top:16px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px;">
-        <h2 style="margin:0;">Most commonly missed questions</h2>
-        <select id="analyze-missed-module-filter" style="width:auto;">
-          <option value="">Top 10 across every module</option>
-          ${missedModuleOptions}
-        </select>
-      </div>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">Based on everyone's latest attempt only — a question someone got wrong but later corrected on a retake doesn't count here. A high miss rate usually means the content needs a second look, not the reps.</p>
-      ${missedHtml}
-    </div>
-    <div class="card" style="margin-top:16px;">
-      <h2 style="margin-bottom:4px;">Recently flagged or commented on</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 16px;">What people explicitly said was confusing, separate from what they statistically got wrong above — these two often point at different problems.</p>
-      ${flaggedHtml}
-    </div>
-  `);
-  root.querySelectorAll("[data-analyze-dept]").forEach(el=> el.addEventListener("click", async ()=>{
-    activeDepartment = el.getAttribute("data-analyze-dept");
-    await openAnalyze();
-  }));
-  root.querySelectorAll("[data-analyze-module]").forEach(el=> el.addEventListener("click", ()=> openModuleAnalyzeDetail(el.getAttribute("data-analyze-module"))));
-  document.getElementById("analyze-module-search").addEventListener("input", (e)=>{ analyzeModuleFilter = e.target.value; render(); });
-  document.getElementById("analyze-missed-module-filter").addEventListener("change", (e)=>{ analyzeMissedFilter = e.target.value; render(); });
-}
-
-let moduleAnalyzeDetailModule = null;
-let moduleAnalyzeDetailRoster = [];
-let moduleAnalyzeDetailExpandedPerson = null;
-let moduleAnalyzeDetailExpandedAttempt = null;
-
-async function openModuleAnalyzeDetail(moduleId){
-  const m = modById(moduleId);
-  if(!m){ alert("Couldn't find that module."); return; }
-  const { data: attempts } = await supabase.from("quiz_attempts").select("*").eq("module_id", moduleId).order("created_at", { ascending:true });
-  const { data: allProfiles } = await supabase.from("profiles").select("id,name");
-  const byUser = {};
-  (attempts||[]).forEach(a=>{
-    if(!byUser[a.user_id]) byUser[a.user_id] = [];
-    byUser[a.user_id].push(a);
-  });
-  moduleAnalyzeDetailModule = m;
-  moduleAnalyzeDetailRoster = Object.keys(byUser).map(uid=>{
-    const person = (allProfiles||[]).find(p=>p.id===uid);
-    const userAttempts = byUser[uid];
-    const bestAttempt = userAttempts.reduce((best, a)=>{
-      if(!best) return a;
-      if((a.score||0) > (best.score||0)) return a;
-      if((a.score||0) === (best.score||0) && new Date(a.created_at) > new Date(best.created_at)) return a;
-      return best;
-    }, null);
-    return { id:uid, name: person?person.name:'Unknown', attempts:userAttempts, best: bestAttempt.score||0, total: bestAttempt.total || m.quiz.length };
-  }).sort((a,b)=> a.name.localeCompare(b.name));
-  moduleAnalyzeDetailExpandedPerson = null;
-  moduleAnalyzeDetailExpandedAttempt = null;
-  view = "module-analyze-detail"; render();
-}
-
-function renderAttemptMissedQuestions(a){
-  const missed = (a.answers||[]).filter(x=>!x.is_correct);
-  if(!missed.length) return `<p style="color:var(--green);font-size:13px;">No missed questions on this attempt — clean sweep.</p>`;
-  return missed.map(x=>`
-    <div class="sub-card">
-      <div style="font-size:13.5px;margin-bottom:6px;color:var(--text);">${escapeHtml(x.question)}</div>
-      <div style="font-size:12.5px;color:var(--red);margin-bottom:2px;">Their answer: ${escapeHtml(x.options[x.selected] ?? '(no answer)')}</div>
-      <div style="font-size:12.5px;color:var(--green);">Correct answer: ${escapeHtml(x.options[x.correct])}</div>
-    </div>`).join("");
-}
-
-function renderModuleAnalyzeDetail(){
-  const m = moduleAnalyzeDetailModule;
-  if(!m){ view="analyze"; render(); return; }
-  const rows = moduleAnalyzeDetailRoster.map(r=>{
-    const expanded = moduleAnalyzeDetailExpandedPerson === r.id;
-    const mainRow = `<tr class="team-row-main" style="cursor:pointer;">
-      <td data-manalyze-toggle="${r.id}">${escapeHtml(r.name)}</td>
-      <td data-manalyze-toggle="${r.id}" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${r.best}/${r.total} (${r.total?Math.round((r.best/r.total)*100):0}%) best</td>
-      <td data-manalyze-toggle="${r.id}" style="font-family:var(--mono);font-size:12px;color:var(--text-faint);white-space:nowrap;">${r.attempts.length} attempt${r.attempts.length===1?'':'s'}</td>
-      <td><button class="mini-btn danger" data-manalyze-reset="${r.id}" data-manalyze-reset-name="${escapeHtml(r.name)}">Reset attempts</button></td>
-      <td data-manalyze-toggle="${r.id}" style="text-align:center;color:var(--text-faint);">${expanded?'▾':'▸'}</td>
-    </tr>`;
-    const detailRow = expanded ? `<tr class="team-row-detail"><td colspan="5">
-      <div style="display:flex;flex-direction:column;gap:8px;padding:10px 4px 16px;">
-        ${r.attempts.map((a,i)=>{
-          const attemptExpanded = moduleAnalyzeDetailExpandedAttempt === a.id;
-          return `<div>
-            <button class="mini-btn" data-manalyze-attempt="${r.id}:${a.id}" style="width:100%;text-align:left;">Attempt ${i+1}: ${a.score}/${a.total} · ${new Date(a.created_at).toLocaleString()} ${attemptExpanded?'▾':'▸'}</button>
-            ${attemptExpanded ? `<div style="padding:10px 4px 4px;">${renderAttemptMissedQuestions(a)}</div>` : ""}
-          </div>`;
-        }).join("")}
-      </div>
-    </td></tr>` : "";
-    return mainRow + detailRow;
-  }).join("");
-
-  renderShell(`
-    <div class="card">
-      <div class="k-label">MODULE PERFORMANCE</div>
-      <h2 style="margin-bottom:4px;">${escapeHtml(m.title)}</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Everyone who's attempted this module's quiz — up to 3 attempts each. Click a person, then an attempt, to see exactly which questions were missed on that attempt. "Reset attempts" clears their history so they can take it fresh.</p>
-      <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Best score</th><th>Attempts</th><th></th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="5" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No attempts yet.</td></tr>`}</tbody></table></div>
-      <div class="nav-buttons"><button class="btn" id="manalyze-back">← Back to Analyze</button><div></div></div>
-    </div>
-  `);
-  document.getElementById("manalyze-back").addEventListener("click", ()=>{ view="analyze"; render(); });
-  root.querySelectorAll("[data-manalyze-reset]").forEach(el=> el.addEventListener("click", async (e)=>{
-    e.stopPropagation();
-    const uid = el.getAttribute("data-manalyze-reset");
-    const name = el.getAttribute("data-manalyze-reset-name");
-    if(!confirm(`Reset all quiz attempts for ${name} on "${m.title}"? This clears their attempt count, score, and history — they'll be able to take it fresh, up to 3 more times. Their lesson-reading progress is not affected.`)) return;
-    const { error: delErr } = await supabase.from("quiz_attempts").delete().eq("user_id", uid).eq("module_id", m.id);
-    if(delErr){ alert("Couldn't reset: " + delErr.message); return; }
-    await supabase.from("progress").update({ best_score:0, last_score:0, attempts:0 }).eq("user_id", uid).eq("module_id", m.id);
-    logEdit("reset", "module_quiz_attempts", `${m.title} — ${name}`);
-    if(uid === session.user.id) await loadEverything(); // refresh our own cached progress, not just the roster view
-    showToast("Attempts reset.");
-    await openModuleAnalyzeDetail(m.id);
-  }));
-  root.querySelectorAll("[data-manalyze-toggle]").forEach(el=> el.addEventListener("click", ()=>{
-    const uid = el.getAttribute("data-manalyze-toggle");
-    moduleAnalyzeDetailExpandedPerson = (moduleAnalyzeDetailExpandedPerson===uid) ? null : uid;
-    moduleAnalyzeDetailExpandedAttempt = null;
-    render();
-  }));
-  root.querySelectorAll("[data-manalyze-attempt]").forEach(el=> el.addEventListener("click", (e)=>{
-    e.stopPropagation();
-    const [, attemptId] = el.getAttribute("data-manalyze-attempt").split(":");
-    moduleAnalyzeDetailExpandedAttempt = (moduleAnalyzeDetailExpandedAttempt===attemptId) ? null : attemptId;
-    render();
-  }));
 }
 
 let QUIZ_ANALYZE_ROWS = [];
@@ -7637,7 +7301,6 @@ function render(){
   else if(view==="results") renderResults();
   else if(view==="editor") renderEditor();
   else if(view==="team") renderTeam();
-  else if(view==="analyze") renderAnalyze();
   else if(view==="settings") renderSettings();
   else if(view==="reference") renderReference();
   else if(view==="notifications") renderNotifications();
@@ -7651,7 +7314,6 @@ function render(){
   else if(view==="quiz-builder") renderQuizBuilder();
   else if(view==="quiz-analyze") renderQuizAnalyze();
   else if(view==="edit-log") renderEditLog();
-  else if(view==="module-analyze-detail") renderModuleAnalyzeDetail();
   else if(view==="quiz-sent-detail") renderQuizSentDetail();
 }
 
