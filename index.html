@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r96";
+const BUILD_VERSION = "2026-07-27T00:00Z-r98";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5187,7 +5187,21 @@ function getCleanEditorHtml(editorEl){
   if(!editorEl) return "";
   const clone = editorEl.cloneNode(true);
   clone.querySelectorAll(".rte-resize-handle, .rte-img-delete, .rte-table-toolbar, .rte-col-resize-handle, .rte-row-resize-handle").forEach(el=> el.remove());
-  return clone.innerHTML;
+  // Leftover invisible font-size placeholders — see the font-size tool's
+  // collapsed-cursor path, which inserts a zero-width space to carry a new
+  // size forward for whatever gets typed next. If someone clicks away
+  // without ever typing there, this can be left behind: empty to the eye,
+  // but still a real inline element with its own font-size, which was
+  // quietly inflating that line's height even though nothing visibly
+  // changed. Spans that are ONLY this placeholder get removed outright;
+  // any stray copies of the character that ended up mixed into real
+  // typed text (rather than sitting alone) get stripped too, since the
+  // character itself was never meant to be real content either way.
+  clone.querySelectorAll("span").forEach(el=>{
+    if(el.children.length===0 && el.textContent==="\u200b") el.remove();
+  });
+  let html = clone.innerHTML.split("\u200b").join("");
+  return html;
 }
 function fixImageSizing(wrap){
   const img = wrap.querySelector("img");
@@ -5535,7 +5549,7 @@ function openInteractivePicConfigFullscreen(ipId){
       </div>
       <div class="ip-config-viewport" style="overflow:hidden;width:min(94vw,1200px);height:76vh;border-radius:8px;position:relative;display:flex;align-items:center;justify-content:center;">
         <div class="sim-screen-canvas" data-ip-canvas style="position:relative;display:inline-block;transform-origin:center center;">
-          <img src="${ip.image}" style="max-width:min(94vw,1200px);max-height:76vh;display:block;pointer-events:none;user-select:none;" draggable="false">
+          <img src="${ip.image}" style="max-width:min(75vw,920px);max-height:60vh;display:block;pointer-events:none;user-select:none;" draggable="false">
           <div class="sim-canvas-hint">✛ Drag to add a hotspot</div>
           ${boxesHtml}
         </div>
@@ -5628,7 +5642,7 @@ async function openInteractivePicViewer(ipId){
       </div>
       <div class="ip-viewer-viewport" style="overflow:hidden;width:min(94vw,1300px);height:76vh;border-radius:8px;position:relative;display:flex;align-items:center;justify-content:center;">
         <div class="ip-pan-inner" style="position:relative;display:inline-block;transform-origin:center center;">
-          <img src="${ip.image}" style="max-width:min(94vw,1300px);max-height:76vh;display:block;user-select:none;border-radius:8px;pointer-events:none;" draggable="false">
+          <img src="${ip.image}" style="max-width:min(75vw,1000px);max-height:60vh;display:block;user-select:none;border-radius:8px;pointer-events:none;" draggable="false">
           ${boxesHtml}
         </div>
       </div>
