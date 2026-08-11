@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r95";
+const BUILD_VERSION = "2026-07-27T00:00Z-r96";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1907,7 +1907,7 @@ async function openTeamProgress(){
         const quizFraction = r ? (r.best_score||0)/m.quiz.length : 0;
         perModule[m.id] = Math.round((lessonFraction*0.5 + quizFraction*0.5) * 100);
       }
-      perModuleRaw[m.id] = { best: r ? (r.best_score||0) : 0, total: m.quiz.length, attempts: r ? (r.attempts||0) : 0 };
+      perModuleRaw[m.id] = { best: r ? (r.best_score||0) : 0, total: m.quiz.length, attempts: r ? (r.attempts||0) : 0, lessonsViewed: r && r.lessons_viewed ? r.lessons_viewed : [] };
     });
     const values = Object.values(perModule);
     const overall = values.length ? Math.round(values.reduce((a,b)=>a+b,0)/values.length) : 0;
@@ -2451,16 +2451,36 @@ async function openInlineAttemptDetail(userId, moduleId){
   attemptDetailData = attempts || [];
   render();
 }
+function renderLessonsViewedHtml(person, m){
+  if(!m.lessons.length) return "";
+  const raw = person.perModuleRaw[m.id];
+  const viewedIds = new Set(raw ? raw.lessonsViewed : []);
+  const rows = m.lessons.map(l=>{
+    const seen = viewedIds.has(l.id);
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--stroke);">
+      <span style="color:${seen?'var(--green)':'var(--text-faint)'};font-size:14px;">${seen?'✓':'○'}</span>
+      <span style="font-size:13.5px;color:${seen?'var(--text)':'var(--text-faint)'};">${escapeHtml(l.title||l.label||'Untitled lesson')}</span>
+    </div>`;
+  }).join("");
+  return `
+    <div class="card" style="margin:0 4px 14px;">
+      <h3 style="margin-bottom:4px;">Lessons viewed</h3>
+      <p style="color:var(--text-dim);font-size:13px;margin:0 0 10px;">${viewedIds.size}/${m.lessons.length} lessons opened at least once.</p>
+      ${rows}
+    </div>`;
+}
 function renderInlineAttemptDetailHtml(person){
   const m = modById(attemptDetailFor.moduleId);
+  if(!m) return "";
+  const lessonsHtml = renderLessonsViewedHtml(person, m);
   if(attemptDetailData === "loading"){
-    return `<div class="sub-card" style="margin:0 4px 14px;"><p style="color:var(--text-faint);font-family:var(--mono);font-size:12px;margin:0;">Loading attempts…</p></div>`;
+    return lessonsHtml + `<div class="sub-card" style="margin:0 4px 14px;"><p style="color:var(--text-faint);font-family:var(--mono);font-size:12px;margin:0;">Loading attempts…</p></div>`;
   }
-  if(!m || !m.quiz.length){
-    return `<div class="sub-card" style="margin:0 4px 14px;"><p style="color:var(--text-dim);font-size:13.5px;margin:0;">There is not a quiz for this module.</p></div>`;
+  if(!m.quiz.length){
+    return lessonsHtml; // no quiz on this module — lessons-viewed is the whole story
   }
   if(!attemptDetailData || !attemptDetailData.length){
-    return `<div class="sub-card" style="margin:0 4px 14px;"><p style="color:var(--text-dim);font-size:13.5px;margin:0;">${escapeHtml(person.name)} hasn't taken the ${escapeHtml(m.title)} quiz yet.</p></div>`;
+    return lessonsHtml + `<div class="sub-card" style="margin:0 4px 14px;"><p style="color:var(--text-dim);font-size:13.5px;margin:0;">${escapeHtml(person.name)} hasn't taken the ${escapeHtml(m.title)} quiz yet.</p></div>`;
   }
   const total = attemptDetailData.length;
   const tabsHtml = attemptDetailData.map((a,i)=>`<button class="dept-tab ${attemptDetailActiveIdx===i?'active':''}" data-attempt-tab="${i}">Attempt ${total-i}${i===0?' (latest)':''}</button>`).join("");
@@ -2476,7 +2496,7 @@ function renderInlineAttemptDetailHtml(person){
       <button class="mini-btn" data-coach="${i}">💬 Discuss with ${escapeHtml(person.name)}</button>
     </div>
   `).join("") : `<p style="color:var(--green);font-size:13.5px;">No missed questions on this attempt — clean sweep.</p>`;
-  return `
+  return lessonsHtml + `
     <div class="card" style="margin:0 4px 14px;">
       <div class="dept-tabs" style="margin-bottom:14px;border-bottom:none;">${tabsHtml}</div>
       <h2 style="margin-bottom:16px;">${a.score}/${a.total} (${a.total?Math.round((a.score/a.total)*100):0}%) correct</h2>
