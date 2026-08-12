@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r98";
+const BUILD_VERSION = "2026-07-27T00:00Z-r99";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -995,15 +995,15 @@ function promptDepartmentChoice(){
         <h3>Which team are you on?</h3>
         <p class="sub">This decides which training modules and reference guide you'll see. An admin can always add access to the other team later if that changes.</p>
         <div class="modal-error" id="dept-pick-error" style="display:none;"></div>
-        <div class="modal-actions" style="justify-content:center;gap:14px;">
-          <button class="btn primary" id="dept-pick-ts" style="flex:1;">Tech Support</button>
-          <button class="btn primary" id="dept-pick-cs" style="flex:1;">Customer Service</button>
+        <div class="modal-actions" style="justify-content:center;gap:14px;flex-wrap:wrap;">
+          ${DEPARTMENTS.map(d=>`<button class="btn primary" data-dept-pick="${d.id}" style="flex:1;">${escapeHtml(d.label)}</button>`).join("")}
         </div>
       `, false, true);
       // No close/cancel path is wired here on purpose — this has to be
       // answered before the account is usable, since which modules even
       // exist for this person depends on the answer.
-      const finish = async (field, btn)=>{
+      const finish = async (dep, btn)=>{
+        const field = dep.profileField;
         btn.disabled = true; btn.textContent = "Saving…";
         const { error } = await supabase.from("profiles").update({ [field]: true }).eq("id", session.user.id);
         if(error){
@@ -1014,15 +1014,17 @@ function promptDepartmentChoice(){
           // back on their next login. Now it stays open and lets them retry.
           const err = document.getElementById("dept-pick-error");
           if(err){ err.textContent = "Couldn't save: " + error.message + " — try again."; err.style.display = "block"; }
-          btn.disabled = false; btn.textContent = field==="can_access_ts" ? "Tech Support" : "Customer Service";
+          btn.disabled = false; btn.textContent = dep.label;
           return;
         }
         profile[field] = true;
         closeModal();
         resolve();
       };
-      document.getElementById("dept-pick-ts").addEventListener("click", (e)=> finish("can_access_ts", e.target));
-      document.getElementById("dept-pick-cs").addEventListener("click", (e)=> finish("can_access_cs", e.target));
+      document.querySelectorAll("[data-dept-pick]").forEach(el=> el.addEventListener("click", (e)=>{
+        const dep = DEPARTMENTS.find(d=>d.id===el.getAttribute("data-dept-pick"));
+        if(dep) finish(dep, e.target);
+      }));
     }
     draw();
   });
@@ -1073,7 +1075,7 @@ async function afterLogin(){
     await supabase.from("profiles").update({ is_first_login:false }).eq("id", session.user.id);
     profile.is_first_login = false;
   }
-  if(profile && !profile.can_access_ts && !profile.can_access_cs){
+  if(profile && myDepartments().length===0){
     await promptDepartmentChoice();
   }
   // These four don't depend on each other's results, only on profile being
@@ -1334,16 +1336,38 @@ function closeAllFullscreenOverlays(){
   window.activeFullscreenCleanups = [];
 }
 
+// Central department registry — the single source of truth for which
+// departments exist. Adding a department here is necessary but not
+// sufficient on its own: pieces that call the helpers below (rather than
+// hardcoding their own TS/CS check) pick it up automatically, but several
+// places in this app hardcode a direct two-way check and need their own
+// explicit update — handled individually elsewhere, this registry doesn't
+// retroactively fix them by itself.
+const DEPARTMENTS = [
+  { id:'TS', label:'Tech Support', profileField:'can_access_ts', rowField:'canAccessTs', teamField:'accessTs', teamDbField:'access_ts' },
+  { id:'CS', label:'Customer Service', profileField:'can_access_cs', rowField:'canAccessCs', teamField:'accessCs', teamDbField:'access_cs' },
+  { id:'TESTBOARD', label:'Testboard', profileField:'can_access_testboard', rowField:'canAccessTestboard', teamField:'accessTestboard', teamDbField:'access_testboard' }
+];
+function deptLabel(id){ const d = DEPARTMENTS.find(x=>x.id===id); return d ? d.label : id; }
+function renderDeptTabsHtml(activeDept, dataAttr){
+  return myDepartments().map(id=> `<button class="dept-tab ${activeDept===id?'active':''}" data-${dataAttr}="${id}">${escapeHtml(deptLabel(id))}</button>`).join("");
+}
+function teamHasDeptAccess(team, deptId){
+  const d = DEPARTMENTS.find(x=>x.id===deptId);
+  return d ? !!team[d.teamField] : false;
+}
+function canAccessDeptForRow(row, deptId){
+  const d = DEPARTMENTS.find(x=>x.id===deptId);
+  return d ? !!row[d.rowField] : false;
+}
 function canAccessDepartment(dept){
   if(guestMode) return true; // guest preview shows everything regardless of department
   if(!profile) return false;
-  return dept === 'CS' ? !!profile.can_access_cs : !!profile.can_access_ts;
+  const d = DEPARTMENTS.find(x=>x.id===dept);
+  return d ? !!profile[d.profileField] : false;
 }
 function myDepartments(){
-  const list = [];
-  if(canAccessDepartment('TS')) list.push('TS');
-  if(canAccessDepartment('CS')) list.push('CS');
-  return list;
+  return DEPARTMENTS.filter(d=> canAccessDepartment(d.id)).map(d=>d.id);
 }
 function currentActiveDepartment(){
   const mine = myDepartments();
@@ -1391,8 +1415,7 @@ function renderDashboard(){
   const modsMastered = deptModules.filter(m=>moduleStatus(m.id)==="mastered").length;
   const emptyFilterMsg = (!dashboardShowCompleted && !visibleModules.length && deptModules.length) ? `<p style="color:var(--text-faint);font-size:13.5px;padding:10px 2px;">Everything's mastered — nice work. Tap "Show Completed" above to see them.</p>` : "";
   const deptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
-      <button class="dept-tab ${dept==='TS'?'active':''}" data-dept="TS">Tech Support</button>
-      <button class="dept-tab ${dept==='CS'?'active':''}" data-dept="CS">Customer Service</button>
+      ${renderDeptTabsHtml(dept, 'dept')}
     </div>` : "";
 
   renderShell(`
@@ -1876,7 +1899,7 @@ async function loadQuizProgressData(){
     });
     const completedCount = perQuiz.filter(x=>x.completed).length;
     const pct = perQuiz.length ? Math.round((completedCount/perQuiz.length)*100) : 0;
-    return { id:person.id, name:person.name, role:person.role, teamIds:person.teamIds, canAccessTs:person.canAccessTs, canAccessCs:person.canAccessCs, perQuiz, completedCount, totalCount:perQuiz.length, pct };
+    return { id:person.id, name:person.name, role:person.role, teamIds:person.teamIds, canAccessTs:person.canAccessTs, canAccessCs:person.canAccessCs, canAccessTestboard:person.canAccessTestboard, perQuiz, completedCount, totalCount:perQuiz.length, pct };
   });
 }
 
@@ -1888,7 +1911,7 @@ async function openTeamProgress(){
   const { data: memberships } = await supabase.from("team_members").select("*");
 
   TEAMS_LIST = (teamsData||[]).map(t=>({
-    id: t.id, name: t.name, accessTs: !!t.access_ts, accessCs: !!t.access_cs,
+    id: t.id, name: t.name, accessTs: !!t.access_ts, accessCs: !!t.access_cs, accessTestboard: !!t.access_testboard,
     memberIds: (memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id)
   }));
 
@@ -1915,7 +1938,7 @@ async function openTeamProgress(){
     const teamIds = (memberships||[]).filter(m=>m.user_id===p.id).map(m=>m.team_id);
     return { id:p.id, name:p.name, role:p.role, perModule, perModuleRaw, overall, mastered, teamIds,
       permEditContent: !!p.perm_edit_content, permCreateQuizzes: !!p.perm_create_quizzes, permManagePeople: !!p.perm_manage_people,
-      canAccessTs: !!p.can_access_ts, canAccessCs: !!p.can_access_cs };
+      canAccessTs: !!p.can_access_ts, canAccessCs: !!p.can_access_cs, canAccessTestboard: !!p.can_access_testboard };
   });
   view = "team"; render();
 }
@@ -1924,22 +1947,21 @@ function openTeamManageModal(teamId){
   const team = teamId ? TEAMS_LIST.find(t=>t.id===teamId) : null;
   const memberIds = new Set(team ? team.memberIds : []);
   const mine = myDepartments();
-  const initialTs = team ? team.accessTs : mine.includes('TS');
-  const initialCs = team ? team.accessCs : mine.includes('CS');
+  const initial = {};
+  DEPARTMENTS.forEach(d=>{ initial[d.id] = team ? !!team[d.teamField] : mine.includes(d.id); });
 
-  function memberListHtml(includeTs, includeCs){
-    return teamRows.filter(r=> (includeTs && r.canAccessTs) || (includeCs && r.canAccessCs)).map(r=>`
+  function memberListHtml(includeMap){
+    return teamRows.filter(r=> DEPARTMENTS.some(d=> includeMap[d.id] && r[d.rowField])).map(r=>`
       <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);">
         <input type="checkbox" value="${r.id}" class="team-member-check" ${memberIds.has(r.id)?'checked':''}> ${escapeHtml(r.name)}${r.role==='admin'?' <span class="role-tag admin">ADMIN</span>':''}
       </label>`).join("") || `<p style="color:var(--text-faint);font-size:12.5px;">Nobody has access to the selected department(s) yet.</p>`;
   }
 
   const deptFieldHtml = team
-    ? `<div class="field"><label>Department access</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${[team.accessTs?'Tech Support':null, team.accessCs?'Customer Service':null].filter(Boolean).join(' + ')} — set when the team was created, can't be changed after.</p></div>`
+    ? `<div class="field"><label>Department access</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${DEPARTMENTS.filter(d=>team[d.teamField]).map(d=>d.label).join(' + ')} — set when the team was created, can't be changed after.</p></div>`
     : `<div class="field"><label>Department access</label>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" id="team-dept-ts" ${initialTs?'checked':''}> Tech Support</label>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" id="team-dept-cs" ${initialCs?'checked':''}> Customer Service</label>
-        <p class="hint">Check one or both — only people with access to a checked department will be selectable below.</p>
+        ${DEPARTMENTS.map(d=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-team-dept-check="${d.id}" ${initial[d.id]?'checked':''}> ${escapeHtml(d.label)}</label>`).join("")}
+        <p class="hint">Check one or more — only people with access to a checked department will be selectable below.</p>
       </div>`;
 
   openModal(`
@@ -1948,7 +1970,7 @@ function openTeamManageModal(teamId){
     ${deptFieldHtml}
     <div class="field"><label>Members</label>
       <div id="team-member-list" style="max-height:220px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">
-        ${memberListHtml(initialTs, initialCs)}
+        ${memberListHtml(initial)}
       </div>
     </div>
     <div class="modal-actions" style="justify-content:space-between;">
@@ -1956,11 +1978,11 @@ function openTeamManageModal(teamId){
       <div style="display:flex;gap:10px;"><button class="btn" id="team-cancel-btn">Cancel</button><button class="btn primary" id="team-save-btn">${team?"Save":"Create"}</button></div>
     </div>
   `, true);
-  const tsCheck = document.getElementById("team-dept-ts");
-  const csCheck = document.getElementById("team-dept-cs");
-  const refreshMemberList = ()=>{ document.getElementById("team-member-list").innerHTML = memberListHtml(tsCheck.checked, csCheck.checked); };
-  if(tsCheck) tsCheck.addEventListener("change", refreshMemberList);
-  if(csCheck) csCheck.addEventListener("change", refreshMemberList);
+  const checkEls = {};
+  DEPARTMENTS.forEach(d=>{ checkEls[d.id] = document.querySelector(`[data-team-dept-check="${d.id}"]`); });
+  const currentMap = ()=>{ const m={}; DEPARTMENTS.forEach(d=>{ m[d.id] = checkEls[d.id] ? checkEls[d.id].checked : false; }); return m; };
+  const refreshMemberList = ()=>{ document.getElementById("team-member-list").innerHTML = memberListHtml(currentMap()); };
+  Object.values(checkEls).forEach(el=>{ if(el) el.addEventListener("change", refreshMemberList); });
   document.getElementById("team-cancel-btn").addEventListener("click", closeModal);
   const delBtn = document.getElementById("team-delete-btn");
   if(delBtn) delBtn.addEventListener("click", async ()=>{
@@ -1977,8 +1999,11 @@ function openTeamManageModal(teamId){
     const selectedIds = Array.from(document.querySelectorAll(".team-member-check:checked")).map(cb=>cb.value);
     let tid = team ? team.id : null;
     if(!tid){
-      if(!tsCheck.checked && !csCheck.checked){ alert("Check at least one department."); return; }
-      const { data, error } = await supabase.from("teams").insert({ name, access_ts: tsCheck.checked, access_cs: csCheck.checked }).select().single();
+      const map = currentMap();
+      if(!DEPARTMENTS.some(d=>map[d.id])){ alert("Check at least one department."); return; }
+      const insertObj = { name };
+      DEPARTMENTS.forEach(d=>{ insertObj[d.teamDbField] = map[d.id]; });
+      const { data, error } = await supabase.from("teams").insert(insertObj).select().single();
       if(error){ alert("Couldn't create team: " + error.message); return; }
       tid = data.id;
     } else {
@@ -1998,7 +2023,7 @@ function renderTeam(){
     loadQuizProgressData().then(()=> render());
   }
   const dept = currentActiveDepartment();
-  const deptTeams = guestMode ? TEAMS_LIST : TEAMS_LIST.filter(t=> dept==='CS' ? t.accessCs : t.accessTs);
+  const deptTeams = guestMode ? TEAMS_LIST : TEAMS_LIST.filter(t=> teamHasDeptAccess(t, dept));
   const teamsHtml = deptTeams.length ? deptTeams.map(t=>`
     <button class="mini-btn" data-manage-team="${t.id}" style="margin:0 6px 6px 0;">${escapeHtml(t.name)} · ${t.memberIds.length}</button>
   `).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No teams yet.</p>`;
@@ -2008,7 +2033,7 @@ function renderTeam(){
   // names, roles, module progress, and quiz progress. Scope the base roster
   // to people who actually have access to the department being viewed
   // before any of the existing role/team/search filters apply on top.
-  const deptRows = guestMode ? teamRows : teamRows.filter(r=> dept==='CS' ? r.canAccessCs : r.canAccessTs);
+  const deptRows = guestMode ? teamRows : teamRows.filter(r=> canAccessDeptForRow(r, dept));
   let filteredRows = deptRows;
   if(teamRosterFilter.startsWith("role:")){
     const role = teamRosterFilter.slice(5);
@@ -2058,8 +2083,7 @@ function renderTeam(){
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:createQuizzes" ${currentPerms.createQuizzes?'checked':''}> Can create quizzes</label>
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:managePeople" ${currentPerms.managePeople?'checked':''}> Can edit users and teams</label>
           <div style="border-top:1px solid var(--stroke);margin-top:6px;padding-top:10px;">` : ""}
-            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-dept-check="${r.id}:ts" ${r.canAccessTs?'checked':''}> Can access Tech Support</label>
-            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-top:6px;"><input type="checkbox" data-dept-check="${r.id}:cs" ${r.canAccessCs?'checked':''}> Can access Customer Service</label>
+            ${DEPARTMENTS.map(d=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-top:4px;"><input type="checkbox" data-dept-check="${r.id}:${d.id}" ${r[d.rowField]?'checked':''}> Can access ${escapeHtml(d.label)}</label>`).join("")}
           ${!isSelf ? `</div>` : ""}
         </div>
       </td></tr>` : "";
@@ -2135,7 +2159,7 @@ function renderTeam(){
   // ---- Quiz progress rows ----
   let quizRowsHtml = `<p style="color:var(--text-faint);font-size:13px;">Loading…</p>`;
   if(QUIZ_PROGRESS_ROWS){
-    let filteredQuizRows = guestMode ? QUIZ_PROGRESS_ROWS : QUIZ_PROGRESS_ROWS.filter(r=> dept==='CS' ? r.canAccessCs : r.canAccessTs);
+    let filteredQuizRows = guestMode ? QUIZ_PROGRESS_ROWS : QUIZ_PROGRESS_ROWS.filter(r=> canAccessDeptForRow(r, dept));
     if(teamRosterFilter.startsWith("role:")){
       filteredQuizRows = filteredQuizRows.filter(r=> r.role === teamRosterFilter.slice(5));
     } else if(teamRosterFilter){
@@ -2179,8 +2203,7 @@ function renderTeam(){
   }
 
   const teamPageDeptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
-      <button class="dept-tab ${dept==='TS'?'active':''}" data-team-dept="TS">Tech Support</button>
-      <button class="dept-tab ${dept==='CS'?'active':''}" data-team-dept="CS">Customer Service</button>
+      ${renderDeptTabsHtml(dept, 'team-dept')}
     </div>` : "";
 
   renderShell(`
@@ -2344,16 +2367,17 @@ function renderTeam(){
     renderTeam();
   }));
   root.querySelectorAll("[data-dept-check]").forEach(el=> el.addEventListener("change", async (e)=>{
-    const [id, key] = el.getAttribute("data-dept-check").split(":");
+    const [id, depId] = el.getAttribute("data-dept-check").split(":");
+    const dep = DEPARTMENTS.find(d=>d.id===depId);
+    if(!dep) return;
     const row = teamRows.find(r=>r.id===id);
-    const column = key === "ts" ? "can_access_ts" : "can_access_cs";
     const checked = e.target.checked;
     el.disabled = true;
-    const { error } = await supabase.from("profiles").update({ [column]: checked }).eq("id", id);
+    const { error } = await supabase.from("profiles").update({ [dep.profileField]: checked }).eq("id", id);
     el.disabled = false;
     if(error){ alert("Couldn't save: " + error.message); e.target.checked = !checked; return; }
-    if(key==="ts") row.canAccessTs = checked; else row.canAccessCs = checked;
-    logEdit("updated", "department_access", `${row.name} — ${key.toUpperCase()} ${checked?'granted':'removed'}`);
+    if(row) row[dep.rowField] = checked;
+    logEdit("updated", "department_access", `${row?row.name:id} — ${dep.label} ${checked?'granted':'removed'}`);
     showToast("Access updated.");
   }));
   root.querySelectorAll("[data-role-save]").forEach(el=> el.addEventListener("click", async (e)=>{
@@ -2651,8 +2675,7 @@ function renderQuizzesList(){
 
   const addBtn = (canManageQuizzes && editMode) ? `<button class="dashed-btn" id="add-quiz" style="margin-top:14px;">+ New quiz</button>` : "";
   const quizDeptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
-      <button class="dept-tab ${dept==='TS'?'active':''}" data-quiz-dept="TS">Tech Support</button>
-      <button class="dept-tab ${dept==='CS'?'active':''}" data-quiz-dept="CS">Customer Service</button>
+      ${renderDeptTabsHtml(dept, 'quiz-dept')}
     </div>` : "";
   renderShell(`
     ${quizDeptTabsHtml}
@@ -2923,11 +2946,11 @@ async function openQuizBuilder(id){
   if(!TEAMS_LIST.length){
     const { data: teamsData } = await supabase.from("teams").select("*").order("name");
     const { data: memberships } = await supabase.from("team_members").select("*");
-    TEAMS_LIST = (teamsData||[]).map(t=>({ id:t.id, name:t.name, accessTs:!!t.access_ts, accessCs:!!t.access_cs, memberIds:(memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id) }));
+    TEAMS_LIST = (teamsData||[]).map(t=>({ id:t.id, name:t.name, accessTs:!!t.access_ts, accessCs:!!t.access_cs, accessTestboard:!!t.access_testboard, memberIds:(memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id) }));
   }
   if(!teamRows.length){
     const { data: people } = await supabase.from("profiles").select("*").order("name");
-    teamRows = (people||[]).map(p=>({ id:p.id, name:p.name, role:p.role, perModule:{}, perModuleRaw:{}, overall:0, mastered:0, teamIds:[], canAccessTs:!!p.can_access_ts, canAccessCs:!!p.can_access_cs }));
+    teamRows = (people||[]).map(p=>({ id:p.id, name:p.name, role:p.role, perModule:{}, perModuleRaw:{}, overall:0, mastered:0, teamIds:[], canAccessTs:!!p.can_access_ts, canAccessCs:!!p.can_access_cs, canAccessTestboard:!!p.can_access_testboard }));
   }
   const { data: qRow } = await supabase.from("standalone_quizzes").select("*").eq("id", id).single();
   const { data: questions } = await supabase.from("standalone_quiz_questions").select("*").eq("quiz_id", id).order("sort_order");
@@ -2974,7 +2997,7 @@ function renderQuizBuilder(){
   }).join("");
 
   const audienceSection = `
-    <div class="field"><label>Department</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${d.department==='CS'?'Customer Service':'Tech Support'} — set when the quiz was created.</p></div>
+    <div class="field"><label>Department</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${deptLabel(d.department)} — set when the quiz was created.</p></div>
     <div class="field"><label>Send to</label>
       <select id="qz-audience" ${locked?'disabled':''}>
         <option value="everyone" ${d.audienceType==='everyone'?'selected':''}>Everyone</option>
@@ -2982,8 +3005,8 @@ function renderQuizBuilder(){
         <option value="specific" ${d.audienceType==='specific'?'selected':''}>Specific people…</option>
       </select>
     </div>
-    ${d.audienceType==='team' ? `<div class="field" id="qz-team-field"><label>Team</label><select id="qz-team-select" ${locked?'disabled':''}>${TEAMS_LIST.filter(t=> d.department==='CS' ? t.accessCs : t.accessTs).map(t=>`<option value="${t.id}" ${d.teamId===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("") || '<option value="">No teams in this department yet</option>'}</select></div>` : ""}
-    ${d.audienceType==='specific' ? `<div class="field" id="qz-people-field"><label>Choose people</label><div id="qz-people-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">${teamRows.filter(r=> d.department==='CS' ? r.canAccessCs : r.canAccessTs).map(r=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);"><input type="checkbox" value="${r.id}" class="qz-person-check" ${d.specificIds.includes(r.id)?'checked':''} ${locked?'disabled':''}> ${escapeHtml(r.name)}</label>`).join("")}</div></div>` : ""}
+    ${d.audienceType==='team' ? `<div class="field" id="qz-team-field"><label>Team</label><select id="qz-team-select" ${locked?'disabled':''}>${TEAMS_LIST.filter(t=> teamHasDeptAccess(t, d.department)).map(t=>`<option value="${t.id}" ${d.teamId===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("") || '<option value="">No teams in this department yet</option>'}</select></div>` : ""}
+    ${d.audienceType==='specific' ? `<div class="field" id="qz-people-field"><label>Choose people</label><div id="qz-people-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">${teamRows.filter(r=> canAccessDeptForRow(r, d.department)).map(r=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);"><input type="checkbox" value="${r.id}" class="qz-person-check" ${d.specificIds.includes(r.id)?'checked':''} ${locked?'disabled':''}> ${escapeHtml(r.name)}</label>`).join("")}</div></div>` : ""}
   `;
 
   renderShell(`
@@ -3266,8 +3289,7 @@ function renderEditLog(){
   }).join("");
 
   const deptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
-      <button class="dept-tab ${dept==='TS'?'active':''}" data-editlog-dept="TS">Tech Support</button>
-      <button class="dept-tab ${dept==='CS'?'active':''}" data-editlog-dept="CS">Customer Service</button>
+      ${renderDeptTabsHtml(dept, 'editlog-dept')}
     </div>` : "";
 
   renderShell(`
@@ -3774,7 +3796,7 @@ function setupRealtime(){
       const oldP = profile;
       await loadProfile(); // re-fetch from source of truth rather than trusting the realtime payload directly —
                             // safer against payload-shape surprises and against two rapid updates racing each other
-      const changed = !oldP || oldP.can_access_ts !== profile.can_access_ts || oldP.can_access_cs !== profile.can_access_cs
+      const changed = !oldP || oldP.can_access_ts !== profile.can_access_ts || oldP.can_access_cs !== profile.can_access_cs || oldP.can_access_testboard !== profile.can_access_testboard
         || oldP.role !== profile.role || oldP.perm_edit_content !== profile.perm_edit_content
         || oldP.perm_create_quizzes !== profile.perm_create_quizzes || oldP.perm_manage_people !== profile.perm_manage_people;
       if(changed){
@@ -4431,8 +4453,6 @@ function promptModal(title, placeholder, defaultValue){
 
 function promptSiteLinkModal(){
   return new Promise((resolve)=>{
-    const deptLabel = d=> d==='CS' ? 'Customer Service' : 'Tech Support';
-
     const moduleOptionsByDept = {};
     MODULES.forEach(m=>{ (moduleOptionsByDept[m.department] = moduleOptionsByDept[m.department]||[]).push(m); });
     const moduleOptionsHtml = Object.keys(moduleOptionsByDept).sort().map(dept=>
@@ -6089,11 +6109,10 @@ function renderEditor(){
       <div class="field"><label>Department</label>
         ${myDepartments().length>1 ? `
         <select id="mod-department">
-          <option value="TS" ${d.department!=='CS'?'selected':''}>Tech Support</option>
-          <option value="CS" ${d.department==='CS'?'selected':''}>Customer Service</option>
+          ${myDepartments().map(id=>`<option value="${id}" ${d.department===id?'selected':''}>${escapeHtml(deptLabel(id))}</option>`).join("")}
         </select>
         <p class="hint">Only people with access to this department will ever see this module.</p>
-        ` : `<p style="color:var(--text-dim);font-size:13px;margin:0;">${d.department==='CS'?'Customer Service':'Tech Support'} — you only have access to one department, so this can't be changed here.</p>`}
+        ` : `<p style="color:var(--text-dim);font-size:13px;margin:0;">${deptLabel(d.department)} — you only have access to one department, so this can't be changed here.</p>`}
       </div>
       <div class="field"><label>Short description</label><textarea id="mod-short" style="min-height:55px;">${escapeHtml(d.short)}</textarea></div>
       <div class="field">
@@ -6840,8 +6859,7 @@ function renderReference(){
   }
 
   const refDeptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
-      <button class="dept-tab ${currentActiveRefDepartment()==='TS'?'active':''}" data-ref-dept="TS">Tech Support</button>
-      <button class="dept-tab ${currentActiveRefDepartment()==='CS'?'active':''}" data-ref-dept="CS">Customer Service</button>
+      ${renderDeptTabsHtml(currentActiveRefDepartment(), 'ref-dept')}
     </div>` : "";
 
   renderShell(`
@@ -7108,8 +7126,7 @@ function renderNotes(){
   }
 
   const notesDeptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
-      <button class="dept-tab ${currentActiveNotesDepartment()==='TS'?'active':''}" data-notes-dept="TS">Tech Support</button>
-      <button class="dept-tab ${currentActiveNotesDepartment()==='CS'?'active':''}" data-notes-dept="CS">Customer Service</button>
+      ${renderDeptTabsHtml(currentActiveNotesDepartment(), 'notes-dept')}
     </div>` : "";
 
   renderShell(`
