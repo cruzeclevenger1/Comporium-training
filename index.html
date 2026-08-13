@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r100";
+const BUILD_VERSION = "2026-07-27T00:00Z-r101";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -2657,7 +2657,9 @@ function renderQuizzesList(){
         const totalCorrect = (q.myAttempt.mc_score||0) + longAnswerCorrect;
         tag = totalQ ? `<span class="status-pill done">${totalCorrect}/${totalQ} (${Math.round((totalCorrect/totalQ)*100)}%)</span>` : `<span class="status-pill done">Completed</span>`;
       } else {
-        tag = `<span class="status-pill progress">Awaiting grading</span>`;
+        tag = q.myAttempt.mc_total
+          ? `<span class="status-pill progress">${q.myAttempt.mc_score}/${q.myAttempt.mc_total} MC · Awaiting grading</span>`
+          : `<span class="status-pill progress">Awaiting grading</span>`;
       }
     }
     else { tag = `<span class="status-pill">Not started</span>`; }
