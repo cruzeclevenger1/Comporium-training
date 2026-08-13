@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r99";
+const BUILD_VERSION = "2026-07-27T00:00Z-r100";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1360,6 +1360,10 @@ function canAccessDeptForRow(row, deptId){
   const d = DEPARTMENTS.find(x=>x.id===deptId);
   return d ? !!row[d.rowField] : false;
 }
+function rawRowHasDeptAccess(row, deptId){
+  const d = DEPARTMENTS.find(x=>x.id===deptId);
+  return d ? !!row[d.teamDbField] : false;
+}
 function canAccessDepartment(dept){
   if(guestMode) return true; // guest preview shows everything regardless of department
   if(!profile) return false;
@@ -1882,7 +1886,7 @@ let quizProgressExpandedRows = new Set();
 async function loadQuizProgressData(){
   const dept = currentActiveDepartment();
   const { data: quizzesRaw } = await supabase.from("standalone_quizzes").select("*").eq("sent", true);
-  const quizzes = guestMode ? quizzesRaw : (quizzesRaw||[]).filter(q=> (q.department||'TS')===dept);
+  const quizzes = guestMode ? quizzesRaw : (quizzesRaw||[]).filter(q=> rawRowHasDeptAccess(q, dept));
   const { data: attempts } = await supabase.from("standalone_quiz_attempts").select("*");
   const { data: recipients } = await supabase.from("standalone_quiz_recipients").select("*");
   const { data: allTeamMembers } = await supabase.from("team_members").select("*");
@@ -2632,7 +2636,7 @@ async function showStandaloneQuizAttemptDetail(userId, quizId, holderId, personN
    ============================================================ */
 function renderQuizzesList(){
   const dept = currentActiveDepartment();
-  const deptQuizzes = guestMode ? QUIZZES : QUIZZES.filter(q=> (q.department||'TS')===dept);
+  const deptQuizzes = guestMode ? QUIZZES : QUIZZES.filter(q=> teamHasDeptAccess(q, dept));
   const canManageQuizzes = canCreateQuizzes();
   const myQuizzes = deptQuizzes.filter(q=> q.isRecipient);
   const pending = myQuizzes.filter(q=> !q.myAttempt);
@@ -2827,7 +2831,10 @@ function renderQuizSentDetail(){
 async function createNewStandaloneQuiz(){
   const title = await promptModal("New quiz", "Quiz title");
   if(!title) return;
-  const { data, error } = await supabase.from("standalone_quizzes").insert({ title:title.trim(), created_by:session.user.id, created_by_name:profile.name, audience_type:"everyone", department: currentActiveDepartment(), sent:false }).select().single();
+  const insertObj = { title:title.trim(), created_by:session.user.id, created_by_name:profile.name, audience_type:"everyone", sent:false };
+  const activeDept = DEPARTMENTS.find(d=>d.id===currentActiveDepartment());
+  if(activeDept) insertObj[activeDept.teamDbField] = true;
+  const { data, error } = await supabase.from("standalone_quizzes").insert(insertObj).select().single();
   if(error){ alert("Couldn't create quiz: " + error.message); return; }
   logEdit("created", "standalone_quiz", title.trim());
   await loadStandaloneQuizzes();
@@ -2956,7 +2963,8 @@ async function openQuizBuilder(id){
   const { data: questions } = await supabase.from("standalone_quiz_questions").select("*").eq("quiz_id", id).order("sort_order");
   const { data: recipients } = await supabase.from("standalone_quiz_recipients").select("user_id").eq("quiz_id", id);
   quizBuilderDraft = {
-    id, title:qRow.title, audienceType:qRow.audience_type, teamId:qRow.team_id, sent:qRow.sent, department:qRow.department||'TS',
+    id, title:qRow.title, audienceType:qRow.audience_type, teamId:qRow.team_id, sent:qRow.sent,
+    accessTs: !!qRow.access_ts, accessCs: !!qRow.access_cs, accessTestboard: !!qRow.access_testboard,
     specificIds: (recipients||[]).map(r=>r.user_id),
     questions: (questions||[]).map(q=>({ id:q.id, type:q.question_type, question:q.question, options:q.options||["Option A","Option B"], correct:q.correct_index||0, explain:q.explanation||"" }))
   };
@@ -2996,8 +3004,15 @@ function renderQuizBuilder(){
     </div>`;
   }).join("");
 
+  const quizDepts = DEPARTMENTS.filter(dep=> d[dep.teamField]);
+  const deptFieldHtml = locked
+    ? `<div class="field"><label>Department</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${quizDepts.map(dep=>dep.label).join(' + ') || 'None'} — set when the quiz was sent, can't be changed after.</p></div>`
+    : `<div class="field"><label>Send to which department(s)</label>
+        ${DEPARTMENTS.map(dep=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-qz-dept-check="${dep.id}" ${d[dep.teamField]?'checked':''}> ${escapeHtml(dep.label)}</label>`).join("")}
+        <p class="hint">Check one or more — only people with access to a checked department can ever see this quiz.</p>
+      </div>`;
   const audienceSection = `
-    <div class="field"><label>Department</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${deptLabel(d.department)} — set when the quiz was created.</p></div>
+    ${deptFieldHtml}
     <div class="field"><label>Send to</label>
       <select id="qz-audience" ${locked?'disabled':''}>
         <option value="everyone" ${d.audienceType==='everyone'?'selected':''}>Everyone</option>
@@ -3005,8 +3020,8 @@ function renderQuizBuilder(){
         <option value="specific" ${d.audienceType==='specific'?'selected':''}>Specific people…</option>
       </select>
     </div>
-    ${d.audienceType==='team' ? `<div class="field" id="qz-team-field"><label>Team</label><select id="qz-team-select" ${locked?'disabled':''}>${TEAMS_LIST.filter(t=> teamHasDeptAccess(t, d.department)).map(t=>`<option value="${t.id}" ${d.teamId===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("") || '<option value="">No teams in this department yet</option>'}</select></div>` : ""}
-    ${d.audienceType==='specific' ? `<div class="field" id="qz-people-field"><label>Choose people</label><div id="qz-people-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">${teamRows.filter(r=> canAccessDeptForRow(r, d.department)).map(r=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);"><input type="checkbox" value="${r.id}" class="qz-person-check" ${d.specificIds.includes(r.id)?'checked':''} ${locked?'disabled':''}> ${escapeHtml(r.name)}</label>`).join("")}</div></div>` : ""}
+    ${d.audienceType==='team' ? `<div class="field" id="qz-team-field"><label>Team</label><select id="qz-team-select" ${locked?'disabled':''}>${TEAMS_LIST.filter(t=> quizDepts.some(dep=> t[dep.teamField])).map(t=>`<option value="${t.id}" ${d.teamId===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("") || '<option value="">No teams in these departments yet</option>'}</select></div>` : ""}
+    ${d.audienceType==='specific' ? `<div class="field" id="qz-people-field"><label>Choose people</label><div id="qz-people-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">${teamRows.filter(r=> quizDepts.some(dep=> r[dep.rowField])).map(r=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);"><input type="checkbox" value="${r.id}" class="qz-person-check" ${d.specificIds.includes(r.id)?'checked':''} ${locked?'disabled':''}> ${escapeHtml(r.name)}</label>`).join("")}</div></div>` : ""}
   `;
 
   renderShell(`
@@ -3055,6 +3070,11 @@ function wireQuizBuilderEvents(){
   if(audienceSelect) audienceSelect.addEventListener("change", (e)=>{ d.audienceType = e.target.value; renderQuizBuilder(); });
   const teamSelect = document.getElementById("qz-team-select");
   if(teamSelect) teamSelect.addEventListener("change", (e)=>{ d.teamId = e.target.value; });
+  root.querySelectorAll("[data-qz-dept-check]").forEach(el=> el.addEventListener("change", (e)=>{
+    const dep = DEPARTMENTS.find(x=>x.id===el.getAttribute("data-qz-dept-check"));
+    if(dep) d[dep.teamField] = e.target.checked;
+    renderQuizBuilder(); // re-render so the team/people lists below reflect the new department selection immediately
+  }));
 
   root.querySelectorAll("[data-qz-edit]").forEach(el=> el.addEventListener("click", ()=>{ expandedQuizQuestionIdx = +el.dataset.qzEdit; renderQuizBuilder(); }));
   root.querySelectorAll("[data-qz-done]").forEach(el=> el.addEventListener("click", ()=>{ expandedQuizQuestionIdx = null; renderQuizBuilder(); }));
@@ -3115,6 +3135,7 @@ function wireQuizBuilderEvents(){
   if(sendBtn) sendBtn.addEventListener("click", async ()=>{
     if(!d.title.trim()){ alert("Give the quiz a title first."); return; }
     if(!d.questions.length){ alert("Add at least one question first."); return; }
+    if(!DEPARTMENTS.some(dep=> d[dep.teamField])){ alert("Check at least one department to send this to."); return; }
     if(d.audienceType==="team" && !d.teamId){ alert("Pick a team first."); return; }
     if(d.audienceType==="specific" && !d.specificIds.length){ alert("Pick at least one person first."); return; }
     sendBtn.disabled = true; sendBtn.textContent = "Sending…";
@@ -3128,7 +3149,9 @@ function wireQuizBuilderEvents(){
       if(recErr){ alert("Couldn't send to the people you picked: " + recErr.message); sendBtn.disabled = false; sendBtn.textContent = "Send quiz →"; return; }
     }
 
-    const { error } = await supabase.from("standalone_quizzes").update({ audience_type:d.audienceType, team_id: d.audienceType==="team"?d.teamId:null, sent:true }).eq("id", d.id);
+    const updateObj = { audience_type:d.audienceType, team_id: d.audienceType==="team"?d.teamId:null, sent:true };
+    DEPARTMENTS.forEach(dep=>{ updateObj[dep.teamDbField] = !!d[dep.teamField]; });
+    const { error } = await supabase.from("standalone_quizzes").update(updateObj).eq("id", d.id);
     if(error){ alert("Couldn't send: " + error.message); sendBtn.disabled = false; sendBtn.textContent = "Send quiz →"; return; }
 
     d.sent = true;
@@ -3178,7 +3201,7 @@ async function loadStandaloneQuizzes(){
   const myRecipientQuizIds = new Set((myRecipientRows||[]).map(r=>r.quiz_id));
 
   QUIZZES = (quizzes||[])
-    .filter(q=> guestMode || canAccessDepartment(q.department||'TS'))
+    .filter(q=> guestMode || myDepartments().some(id=> rawRowHasDeptAccess(q, id)))
     .map(q=>{
     // Broad visibility (via RLS) lets any quiz-manager see every quiz, for
     // management purposes. That's NOT the same as "this quiz is actually
@@ -3190,7 +3213,8 @@ async function loadStandaloneQuizzes(){
       else if(q.audience_type === "specific") isRecipient = myRecipientQuizIds.has(q.id);
     }
     return {
-      id:q.id, title:q.title, createdBy:q.created_by, createdByName:q.created_by_name, department:q.department||'TS',
+      id:q.id, title:q.title, createdBy:q.created_by, createdByName:q.created_by_name,
+      accessTs:!!q.access_ts, accessCs:!!q.access_cs, accessTestboard:!!q.access_testboard,
       audienceType:q.audience_type, teamId:q.team_id, sent:q.sent, createdAt:q.created_at,
       questions:(questions||[]).filter(qq=>qq.quiz_id===q.id).map(qq=>({ id:qq.id, type:qq.question_type, question:qq.question, options:qq.options||[], correct:qq.correct_index, explain:qq.explanation||"" })),
       myAttempt: (myAttempts||[]).find(a=>a.quiz_id===q.id) || null,
@@ -4916,7 +4940,14 @@ function wireRichEditor(id){
       let px = parseInt(sizeInput.value);
       if(!px || px<8) px = 8;
       if(px>96) px = 96;
-      editorEl.focus();
+      // preventScroll — refocusing here (needed since the number input just
+      // had real focus, unlike other toolbar buttons which use
+      // mousedown+preventDefault to never let focus leave the editor at
+      // all) would otherwise make the browser default the cursor to the
+      // very start of the content and scroll that into view, before
+      // restoreRange() below even runs to fix the actual position. Skipping
+      // that default scroll entirely avoids the jump.
+      editorEl.focus({ preventScroll: true });
       restoreRange();
       const sel = window.getSelection();
       if(!sel.rangeCount || !editorEl.contains(sel.anchorNode)){ sizeInput.value = px; return; }
