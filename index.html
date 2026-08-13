@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r101";
+const BUILD_VERSION = "2026-07-27T00:00Z-r102";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -708,7 +708,7 @@ async function loadEverything(){
     supabase.from("quiz_questions").select("id,module_id,sort_order,question,options,correct_index,explanation,question_type,end_goal,final_screen_id").order("sort_order"),
     supabase.from("progress").select("*").eq("user_id", session.user.id),
     supabase.from("module_popup_dismissals").select("module_id").eq("user_id", session.user.id),
-    supabase.from("interactive_pictures").select("id,lesson_id,hotspots"),
+    supabase.from("interactive_pictures").select("id,lesson_id,hotspots,content_type"),
     supabase.from("interactive_picture_progress").select("*").eq("user_id", session.user.id),
     supabase.from("quiz_in_progress").select("module_id").eq("user_id", session.user.id)
   ]);
@@ -732,7 +732,7 @@ async function loadEverything(){
   dismissedModulePopups = new Set((dismissalsRes.data||[]).map(d=>d.module_id));
 
   INTERACTIVE_PICTURES = {};
-  (ipicsRes.data||[]).forEach(ip=>{ INTERACTIVE_PICTURES[ip.id] = { id:ip.id, lessonId:ip.lesson_id, image:null, hotspots:ip.hotspots||[] }; });
+  (ipicsRes.data||[]).forEach(ip=>{ INTERACTIVE_PICTURES[ip.id] = { id:ip.id, lessonId:ip.lesson_id, image:null, hotspots:ip.hotspots||[], type:ip.content_type||'hotspot', slides:null }; });
   myInteractivePicProgress = {};
   (ipProgressRes.data||[]).forEach(p=>{ myInteractivePicProgress[p.interactive_picture_id] = new Set(p.read_hotspot_ids||[]); });
 }
@@ -753,6 +753,13 @@ async function ensureInteractivePicImage(ipId){
   if(!ip || ip.image) return ip; // already have it, or it doesn't exist
   const { data } = await supabase.from("interactive_pictures").select("image").eq("id", ipId).single();
   if(data) ip.image = data.image;
+  return ip;
+}
+async function ensureInteractivePicSlides(ipId){
+  const ip = INTERACTIVE_PICTURES[ipId];
+  if(!ip || ip.slides) return ip; // already have it (even an empty array counts as "loaded"), or it doesn't exist
+  const { data } = await supabase.from("interactive_pictures").select("slides").eq("id", ipId).single();
+  ip.slides = (data && data.slides) || [];
   return ip;
 }
 
@@ -1517,7 +1524,14 @@ function lessonInteractivePicsComplete(lesson){
   if(!matches.length) return true;
   return matches.every(m=>{
     const ip = INTERACTIVE_PICTURES[m[1]];
-    if(!ip || !ip.hotspots.length) return true;
+    if(!ip) return true;
+    if(ip.type === 'slideshow'){
+      if(ip.slides === null) return false; // not loaded yet — safer to block than to silently let this pass before we actually know
+      if(!ip.slides.length) return true; // loaded, and genuinely has no slides
+      const seenSet = myInteractivePicProgress[m[1]] || new Set();
+      return ip.slides.every((s,i)=> seenSet.has(i));
+    }
+    if(!ip.hotspots.length) return true;
     const readSet = myInteractivePicProgress[m[1]] || new Set();
     return ip.hotspots.every(h=>readSet.has(h.id));
   });
@@ -1546,7 +1560,7 @@ function renderLesson(){
   renderShell(`
     <div class="lesson-nav">${tabs}${editBtn}${quizTab}</div>
     <div class="card"><div class="k-label">${escapeHtml(lesson.label)}</div><h2>${escapeHtml(lesson.title)}</h2><div class="body">${lesson.body}</div>
-      ${nextDisabled ? `<p style="color:var(--amber);font-size:13px;margin-top:14px;">⚠ Finish exploring the interactive picture above — click every red box until it's green — before you can continue.</p>` : ''}
+      ${nextDisabled ? `<p style="color:var(--amber);font-size:13px;margin-top:14px;">⚠ Finish exploring the interactive content above before you can continue.</p>` : ''}
       <div class="nav-buttons"><button class="btn" id="prev-lesson" ${currentLessonIdx===0?'disabled':''}>← Previous</button>
       ${nextBtnHtml}</div>
       <div class="nav-buttons" style="margin-top:8px;"><button class="mini-btn" id="comment-lesson">💬 Comment</button><div></div></div>
@@ -4754,7 +4768,8 @@ function richEditorHtml(id, initialHtml){
       <button type="button" data-cmd="unlink" title="Remove link">Unlink</button>
       <button type="button" data-cmd="image" title="Insert image">🖼</button>
       <input type="file" accept="image/*" style="display:none" id="${id}-file">
-      ${id.startsWith('lesson-rte-') ? `<button type="button" data-cmd="interactivePic" title="Add Interactive Picture">🖼✛ Add Interactive Picture</button><input type="file" accept="image/*" style="display:none" id="${id}-ipic-file">` : ''}
+      ${id.startsWith('lesson-rte-') ? `<button type="button" data-cmd="interactivePic" title="Add Interactive Picture">🖼✛ Add Interactive Picture</button><input type="file" accept="image/*" style="display:none" id="${id}-ipic-file">
+      <button type="button" data-cmd="slideshow" title="Add Slideshow">🎞 Add Slideshow</button><input type="file" accept="image/*" multiple style="display:none" id="${id}-slideshow-file">` : ''}
       <div class="rte-sep"></div>
       <button type="button" data-cmd="clearFormat" title="Clear formatting">Tx</button>
     </div>
@@ -4855,14 +4870,46 @@ function wireRichEditor(id){
           const dataUrl = await compressImageFile(file);
           if(!dataUrl) return; // compressImageFile already alerted the user about what went wrong
           const ipId = 'ip'+Date.now()+Math.random().toString(36).slice(2,8);
-          const { error } = await supabase.from("interactive_pictures").insert({ id:ipId, lesson_id:lesson.id, image:dataUrl, hotspots:[] });
+          const { error } = await supabase.from("interactive_pictures").insert({ id:ipId, lesson_id:lesson.id, image:dataUrl, hotspots:[], content_type:'hotspot' });
           if(error){ alert("Couldn't create interactive picture: " + error.message); return; }
-          INTERACTIVE_PICTURES[ipId] = { id:ipId, lessonId:lesson.id, image:dataUrl, hotspots:[] };
+          INTERACTIVE_PICTURES[ipId] = { id:ipId, lessonId:lesson.id, image:dataUrl, hotspots:[], type:'hotspot', slides:null };
           document.execCommand("insertHTML", false, `<div class="interactive-pic-embed" contenteditable="false" data-interactive-pic-id="${ipId}">&nbsp;</div>&nbsp;`);
           editorEl.dispatchEvent(new Event("input", { bubbles:true }));
           openInteractivePicConfigFullscreen(ipId);
         };
         ipFileInput.click();
+        return;
+      }
+      if(cmd === "slideshow"){
+        const slideFileInput = document.getElementById(`${id}-slideshow-file`);
+        slideFileInput.onchange = async ()=>{
+          const files = Array.from(slideFileInput.files||[]);
+          slideFileInput.value = "";
+          if(!files.length) return;
+          const lessonIdxMatch = id.match(/^lesson-rte-(\d+)$/);
+          if(!lessonIdxMatch) return;
+          const lesson = draftModule.lessons[+lessonIdxMatch[1]];
+          if(!lesson || !lesson.id){ alert("Save the lesson first, then add a slideshow."); return; }
+          // Uploaded one at a time, in order, rather than in parallel —
+          // parallel uploads would let them finish in whatever order the
+          // network happens to complete them, silently scrambling slide
+          // order from what was actually selected.
+          const urls = [];
+          for(const file of files){
+            const url = await compressImageFile(file);
+            if(url) urls.push(url);
+          }
+          if(!urls.length){ alert("Couldn't upload any of those images."); return; }
+          const slides = urls.map(u=>({ image:u }));
+          const ipId = 'ip'+Date.now()+Math.random().toString(36).slice(2,8);
+          const { error } = await supabase.from("interactive_pictures").insert({ id:ipId, lesson_id:lesson.id, content_type:'slideshow', slides, hotspots:[] });
+          if(error){ alert("Couldn't create slideshow: " + error.message); return; }
+          INTERACTIVE_PICTURES[ipId] = { id:ipId, lessonId:lesson.id, image:null, hotspots:[], type:'slideshow', slides };
+          document.execCommand("insertHTML", false, `<div class="interactive-pic-embed" contenteditable="false" data-interactive-pic-id="${ipId}">&nbsp;</div>&nbsp;`);
+          editorEl.dispatchEvent(new Event("input", { bubbles:true }));
+          openSlideshowConfigFullscreen(ipId);
+        };
+        slideFileInput.click();
         return;
       }
       if(cmd === "hr"){ document.execCommand("insertHTML", false, "<hr>"); return; }
@@ -5547,6 +5594,147 @@ function openHotspotEditModal(ip, hi, onSaved){
   });
 }
 
+function openSlideshowConfigFullscreen(ipId){
+  const ip = INTERACTIVE_PICTURES[ipId];
+  if(!ip){ alert("Couldn't find that slideshow."); return; }
+  ip.slides = ip.slides || [];
+  const overlay = document.createElement("div");
+  overlay.id = "slideshow-config-overlay";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f0;display:flex;flex-direction:column;align-items:center;padding:24px;overflow-y:auto;";
+  document.body.appendChild(overlay);
+  window.activeFullscreenCleanups.push(()=> overlay.remove());
+
+  let saveTimer = null;
+  function scheduleSave(){
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async ()=>{ await silentSave(()=> supabase.from("interactive_pictures").update({ slides: ip.slides }).eq("id", ipId)); }, 500);
+  }
+
+  function draw(){
+    const slidesHtml = ip.slides.map((s,i)=>`
+      <div class="sub-card" style="display:flex;align-items:center;gap:12px;">
+        <img src="${s.image}" style="width:120px;height:80px;object-fit:cover;border-radius:6px;flex:none;">
+        <div style="flex:1;color:var(--text-dim);font-size:13px;">Slide ${i+1}</div>
+        <div style="display:flex;gap:6px;">
+          <button class="mini-btn" data-slide-up="${i}" ${i===0?'disabled':''} title="Move earlier">↑</button>
+          <button class="mini-btn" data-slide-down="${i}" ${i===ip.slides.length-1?'disabled':''} title="Move later">↓</button>
+          <button class="mini-btn danger" data-slide-del="${i}" title="Remove">✕</button>
+        </div>
+      </div>`).join("");
+    overlay.innerHTML = `
+      <div style="width:100%;max-width:700px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <span style="color:var(--text-dim);font-family:var(--mono);font-size:12px;">SLIDESHOW · ${ip.slides.length} slide${ip.slides.length===1?'':'s'}</span>
+          <button class="btn primary" id="slideshow-config-done">Done</button>
+        </div>
+        ${slidesHtml || `<p style="color:var(--text-faint);font-size:13px;">No slides yet.</p>`}
+        <button class="dashed-btn" id="slideshow-add-more" style="margin-top:12px;width:100%;">+ Add more slides</button>
+        <input type="file" accept="image/*" multiple style="display:none" id="slideshow-config-file-input">
+      </div>`;
+    document.getElementById("slideshow-config-done").addEventListener("click", ()=>{ scheduleSave(); overlay.remove(); if(view==="editor") renderEditor(); });
+    const addBtn = document.getElementById("slideshow-add-more");
+    const fileInput = document.getElementById("slideshow-config-file-input");
+    addBtn.addEventListener("click", ()=> fileInput.click());
+    fileInput.addEventListener("change", async (e)=>{
+      const files = Array.from(e.target.files||[]);
+      e.target.value = "";
+      if(!files.length) return;
+      addBtn.disabled = true; addBtn.textContent = "Uploading…";
+      // Sequential, not parallel — same reasoning as the initial upload:
+      // keeps the order they were selected in, rather than whatever order
+      // the network happens to finish each upload.
+      for(const file of files){
+        const url = await compressImageFile(file);
+        if(url) ip.slides.push({ image:url });
+      }
+      scheduleSave();
+      draw();
+    });
+    overlay.querySelectorAll("[data-slide-del]").forEach(el=> el.addEventListener("click", ()=>{
+      const i = +el.getAttribute("data-slide-del");
+      if(!confirm("Remove this slide?")) return;
+      ip.slides.splice(i,1);
+      scheduleSave();
+      draw();
+    }));
+    overlay.querySelectorAll("[data-slide-up]").forEach(el=> el.addEventListener("click", ()=>{
+      const i = +el.getAttribute("data-slide-up");
+      if(i<=0) return;
+      [ip.slides[i-1], ip.slides[i]] = [ip.slides[i], ip.slides[i-1]];
+      scheduleSave();
+      draw();
+    }));
+    overlay.querySelectorAll("[data-slide-down]").forEach(el=> el.addEventListener("click", ()=>{
+      const i = +el.getAttribute("data-slide-down");
+      if(i>=ip.slides.length-1) return;
+      [ip.slides[i], ip.slides[i+1]] = [ip.slides[i+1], ip.slides[i]];
+      scheduleSave();
+      draw();
+    }));
+  }
+  draw();
+}
+
+async function openSlideshowViewer(ipId){
+  const ip = INTERACTIVE_PICTURES[ipId];
+  if(!ip){ alert("Couldn't load this slideshow."); return; }
+  await ensureInteractivePicSlides(ipId);
+  if(!ip.slides.length){ alert("This slideshow doesn't have any slides yet."); return; }
+  if(!myInteractivePicProgress[ipId]) myInteractivePicProgress[ipId] = new Set();
+  const seenSet = myInteractivePicProgress[ipId];
+
+  const overlay = document.createElement("div");
+  overlay.id = "slideshow-viewer-overlay";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f5;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;";
+  document.body.appendChild(overlay);
+  window.activeFullscreenCleanups.push(()=> overlay.remove());
+
+  // Resume at the first slide not yet seen, rather than always restarting
+  // at slide 1 — returning to a slideshow already partway through should
+  // pick up close to where it left off, same spirit as quiz resume.
+  let idx = 0;
+  const firstUnseen = ip.slides.findIndex((s,i)=> !seenSet.has(i));
+  if(firstUnseen >= 0) idx = firstUnseen;
+
+  function markSeen(i){
+    if(seenSet.has(i)) return;
+    seenSet.add(i);
+    silentSave(()=> Promise.resolve(supabase.from("interactive_picture_progress").upsert({
+      user_id: session.user.id, interactive_picture_id: ipId, read_hotspot_ids: Array.from(seenSet), updated_at: new Date().toISOString()
+    }, { onConflict: "user_id,interactive_picture_id" }))).catch(()=>{});
+  }
+
+  const onKeyDown = (e)=>{
+    if(e.key === "ArrowLeft" && idx>0){ idx--; draw(); }
+    else if(e.key === "ArrowRight" && idx<ip.slides.length-1){ idx++; draw(); }
+  };
+  document.addEventListener("keydown", onKeyDown);
+  function cleanup(){ document.removeEventListener("keydown", onKeyDown); }
+  window.activeFullscreenCleanups.push(cleanup);
+
+  function draw(){
+    markSeen(idx);
+    const total = ip.slides.length;
+    const done = ip.slides.filter((s,i)=>seenSet.has(i)).length;
+    const allDone = done>=total;
+    overlay.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:1300px;margin-bottom:14px;gap:12px;">
+        <span style="color:${allDone?'var(--green)':'var(--text-dim)'};font-family:var(--mono);font-size:12px;">SLIDE ${idx+1} OF ${total} · ${done}/${total} viewed${allDone?' — all done!':''}</span>
+        <button class="btn ${allDone?'primary':''}" id="slideshow-viewer-close">${allDone?'Done ✓':'✕ Exit'}</button>
+      </div>
+      <div style="position:relative;display:flex;align-items:center;gap:16px;width:100%;max-width:1300px;justify-content:center;">
+        <button class="btn" id="slideshow-prev" ${idx===0?'disabled':''} style="flex:none;font-size:20px;padding:14px 18px;">‹</button>
+        <img src="${ip.slides[idx].image}" style="max-width:min(80vw,1100px);max-height:76vh;border-radius:8px;display:block;user-select:none;" draggable="false">
+        <button class="btn" id="slideshow-next" ${idx===total-1?'disabled':''} style="flex:none;font-size:20px;padding:14px 18px;">›</button>
+      </div>
+      ${!allDone ? `<p style="color:var(--text-faint);font-size:12.5px;margin-top:14px;">Click through every slide with the arrows — all slides must be viewed before this counts as done.</p>` : `<p class="hint" style="margin-top:8px;">Use the arrows to review any slide again.</p>`}`;
+    document.getElementById("slideshow-viewer-close").addEventListener("click", ()=>{ cleanup(); overlay.remove(); render(); });
+    document.getElementById("slideshow-prev").addEventListener("click", ()=>{ if(idx>0){ idx--; draw(); } });
+    document.getElementById("slideshow-next").addEventListener("click", ()=>{ if(idx<total-1){ idx++; draw(); } });
+  }
+  draw();
+}
+
 function openInteractivePicConfigFullscreen(ipId){
   const ip = INTERACTIVE_PICTURES[ipId];
   if(!ip){ alert("Couldn't find that interactive picture."); return; }
@@ -5743,6 +5931,39 @@ function normalizeInteractivePicEmbeds(root){
     const mode = isEditable ? 'edit' : 'play';
     if(el.getAttribute('data-ip-hydrated') === mode) return;
 
+    if(ip.type === 'slideshow'){
+      if(!ip.slides){
+        el.setAttribute('data-ip-loading', '1');
+        el.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text-faint);font-family:var(--mono);font-size:12px;">Loading slideshow…</div>`;
+        ensureInteractivePicSlides(ipId).then(()=>{
+          el.removeAttribute('data-ip-loading');
+          normalizeInteractivePicEmbeds(root);
+        });
+        return;
+      }
+      el.setAttribute('data-ip-hydrated', mode);
+      const firstSlide = ip.slides[0] ? ip.slides[0].image : "";
+      if(isEditable){
+        el.innerHTML = `
+          <img src="${firstSlide}" style="max-width:220px;max-height:140px;border-radius:6px;display:block;">
+          <div class="ip-embed-overlay">
+            <span class="ip-embed-badge">🎞 Slideshow · ${ip.slides.length} slide${ip.slides.length===1?'':'s'}</span>
+            <button class="mini-btn" data-ip-configure="${ipId}" type="button">Configure</button>
+            <button class="mini-btn danger" data-ip-remove="${ipId}" type="button">Remove</button>
+          </div>`;
+        el.style.cursor = "";
+      } else {
+        const seenSet = myInteractivePicProgress[ipId] || new Set();
+        const total = ip.slides.length;
+        const done = ip.slides.filter((s,i)=>seenSet.has(i)).length;
+        el.innerHTML = `
+          <img src="${firstSlide}" style="max-width:100%;border-radius:8px;display:block;">
+          <div class="ip-embed-play-overlay"><span>⛶ Click for fullscreen${total?` — ${done}/${total} viewed`:''}</span></div>`;
+        el.style.cursor = "pointer";
+      }
+      return;
+    }
+
     if(!ip.image){
       el.setAttribute('data-ip-loading', '1');
       el.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text-faint);font-family:var(--mono);font-size:12px;">Loading picture…</div>`;
@@ -5800,11 +6021,16 @@ async function navigateToSiteLink(linkEl){
 }
 document.addEventListener("click", (e)=>{
   const configureBtn = e.target.closest("[data-ip-configure]");
-  if(configureBtn){ openInteractivePicConfigFullscreen(configureBtn.getAttribute("data-ip-configure")); return; }
+  if(configureBtn){
+    const ipId = configureBtn.getAttribute("data-ip-configure");
+    const ip = INTERACTIVE_PICTURES[ipId];
+    if(ip && ip.type==='slideshow') openSlideshowConfigFullscreen(ipId); else openInteractivePicConfigFullscreen(ipId);
+    return;
+  }
   const removeBtn = e.target.closest("[data-ip-remove]");
   if(removeBtn){
     const ipId = removeBtn.getAttribute("data-ip-remove");
-    if(!confirm("Remove this interactive picture from the lesson? This can't be undone.")) return;
+    if(!confirm("Remove this from the lesson? This can't be undone.")) return;
     const embed = removeBtn.closest(".interactive-pic-embed");
     if(embed){
       const editorEl = embed.closest(".rte-body");
@@ -5816,7 +6042,12 @@ document.addEventListener("click", (e)=>{
     return;
   }
   const playEmbed = e.target.closest('.interactive-pic-embed[data-ip-hydrated="play"]');
-  if(playEmbed){ openInteractivePicViewer(playEmbed.getAttribute("data-interactive-pic-id")); return; }
+  if(playEmbed){
+    const ipId = playEmbed.getAttribute("data-interactive-pic-id");
+    const ip = INTERACTIVE_PICTURES[ipId];
+    if(ip && ip.type==='slideshow') openSlideshowViewer(ipId); else openInteractivePicViewer(ipId);
+    return;
+  }
   const internalLink = e.target.closest("a.internal-link");
   if(internalLink){
     // Only intercept outside the editor itself — inside a contenteditable
