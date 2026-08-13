@@ -77,7 +77,7 @@
   .ref-content .card{ border:none; }
   .card h2{ margin:0 0 4px; font-size:20px; } .card .k-label{ font-family:var(--mono); font-size:11px; color:var(--text-faint); letter-spacing:.1em; text-transform:uppercase; margin-bottom:14px; }
   .card .body p{ color:#C7CFE0; font-size:14.5px; line-height:1.75; margin:0 0 14px; }
-  .card .body ul{ margin:0 0 14px; padding-left:20px; color:#C7CFE0; font-size:14.5px; line-height:1.8; } .card .body li{ margin-bottom:4px; } .card .body strong{ color:var(--text); }
+  .card .body ul, .card .body ol{ margin:0 0 14px; padding-left:20px; color:#C7CFE0; font-size:14.5px; line-height:1.8; } .card .body li{ margin-bottom:4px; } .card .body strong{ color:var(--text); }
   .card .body img{ max-width:100%; border-radius:8px; margin:10px 0; display:block; }
   .light-table{ display:grid; grid-template-columns:auto 1fr; gap:10px 16px; margin:16px 0 18px; font-size:13.5px; }
   .light-table .lt-led{ display:flex; align-items:center; gap:8px; font-family:var(--mono); color:var(--text-dim); } .light-table .lt-desc{ color:#C7CFE0; }
@@ -140,7 +140,7 @@
     --cyan:#00ffaa; --cyan-dim:#00ffaa33; --input-bg:#020a04; --body-bg-glow:none;
   }
   html.theme-programmer body{ background:#000000; }
-  html.theme-programmer, html.theme-programmer .card .body p, html.theme-programmer .card .body ul, html.theme-programmer .opt span.txt{ font-family:var(--mono); }
+  html.theme-programmer, html.theme-programmer .card .body p, html.theme-programmer .card .body ul, html.theme-programmer .card .body ol, html.theme-programmer .opt span.txt{ font-family:var(--mono); }
 
   /* Retro Amber — old CRT monochrome terminal */
   html.theme-retro{
@@ -190,7 +190,7 @@
   }
   html.theme-contrast body{ background:#000000; }
 
-  html.theme-light .card .body p, html.theme-light .card .body ul, html.theme-light .opt span.txt{ color:#333d52; }
+  html.theme-light .card .body p, html.theme-light .card .body ul, html.theme-light .card .body ol, html.theme-light .opt span.txt{ color:#333d52; }
   html.theme-light .explain{ background:var(--input-bg); }
   html.theme-light .opt{ background:var(--input-bg); }
   html.theme-light .sub-card{ background:var(--input-bg); }
@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r104";
+const BUILD_VERSION = "2026-07-27T00:00Z-r106";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1213,7 +1213,7 @@ function renderShell(inner){
         <div class="brand-text"><div class="name">${T('brand.name','COMPORIUM TRAINING MODULES')}</div></div>
       </div>
       <div class="top-right">
-        ${(isAdmin() || canManagePeople() || canCreateQuizzes()) ? `<button class="pill-btn" id="go-team-btn">Teams</button>` : ""}
+        ${(!isAdmin() && (canManagePeople() || canCreateQuizzes())) ? `<button class="pill-btn" id="go-team-btn">People</button>` : ""}
         <div class="bell-wrap">
           <button class="gear-btn" id="notif-bell" title="Notifications">🔔${notifBadgeCount()>0?`<span class="notif-dot"></span>`:''}</button>
         </div>
@@ -1225,6 +1225,7 @@ function renderShell(inner){
           <div class="admin-menu">
             <span class="admin-badge">ADMIN ▾</span>
             <div class="admin-menu-panel">
+              <button id="go-team-btn">👥 People</button>
               <button id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>
               <button id="open-announce">📣 Make Announcement</button>
               <button id="open-edit-log">📋 Edit Log</button>
@@ -1234,7 +1235,7 @@ function renderShell(inner){
         <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
       </div>
     </header>
-    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes"||view==="guest-features") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'TEAMS':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='quiz-sent-detail'?'SENT QUIZ':view==='edit-log'?'EDIT LOG':''))}`}</nav>`}
+    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes"||view==="guest-features") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'PEOPLE':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='quiz-sent-detail'?'SENT QUIZ':view==='edit-log'?'EDIT LOG':''))}`}</nav>`}
     <div class="top-nav">
       <button class="top-nav-btn ${section==='home'?'active':''}" id="nav-home">${T('nav.dashboard','Dashboard')}</button>
       <button class="top-nav-btn ${section==='modules'?'active':''}" id="nav-modules">${T('nav.modules','Training Modules')}</button>
@@ -2514,7 +2515,8 @@ function renderLessonsViewedHtml(person, m){
 function renderInlineAttemptDetailHtml(person){
   const m = modById(attemptDetailFor.moduleId);
   if(!m) return "";
-  const lessonsHtml = renderLessonsViewedHtml(person, m);
+  const moduleLabelHtml = `<div style="margin:0 4px 10px;color:var(--text-dim);font-family:var(--mono);font-size:11px;letter-spacing:.04em;">VIEWING · ${escapeHtml(m.title.toUpperCase())}</div>`;
+  const lessonsHtml = moduleLabelHtml + renderLessonsViewedHtml(person, m);
   if(attemptDetailData === "loading"){
     return lessonsHtml + `<div class="sub-card" style="margin:0 4px 14px;"><p style="color:var(--text-faint);font-family:var(--mono);font-size:12px;margin:0;">Loading attempts…</p></div>`;
   }
@@ -4676,7 +4678,7 @@ function getCurrentPageContext(){
     const q = QUIZZES.find(x=>x.id===currentQuizId);
     return q ? `Quiz: ${q.title}` : "Quizzes";
   }
-  const viewLabels = { home:"Home", dashboard:"Training Modules", reference:"Reference Guide", notes:"My Notes", quizzes:"Quizzes", team:"Teams", settings:"Settings", notifications:"Notifications", chat:"Chat", analyze:"Analyze" };
+  const viewLabels = { home:"Home", dashboard:"Training Modules", reference:"Reference Guide", notes:"My Notes", quizzes:"Quizzes", team:"People", settings:"Settings", notifications:"Notifications", chat:"Chat", analyze:"Analyze" };
   return viewLabels[view] || view;
 }
 function openFeedbackSubmitModal(){
