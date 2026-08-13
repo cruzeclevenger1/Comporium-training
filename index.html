@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r103";
+const BUILD_VERSION = "2026-07-27T00:00Z-r104";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5937,7 +5937,15 @@ function normalizeInteractivePicEmbeds(root){
         el.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text-faint);font-family:var(--mono);font-size:12px;">Loading slideshow…</div>`;
         ensureInteractivePicSlides(ipId).then(()=>{
           el.removeAttribute('data-ip-loading');
-          normalizeInteractivePicEmbeds(root);
+          // A full render() here, not just re-hydrating this one embed —
+          // the lesson's Next/Start Quiz button already evaluated whether
+          // every interactive item is complete *before* these slides had
+          // loaded (slides are fetched lazily, same as hotspot images),
+          // and nothing else would ever re-check that gate once they
+          // finish loading. Without this, the button stays stuck on its
+          // original, now-stale answer even though the embed's own badge
+          // updates correctly right next to it.
+          if(view === "lesson") render(); else normalizeInteractivePicEmbeds(root);
         });
         return;
       }
