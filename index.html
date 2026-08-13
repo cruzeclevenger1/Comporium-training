@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r102";
+const BUILD_VERSION = "2026-07-27T00:00Z-r103";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5957,7 +5957,7 @@ function normalizeInteractivePicEmbeds(root){
         const total = ip.slides.length;
         const done = ip.slides.filter((s,i)=>seenSet.has(i)).length;
         el.innerHTML = `
-          <img src="${firstSlide}" style="max-width:100%;border-radius:8px;display:block;">
+          <img src="${firstSlide}" style="max-width:100%;max-height:340px;border-radius:8px;display:block;object-fit:contain;">
           <div class="ip-embed-play-overlay"><span>⛶ Click for fullscreen${total?` — ${done}/${total} viewed`:''}</span></div>`;
         el.style.cursor = "pointer";
       }
