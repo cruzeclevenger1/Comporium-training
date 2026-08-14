@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r106";
+const BUILD_VERSION = "2026-07-27T00:00Z-r107";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -2134,7 +2134,8 @@ function renderTeam(){
     const moduleGrid = deptModulesForRoster.map(m=>{
       const pct = r.perModule[m.id];
       const cls = pct===100 ? "done" : pct>0 ? "progress" : "";
-      return `<button class="status-pill ${cls}" data-view-attempt="${r.id}:${m.id}" style="cursor:pointer;">${escapeHtml(m.title)} · ${pct}%</button>`;
+      const isSelected = attemptDetailFor && attemptDetailFor.userId===r.id && attemptDetailFor.moduleId===m.id;
+      return `<button class="status-pill ${cls}" data-view-attempt="${r.id}:${m.id}" style="cursor:pointer;${isSelected ? 'box-shadow:0 0 0 2px var(--cyan), 0 0 14px 3px #22d3ee66;' : ''}">${escapeHtml(m.title)} · ${pct}%</button>`;
     }).join("");
 
     let progressCell, thirdCell;
@@ -2515,8 +2516,7 @@ function renderLessonsViewedHtml(person, m){
 function renderInlineAttemptDetailHtml(person){
   const m = modById(attemptDetailFor.moduleId);
   if(!m) return "";
-  const moduleLabelHtml = `<div style="margin:0 4px 10px;color:var(--text-dim);font-family:var(--mono);font-size:11px;letter-spacing:.04em;">VIEWING · ${escapeHtml(m.title.toUpperCase())}</div>`;
-  const lessonsHtml = moduleLabelHtml + renderLessonsViewedHtml(person, m);
+  const lessonsHtml = renderLessonsViewedHtml(person, m);
   if(attemptDetailData === "loading"){
     return lessonsHtml + `<div class="sub-card" style="margin:0 4px 14px;"><p style="color:var(--text-faint);font-family:var(--mono);font-size:12px;margin:0;">Loading attempts…</p></div>`;
   }
