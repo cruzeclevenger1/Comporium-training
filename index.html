@@ -418,7 +418,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r110";
+const BUILD_VERSION = "2026-07-27T00:00Z-r112";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1436,7 +1436,6 @@ function renderDashboard(){
     <section class="hero">
       <div class="eyebrow">${T('dashboard.eyebrow','New Agent Onboarding')}</div>
       <h1>${T('dashboard.h1','Before you take a call, learn to read the box.')}</h1>
-      <p>${T("dashboard.p","Modules built from the tickets you'll actually see this week. Each ends in a scored quiz — your progress is saved to your account.")}</p>
       <div class="panel-row"><div class="stat"><div class="num">${modsMastered}/${deptModules.length}</div><div class="lbl">MODULES MASTERED</div></div>
       <div class="stat"><div class="num">${doneQ}/${totalQ}</div><div class="lbl">BEST-SCORE QUESTIONS CORRECT</div></div></div>
     </section>
@@ -2236,8 +2235,7 @@ function renderTeam(){
       ${sectionHeader('teams', 'Teams', deptTeams.length)}
       ${teamsSectionOpen.teams ? `
         <div style="margin-top:14px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <p style="color:var(--text-dim);font-size:13.5px;margin:0;">Group people together to filter progress by cohort, or target announcements at just this group.</p>
+          <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:10px;">
             <button class="btn primary" id="new-team-btn">+ New team</button>
           </div>
           <div>${teamsHtml}</div>
@@ -2286,7 +2284,6 @@ function renderTeam(){
               <option value="desc" ${teamModuleSort==='desc'?'selected':''}>Most completed first</option>
             </select>
           </div>
-          <p style="color:var(--text-dim);font-size:13.5px;margin:6px 0 20px;">${focusModule ? `Showing progress on <strong style="color:var(--text);">${escapeHtml(focusModule.title)}</strong> only.` : "Click a person to see their module-by-module breakdown."} Click a module pill to see any of their attempts, right here.</p>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>${focusModule ? escapeHtml(focusModule.title) : "Overall"}</th><th>${focusModule ? "Score" : "Mastered"}</th><th></th></tr></thead><tbody>${moduleRows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
         </div>` : ""}
     </div>` : ""}
@@ -2311,7 +2308,6 @@ function renderTeam(){
               <option value="desc" ${teamQuizSort==='desc'?'selected':''}>Most completed first</option>
             </select>
           </div>
-          <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Percent of sent quizzes each person has completed. Click a completed quiz to see their answers.</p>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Completion</th><th></th><th></th></tr></thead><tbody>${quizRowsHtml}</tbody></table></div>
         </div>` : ""}
     </div>` : ""}
@@ -2698,17 +2694,23 @@ function renderQuizzesList(){
     </div>`;
   }
 
-  const addBtn = (canManageQuizzes && editMode) ? `<button class="dashed-btn" id="add-quiz" style="margin-top:14px;">+ New quiz</button>` : "";
+  const effectiveMode = canManageQuizzes ? quizPageMode : "mine"; // no toggle reachable at all without manage permission, so always fall back to "mine" regardless of whatever the variable happens to hold
+  const addBtn = (canManageQuizzes && effectiveMode==='manage') ? `<button class="dashed-btn" id="add-quiz" style="margin-top:14px;">+ New quiz</button>` : "";
   const quizDeptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
       ${renderDeptTabsHtml(dept, 'quiz-dept')}
+    </div>` : "";
+  const modeTabsHtml = canManageQuizzes ? `<div class="dept-tabs" style="margin-bottom:18px;">
+      <button class="dept-tab ${effectiveMode==='mine'?'active':''}" data-quiz-mode="mine">My Quizzes</button>
+      <button class="dept-tab ${effectiveMode==='manage'?'active':''}" data-quiz-mode="manage">Manage Quizzes</button>
     </div>` : "";
   renderShell(`
     ${quizDeptTabsHtml}
     <section class="hero">
       <div class="eyebrow">${T('quizzes.eyebrow','Quizzes')}</div>
       <h1>${T('quizzes.h1','Quick check-ins from your admins')}</h1>
-      <p>${T('quizzes.p','These are separate from your Training Module quizzes — one-off quizzes sent out by admins.')}</p>
     </section>
+    ${modeTabsHtml}
+    ${effectiveMode === 'mine' ? `
     <div class="card">
       ${sectionHeader('pending', 'New / Not completed', pending.length)}
       ${quizListSectionOpen.pending ? `<div class="grid" style="margin-top:14px;">${pending.map(q=>quizCard(q,false)).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here.</p>'}</div>` : ""}
@@ -2717,17 +2719,22 @@ function renderQuizzesList(){
       ${sectionHeader('completed', 'Completed', completed.length)}
       ${quizListSectionOpen.completed ? `<div class="grid" style="margin-top:14px;">${completed.map(q=>quizCard(q,false)).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here yet.</p>'}</div>` : ""}
     </div>
-    ${canManageQuizzes ? `
-    <div class="card" style="margin-top:16px;">
+    ` : `
+    <div class="card">
       ${sectionHeader('sent', 'Sent Quizzes', activeSent.length)}
-      ${quizListSectionOpen.sent ? `<p style="color:var(--text-dim);font-size:13.5px;margin:14px 0;">Every quiz you've created or sent, not yet fully complete. Click a sent quiz to see who's completed it and grade long-answer responses. Click a draft to keep editing it. Deleting a quiz here removes it — and everyone's completed results — everywhere.</p><div class="grid">${activeSent.map(q=>quizCard(q,true)).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here yet.</p>'}</div>` : ""}
+      ${quizListSectionOpen.sent ? `<p style="color:var(--text-dim);font-size:13.5px;margin:14px 0;">Deleting a quiz here removes it — and everyone's completed results — everywhere.</p><div class="grid">${activeSent.map(q=>quizCard(q,true)).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here yet.</p>'}</div>` : ""}
     </div>
     <div class="card" style="margin-top:16px;">
       ${sectionHeader('sentCompleted', 'Fully Completed', fullyCompleteSent.length)}
-      ${quizListSectionOpen.sentCompleted ? `<p style="color:var(--text-dim);font-size:13.5px;margin:14px 0;">Everyone eligible has completed and been fully graded on these.</p><div class="grid">${fullyCompleteSent.map(q=>quizCard(q,true)).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here yet.</p>'}</div>` : ""}
-    </div>` : ""}
+      ${quizListSectionOpen.sentCompleted ? `<div class="grid">${fullyCompleteSent.map(q=>quizCard(q,true)).join("") || '<p style="color:var(--text-faint);font-size:13px;">Nothing here yet.</p>'}</div>` : ""}
+    </div>
     ${addBtn}
+    `}
   `);
+  root.querySelectorAll("[data-quiz-mode]").forEach(el=> el.addEventListener("click", ()=>{
+    quizPageMode = el.getAttribute("data-quiz-mode");
+    render();
+  }));
   root.querySelectorAll("[data-quiz-dept]").forEach(el=> el.addEventListener("click", ()=>{
     activeDepartment = el.getAttribute("data-quiz-dept");
     render();
@@ -2824,7 +2831,7 @@ function renderQuizSentDetail(){
         <button class="mini-btn danger" id="sent-detail-delete">Delete quiz</button>
       </div>
       <h2 style="margin-bottom:4px;">${escapeHtml(quiz.title)}</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">${completedCount}/${quizSentDetailRoster.length} (${quizSentDetailRoster.length?Math.round((completedCount/quizSentDetailRoster.length)*100):0}%) completed. Click a completed person to see their answers and grade any long-answer responses.</p>
+      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">${completedCount}/${quizSentDetailRoster.length} (${quizSentDetailRoster.length?Math.round((completedCount/quizSentDetailRoster.length)*100):0}%) completed.</p>
       <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="3" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one is eligible for this quiz yet.</td></tr>`}</tbody></table></div>
       <div class="nav-buttons"><button class="btn" id="sent-detail-back">← Back to Quizzes</button><div></div></div>
     </div>
@@ -3204,6 +3211,7 @@ function wireQuizBuilderEvents(){
 let QUIZZES = [];
 let quizAlertActive = false; // drives the red/green dot on the Home "Quizzes" card
 let quizListSectionOpen = { pending:true, completed:false, sent:false, sentCompleted:false };
+let quizPageMode = "mine"; // "mine" = quizzes assigned to me, "manage" = quizzes I've created/sent to others
 let currentQuizId = null;
 let quizTakeAnswers = {};
 let quizBuilderDraft = null;
@@ -7046,19 +7054,19 @@ function renderHome(){
     </section>
     <div class="three-col-grid">
       <div class="mod-card" id="go-modules-card">
-        <div class="row-top"><div><h3>${T('home.card.modules.title','Training Modules')}</h3><p class="sub">${T('home.card.modules.sub','Structured lessons and scored quizzes for onboarding and skill-building.')}</p></div><div class="led-strip">${modulesLeds}</div></div>
+        <div class="row-top"><div><h3>${T('home.card.modules.title','Training Modules')}</h3></div><div class="led-strip">${modulesLeds}</div></div>
         <div class="meta"><span>${MODULES.length} MODULES</span></div>
       </div>
       <div class="mod-card" id="go-reference-card">
-        <div class="row-top"><div><h3>${T('home.card.reference.title','Reference Guide')}</h3><p class="sub">${T('home.card.reference.sub','A living knowledge base the whole team can look things up in, not just new hires.')}</p></div><div class="led-strip"><span class="led" style="background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 8px var(--cyan);"></span></div></div>
+        <div class="row-top"><div><h3>${T('home.card.reference.title','Reference Guide')}</h3></div><div class="led-strip"><span class="led" style="background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 8px var(--cyan);"></span></div></div>
         <div class="meta"><span>${T('home.card.reference.tag','ALWAYS UP TO DATE')}</span></div>
       </div>
       <div class="mod-card" id="go-notes-card">
-        <div class="row-top"><div><h3>${T('home.card.notes.title','My Notes')}</h3><p class="sub">${T('home.card.notes.sub','Your own private notepad — nobody else can see it, not even admins.')}</p></div><div class="led-strip"><span class="led" style="background:var(--amber);border-color:var(--amber);box-shadow:0 0 8px var(--amber);"></span></div></div>
+        <div class="row-top"><div><h3>${T('home.card.notes.title','My Notes')}</h3></div><div class="led-strip"><span class="led" style="background:var(--amber);border-color:var(--amber);box-shadow:0 0 8px var(--amber);"></span></div></div>
         <div class="meta"><span>${T('home.card.notes.tag','PRIVATE TO YOU')}</span></div>
       </div>
       <div class="mod-card" id="go-quizzes-card">
-        <div class="row-top"><div><h3>${T('home.card.quizzes.title','Quizzes')}</h3><p class="sub">${T('home.card.quizzes.sub','One-off quizzes sent out by admins — separate from your training modules.')}</p></div><div class="led-strip"><span class="led" style="background:${quizAlertActive?'var(--red)':'var(--green)'};border-color:${quizAlertActive?'var(--red)':'var(--green)'};box-shadow:0 0 8px ${quizAlertActive?'var(--red)':'var(--green)'};"></span></div></div>
+        <div class="row-top"><div><h3>${T('home.card.quizzes.title','Quizzes')}</h3></div><div class="led-strip"><span class="led" style="background:${quizAlertActive?'var(--red)':'var(--green)'};border-color:${quizAlertActive?'var(--red)':'var(--green)'};box-shadow:0 0 8px ${quizAlertActive?'var(--red)':'var(--green)'};"></span></div></div>
         <div class="meta"><span>${quizAlertActive ? 'ACTION NEEDED' : 'ALL CAUGHT UP'}</span></div>
       </div>
     </div>
