@@ -416,7 +416,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r107";
+const BUILD_VERSION = "2026-07-27T00:00Z-r108";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -4780,28 +4780,54 @@ function richEditorHtml(id, initialHtml){
 }
 function clearFormatting(editorEl){
   editorEl.focus();
-  // Handles native bold/italic/underline/execCommand-applied styles.
+  const sel = window.getSelection();
+  if(!sel.rangeCount || !editorEl.contains(sel.anchorNode) || sel.isCollapsed){
+    // Nothing selected — there's no sensible scope to clean up, and (unlike
+    // this function's previous behavior) this should never silently fall
+    // back to wiping the entire lesson just because nothing was selected.
+    alert("Select the text you want to clear formatting from first.");
+    return;
+  }
+  // Handles native bold/italic/underline/execCommand-applied styles —
+  // already correctly scoped to the current selection by the browser itself.
   document.execCommand("removeFormat", false, null);
   document.execCommand("unlink", false, null);
-  // Pasted content (Word, Google Docs, other browser tabs, etc.) often carries
-  // inline style/color attributes that removeFormat doesn't touch — strip those directly.
-  editorEl.querySelectorAll("*").forEach(el=>{
+  // Pasted content (Word, Google Docs, other browser tabs, etc.) or a stray
+  // leftover from the color tools often carries inline style/color
+  // attributes that removeFormat doesn't touch. Extracting just the
+  // (possibly re-selected, post-removeFormat) selection into a detached
+  // container to clean up — same pattern used by the font-size tool —
+  // rather than querying the whole editor, which would strip formatting
+  // from unrelated content elsewhere in the same lesson that was never
+  // selected at all.
+  if(!sel.rangeCount) return;
+  const range = sel.getRangeAt(0);
+  if(range.collapsed) return;
+  const frag = range.extractContents();
+  const temp = document.createElement("div");
+  temp.appendChild(frag);
+  temp.querySelectorAll("*").forEach(el=>{
     el.removeAttribute("style");
     el.removeAttribute("color");
     el.removeAttribute("bgcolor");
     el.removeAttribute("face");
   });
-  editorEl.querySelectorAll("font").forEach(f=>{
+  temp.querySelectorAll("font").forEach(f=>{
     while(f.firstChild) f.parentNode.insertBefore(f.firstChild, f);
     f.parentNode.removeChild(f);
   });
   // removeFormat only touches inline formatting — flatten headings/quotes back
   // to plain paragraphs too, same as "clear formatting" in a normal editor.
-  editorEl.querySelectorAll("h1,h2,h3,h4,blockquote").forEach(el=>{
+  temp.querySelectorAll("h1,h2,h3,h4,blockquote").forEach(el=>{
     const p = document.createElement("p");
     while(el.firstChild) p.appendChild(el.firstChild);
     el.parentNode.replaceChild(p, el);
   });
+  const newRange = document.createRange();
+  newRange.selectNodeContents(temp);
+  const cleaned = newRange.extractContents();
+  range.insertNode(cleaned);
+  editorEl.dispatchEvent(new Event("input", { bubbles:true }));
 }
 
 function wireRichEditor(id){
