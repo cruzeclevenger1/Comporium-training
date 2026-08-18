@@ -76,6 +76,7 @@
   .card{ background:var(--panel); border:1px solid var(--stroke); border-radius:12px; padding:26px; position:relative; }
   .ref-content .card{ border:none; }
   .card h2{ margin:0 0 4px; font-size:20px; } .card .k-label{ font-family:var(--mono); font-size:11px; color:var(--text-faint); letter-spacing:.1em; text-transform:uppercase; margin-bottom:14px; }
+  .card .body{ color:#C7CFE0; }
   .card .body p{ color:#C7CFE0; font-size:14.5px; line-height:1.75; margin:0 0 14px; }
   .card .body ul, .card .body ol{ margin:0 0 14px; padding-left:20px; color:#C7CFE0; font-size:14.5px; line-height:1.8; } .card .body li{ margin-bottom:4px; } .card .body strong{ color:var(--text); }
   .card .body img{ max-width:100%; border-radius:8px; margin:10px 0; display:block; }
@@ -190,6 +191,7 @@
   }
   html.theme-contrast body{ background:#000000; }
 
+  html.theme-light .card .body{ color:#333d52; }
   html.theme-light .card .body p, html.theme-light .card .body ul, html.theme-light .card .body ol, html.theme-light .opt span.txt{ color:#333d52; }
   html.theme-light .explain{ background:var(--input-bg); }
   html.theme-light .opt{ background:var(--input-bg); }
@@ -416,7 +418,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r108";
+const BUILD_VERSION = "2026-07-27T00:00Z-r110";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -2128,7 +2130,7 @@ function renderTeam(){
     const va = focusModule ? (a.perModule[focusModule.id]||0) : deptOverallFor(a);
     const vb = focusModule ? (b.perModule[focusModule.id]||0) : deptOverallFor(b);
     return teamModuleSort==="asc" ? va-vb : vb-va;
-  }) : filteredRows;
+  }) : filteredRows.slice().sort((a,b)=> a.name.localeCompare(b.name));
   const moduleRows = moduleSortedRows.map(r=>{
     const expanded = teamExpandedRows.has(r.id);
     const moduleGrid = deptModulesForRoster.map(m=>{
@@ -2190,6 +2192,7 @@ function renderTeam(){
       filteredQuizRows = filteredQuizRows.filter(r=> r.name.toLowerCase().includes(q));
     }
     if(teamQuizSort) filteredQuizRows = filteredQuizRows.slice().sort((a,b)=> teamQuizSort==="asc" ? a.pct-b.pct : b.pct-a.pct);
+    else filteredQuizRows = filteredQuizRows.slice().sort((a,b)=> a.name.localeCompare(b.name));
     quizRowsHtml = filteredQuizRows.map(r=>{
       const expanded = quizProgressExpandedRows.has(r.id);
       const quizPills = r.perQuiz.map(pq=>{
@@ -2278,7 +2281,7 @@ function renderTeam(){
               ${deptModulesForRoster.map(m=>`<option value="${m.id}" ${teamModuleFilter===m.id?'selected':''}>${escapeHtml(m.title)}</option>`).join("")}
             </select>
             <select id="module-sort" style="width:auto;">
-              <option value="">Sort: default order</option>
+              <option value="">Sort: Alphabetical</option>
               <option value="asc" ${teamModuleSort==='asc'?'selected':''}>Least completed first</option>
               <option value="desc" ${teamModuleSort==='desc'?'selected':''}>Most completed first</option>
             </select>
@@ -2303,7 +2306,7 @@ function renderTeam(){
               ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
             </select>
             <select id="quiz-sort" style="width:auto;">
-              <option value="">Sort: default order</option>
+              <option value="">Sort: Alphabetical</option>
               <option value="asc" ${teamQuizSort==='asc'?'selected':''}>Least completed first</option>
               <option value="desc" ${teamQuizSort==='desc'?'selected':''}>Most completed first</option>
             </select>
