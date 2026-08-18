@@ -418,7 +418,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r112";
+const BUILD_VERSION = "2026-07-27T00:00Z-r114";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -2169,6 +2169,9 @@ function renderTeam(){
       </tr>`;
     const detailRow = expanded ? `
       <tr class="team-row-detail"><td colspan="4">
+        <div style="display:flex;justify-content:flex-end;padding:6px 4px 0;">
+          <button class="btn" data-open-tracker="${r.id}" style="font-size:12.5px;padding:7px 12px;">📊 Tracker</button>
+        </div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;padding:6px 4px 14px;">
           ${moduleGrid || `<span style="color:var(--text-faint);font-size:12.5px;">No modules yet.</span>`}
         </div>
@@ -2445,6 +2448,35 @@ function renderTeam(){
     if(!q) return;
     openCoachingModal(attemptDetailFor.userId, person ? person.name : "this person", `${m ? m.title : ''} — ${q.question}`);
   }));
+  root.querySelectorAll("[data-open-tracker]").forEach(el=> el.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    openTrackerModal(el.getAttribute("data-open-tracker"));
+  }));
+  root.querySelectorAll("[data-reset-attempts]").forEach(el=> el.addEventListener("click", async (e)=>{
+    e.stopPropagation();
+    const [userId, moduleId] = el.getAttribute("data-reset-attempts").split(":");
+    const person = teamRows.find(r=>r.id===userId);
+    const m = modById(moduleId);
+    if(!person || !m) return;
+    if(!confirm(`Reset ${person.name}'s quiz attempts on "${m.title}"? This clears their score history and lets them retake it fresh — their lesson progress is not affected. This can't be undone.`)) return;
+    el.disabled = true; el.textContent = "Resetting…";
+    const { error: delErr } = await supabase.from("quiz_attempts").delete().eq("user_id", userId).eq("module_id", moduleId);
+    if(delErr){ alert("Couldn't reset: " + delErr.message); el.disabled = false; el.textContent = "🔄 Reset Attempts"; return; }
+    const { error: updErr } = await supabase.from("progress").update({ best_score:0, last_score:0, attempts:0, updated_at: new Date().toISOString() }).eq("user_id", userId).eq("module_id", moduleId);
+    if(updErr){ alert("Couldn't reset: " + updErr.message); el.disabled = false; el.textContent = "🔄 Reset Attempts"; return; }
+    // Reflect the reset locally rather than re-fetching everything — these
+    // are exactly the fields that drive both the module pill's percentage
+    // and this panel's own "is there anything to reset" check.
+    const totalLessons = m.lessons.length || 1;
+    const viewedCount = (person.perModuleRaw[m.id].lessonsViewed || []).length;
+    const lessonFraction = Math.min(viewedCount/totalLessons, 1);
+    person.perModuleRaw[m.id] = { ...person.perModuleRaw[m.id], best:0, attempts:0 };
+    person.perModule[m.id] = Math.round(lessonFraction*50);
+    attemptDetailData = []; // no attempts left to show in the tabs
+    logEdit("updated", "quiz_attempts_reset", `${person.name} — ${m.title} attempts reset`);
+    showToast("Attempts reset.");
+    render();
+  }));
   root.querySelectorAll("[data-quiz-team-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
     const id = el.getAttribute("data-quiz-team-toggle");
     if(quizProgressExpandedRows.has(id)) quizProgressExpandedRows.delete(id); else quizProgressExpandedRows.add(id);
@@ -2515,7 +2547,11 @@ function renderLessonsViewedHtml(person, m){
 function renderInlineAttemptDetailHtml(person){
   const m = modById(attemptDetailFor.moduleId);
   if(!m) return "";
-  const lessonsHtml = renderLessonsViewedHtml(person, m);
+  const raw = person.perModuleRaw[m.id];
+  const resetBtnHtml = (m.quiz.length && raw && raw.attempts>0)
+    ? `<div style="margin:0 4px 14px;"><button class="btn danger" data-reset-attempts="${person.id}:${m.id}" style="font-size:12.5px;padding:7px 12px;">🔄 Reset Attempts</button></div>`
+    : "";
+  const lessonsHtml = resetBtnHtml + renderLessonsViewedHtml(person, m);
   if(attemptDetailData === "loading"){
     return lessonsHtml + `<div class="sub-card" style="margin:0 4px 14px;"><p style="color:var(--text-faint);font-family:var(--mono);font-size:12px;margin:0;">Loading attempts…</p></div>`;
   }
@@ -5631,6 +5667,34 @@ function openHotspotEditModal(ip, hi, onSaved){
     closeModal();
     onSaved();
   });
+}
+
+function openTrackerModal(personId){
+  const person = teamRows.find(r=>r.id===personId);
+  if(!person) return;
+  const overlay = document.createElement("div");
+  overlay.id = "tracker-overlay";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f0;display:flex;flex-direction:column;align-items:center;padding:24px;overflow-y:auto;";
+  document.body.appendChild(overlay);
+  window.activeFullscreenCleanups.push(()=> overlay.remove());
+  overlay.innerHTML = `
+    <div style="width:100%;max-width:900px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <span style="color:var(--text-dim);font-family:var(--mono);font-size:12px;">TRACKER · ${escapeHtml(person.name)}</span>
+        <button class="btn" id="tracker-close-x" style="font-size:16px;padding:4px 12px;">✕</button>
+      </div>
+      <div style="min-height:340px;display:flex;align-items:center;justify-content:center;color:var(--text-faint);font-size:13px;border:1px dashed var(--stroke);border-radius:10px;">
+        Nothing here yet.
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:24px;padding-top:16px;border-top:1px solid var(--stroke);">
+        <button class="btn" id="tracker-export-btn">⬇ Export</button>
+        <button class="btn primary" id="tracker-done-btn">Done</button>
+      </div>
+    </div>`;
+  document.getElementById("tracker-close-x").addEventListener("click", ()=> overlay.remove());
+  document.getElementById("tracker-done-btn").addEventListener("click", ()=> overlay.remove());
+  // Intentionally not wired up to anything yet — placeholder for later.
+  document.getElementById("tracker-export-btn").addEventListener("click", ()=>{});
 }
 
 function openSlideshowConfigFullscreen(ipId){
