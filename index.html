@@ -121,6 +121,7 @@
   table.team td{ padding:10px; border-bottom:1px solid var(--stroke); color:#D5DCEA; }
   .role-tag{ font-family:var(--mono); font-size:10px; padding:3px 8px; border-radius:12px; border:1px solid var(--stroke); }
   .role-tag.admin{ color:var(--amber); border-color:var(--amber-dim); background:var(--amber-dim); }
+  .role-tag.supervisor{ color:var(--cyan); border-color:var(--cyan-dim); background:var(--cyan-dim); }
   .auth-wrap{ max-width:400px; margin:60px auto; }
   .auth-toggle{ display:flex; gap:8px; margin-bottom:20px; }
   .auth-toggle button{ flex:1; padding:10px; border-radius:8px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); cursor:pointer; font-family:var(--mono); font-size:12px; }
@@ -418,7 +419,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r114";
+const BUILD_VERSION = "2026-07-27T00:00Z-r115";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -685,7 +686,8 @@ async function markLessonViewed(m, lessonId){
   }, { onConflict: "user_id,module_id" });
 }
 let editMode = false;
-function isAdmin(){ if(guestMode) return guestViewingAsAdmin; return profile && profile.role === "admin"; }
+function isAdmin(){ if(guestMode) return guestViewingAsAdmin; return profile && (profile.role === "admin" || profile.role === "supervisor"); }
+function isSupervisor(){ return !guestMode && profile && profile.role === "supervisor"; }
 function isEditor(){ if(guestMode) return false; return profile && profile.role === "editor"; }
 function canEditContent(){ if(guestMode) return guestViewingAsAdmin; return isAdmin() || (profile && profile.perm_edit_content); }
 function canCreateQuizzes(){ if(guestMode) return guestViewingAsAdmin; return isAdmin() || (profile && profile.perm_create_quizzes); }
@@ -1878,15 +1880,25 @@ let attemptDetailData = null; // array of up to 3 attempts (newest first) for at
 let attemptDetailActiveIdx = 0; // which attempt tab (0 = newest) is currently selected
 let TEAMS_LIST = [];
 let teamRosterFilter = "";
+let includeSupervisorsInProgress = false; // supervisors are hidden by default from Module/Quiz Progress rosters — this toggle brings them back in
 let pendingRoleChanges = {}; // userId -> { role, perms:{editContent,createQuizzes,managePeople} }, staged until explicitly saved
 let permissionsPanelOpen = new Set(); // userIds with the Permissions checklist expanded
 
 const ROLE_PRESETS = {
   admin:  { editContent:true,  createQuizzes:true,  managePeople:true },
+  supervisor: { editContent:true, createQuizzes:true, managePeople:true },
   editor: { editContent:true,  createQuizzes:false, managePeople:false },
   agent:  { editContent:false, createQuizzes:false, managePeople:false }
 };
-function computeDisplayRole(perms){
+function computeDisplayRole(perms, actualRole){
+  // admin and supervisor share an identical permission preset (both get
+  // full access everywhere) — permissions alone can't tell them apart, so
+  // check the actual stored role first for exactly these two before
+  // falling back to matching by permission combination for everything else.
+  if(actualRole === "admin" || actualRole === "supervisor"){
+    const preset = ROLE_PRESETS[actualRole];
+    if(preset.editContent===perms.editContent && preset.createQuizzes===perms.createQuizzes && preset.managePeople===perms.managePeople) return actualRole;
+  }
   for(const roleName of ["admin","editor","agent"]){
     const preset = ROLE_PRESETS[roleName];
     if(preset.editContent===perms.editContent && preset.createQuizzes===perms.createQuizzes && preset.managePeople===perms.managePeople) return roleName;
@@ -1973,7 +1985,7 @@ function openTeamManageModal(teamId){
   function memberListHtml(includeMap){
     return teamRows.filter(r=> DEPARTMENTS.some(d=> includeMap[d.id] && r[d.rowField])).map(r=>`
       <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);">
-        <input type="checkbox" value="${r.id}" class="team-member-check" ${memberIds.has(r.id)?'checked':''}> ${escapeHtml(r.name)}${r.role==='admin'?' <span class="role-tag admin">ADMIN</span>':''}
+        <input type="checkbox" value="${r.id}" class="team-member-check" ${memberIds.has(r.id)?'checked':''}> ${escapeHtml(r.name)}${r.role==='admin'?' <span class="role-tag admin">ADMIN</span>':r.role==='supervisor'?' <span class="role-tag supervisor">SUPERVISOR</span>':''}
       </label>`).join("") || `<p style="color:var(--text-faint);font-size:12.5px;">Nobody has access to the selected department(s) yet.</p>`;
   }
 
@@ -2065,6 +2077,13 @@ function renderTeam(){
     const q = teamSearchQuery.trim().toLowerCase();
     filteredRows = filteredRows.filter(r=> r.name.toLowerCase().includes(q));
   }
+  // Supervisors have full admin-equivalent access and aren't part of the
+  // trainee population these progress rosters are meant to track, so
+  // they're hidden by default. Explicitly filtering to "Supervisors" means
+  // the opposite is obviously wanted, so that case is exempted.
+  if(!includeSupervisorsInProgress && teamRosterFilter !== 'role:supervisor'){
+    filteredRows = filteredRows.filter(r=> r.role !== 'supervisor');
+  }
 
   const focusModule = teamModuleFilter ? modById(teamModuleFilter) : null;
 
@@ -2074,13 +2093,13 @@ function renderTeam(){
     const pending = pendingRoleChanges[r.id];
     const storedPerms = { editContent:r.permEditContent, createQuizzes:r.permCreateQuizzes, managePeople:r.permManagePeople };
     const currentPerms = pending ? pending.perms : storedPerms;
-    const displayRole = computeDisplayRole(currentPerms);
+    const displayRole = computeDisplayRole(currentPerms, pending ? pending.role : r.role);
     const panelOpen = permissionsPanelOpen.has(r.id);
     const isDirty = !!pending && (pending.role !== r.role || pending.perms.editContent !== r.permEditContent || pending.perms.createQuizzes !== r.permCreateQuizzes || pending.perms.managePeople !== r.permManagePeople);
 
     const roleCell = isSelf
       ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-          <span class="role-tag ${r.role==='admin'?'admin':''}">${r.role.toUpperCase()} (YOU)</span>
+          <span class="role-tag ${r.role==='admin'?'admin':r.role==='supervisor'?'supervisor':''}">${r.role.toUpperCase()} (YOU)</span>
           <button class="mini-btn" data-perm-toggle="${r.id}">Department access ${panelOpen?'▾':'▸'}</button>
         </div>`
       : `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
@@ -2088,6 +2107,7 @@ function renderTeam(){
             <option value="agent" ${displayRole==='agent'?'selected':''}>User</option>
             <option value="editor" ${displayRole==='editor'?'selected':''}>Editor</option>
             <option value="admin" ${displayRole==='admin'?'selected':''}>Admin</option>
+            <option value="supervisor" ${displayRole==='supervisor'?'selected':''}>Supervisor</option>
             <option value="custom" ${displayRole==='custom'?'selected':''}>Custom</option>
           </select>
           <button class="mini-btn" data-perm-toggle="${r.id}">Permissions ${panelOpen?'▾':'▸'}</button>
@@ -2193,6 +2213,9 @@ function renderTeam(){
       const q = teamSearchQuery.trim().toLowerCase();
       filteredQuizRows = filteredQuizRows.filter(r=> r.name.toLowerCase().includes(q));
     }
+    if(!includeSupervisorsInProgress && teamRosterFilter !== 'role:supervisor'){
+      filteredQuizRows = filteredQuizRows.filter(r=> r.role !== 'supervisor');
+    }
     if(teamQuizSort) filteredQuizRows = filteredQuizRows.slice().sort((a,b)=> teamQuizSort==="asc" ? a.pct-b.pct : b.pct-a.pct);
     else filteredQuizRows = filteredQuizRows.slice().sort((a,b)=> a.name.localeCompare(b.name));
     quizRowsHtml = filteredQuizRows.map(r=>{
@@ -2254,6 +2277,7 @@ function renderTeam(){
             <select id="team-filter-people" style="width:auto;">
               <option value="">All teams</option>
               <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
+              <option value="role:supervisor" ${teamRosterFilter==='role:supervisor'?'selected':''}>Supervisors</option>
               <option value="role:editor" ${teamRosterFilter==='role:editor'?'selected':''}>Editors</option>
               <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
               ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
@@ -2273,6 +2297,7 @@ function renderTeam(){
             <select id="team-filter-modules" style="width:auto;">
               <option value="">All teams</option>
               <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
+              <option value="role:supervisor" ${teamRosterFilter==='role:supervisor'?'selected':''}>Supervisors</option>
               <option value="role:editor" ${teamRosterFilter==='role:editor'?'selected':''}>Editors</option>
               <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
               ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
@@ -2286,6 +2311,7 @@ function renderTeam(){
               <option value="asc" ${teamModuleSort==='asc'?'selected':''}>Least completed first</option>
               <option value="desc" ${teamModuleSort==='desc'?'selected':''}>Most completed first</option>
             </select>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-dim);white-space:nowrap;"><input type="checkbox" id="include-supervisors-modules" ${includeSupervisorsInProgress?'checked':''}> Include Supervisors</label>
           </div>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>${focusModule ? escapeHtml(focusModule.title) : "Overall"}</th><th>${focusModule ? "Score" : "Mastered"}</th><th></th></tr></thead><tbody>${moduleRows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
         </div>` : ""}
@@ -2301,6 +2327,7 @@ function renderTeam(){
             <select id="team-filter-quizzes" style="width:auto;">
               <option value="">All teams</option>
               <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
+              <option value="role:supervisor" ${teamRosterFilter==='role:supervisor'?'selected':''}>Supervisors</option>
               <option value="role:editor" ${teamRosterFilter==='role:editor'?'selected':''}>Editors</option>
               <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
               ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
@@ -2310,6 +2337,7 @@ function renderTeam(){
               <option value="asc" ${teamQuizSort==='asc'?'selected':''}>Least completed first</option>
               <option value="desc" ${teamQuizSort==='desc'?'selected':''}>Most completed first</option>
             </select>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-dim);white-space:nowrap;"><input type="checkbox" id="include-supervisors-quizzes" ${includeSupervisorsInProgress?'checked':''}> Include Supervisors</label>
           </div>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Completion</th><th></th><th></th></tr></thead><tbody>${quizRowsHtml}</tbody></table></div>
         </div>` : ""}
@@ -2333,6 +2361,8 @@ function renderTeam(){
   document.getElementById("module-filter")?.addEventListener("change", (e)=>{ teamModuleFilter = e.target.value; render(); });
   document.getElementById("module-sort")?.addEventListener("change", (e)=>{ teamModuleSort = e.target.value; render(); });
   document.getElementById("quiz-sort")?.addEventListener("change", (e)=>{ teamQuizSort = e.target.value; render(); });
+  document.getElementById("include-supervisors-modules")?.addEventListener("change", (e)=>{ includeSupervisorsInProgress = e.target.checked; render(); });
+  document.getElementById("include-supervisors-quizzes")?.addEventListener("change", (e)=>{ includeSupervisorsInProgress = e.target.checked; render(); });
   root.querySelectorAll("[data-team-dept]").forEach(el=> el.addEventListener("click", ()=>{
     activeDepartment = el.getAttribute("data-team-dept");
     teamRosterFilter = ""; teamModuleFilter = "";
@@ -2384,7 +2414,7 @@ function renderTeam(){
       pendingRoleChanges[id] = { role: row.role, perms: { editContent:row.permEditContent, createQuizzes:row.permCreateQuizzes, managePeople:row.permManagePeople } };
     }
     pendingRoleChanges[id].perms[key] = e.target.checked;
-    const newDisplayRole = computeDisplayRole(pendingRoleChanges[id].perms);
+    const newDisplayRole = computeDisplayRole(pendingRoleChanges[id].perms, pendingRoleChanges[id].role);
     pendingRoleChanges[id].role = newDisplayRole === "custom" ? "agent" : newDisplayRole;
     renderTeam();
   }));
@@ -3996,7 +4026,7 @@ async function openAnnouncementModal(prefillBody){
         list.dataset.loaded = "1";
         list.innerHTML = (people||[]).length ? (people||[]).map(p=>`
           <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);">
-            <input type="checkbox" value="${p.id}" class="ann-person-check"> ${escapeHtml(p.name)}${p.role==='admin'?' <span class="role-tag admin">ADMIN</span>':''}
+            <input type="checkbox" value="${p.id}" class="ann-person-check"> ${escapeHtml(p.name)}${p.role==='admin'?' <span class="role-tag admin">ADMIN</span>':p.role==='supervisor'?' <span class="role-tag supervisor">SUPERVISOR</span>':''}
           </label>`).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No one else found.</p>`;
       }
     } else {
@@ -4039,7 +4069,7 @@ async function openNewConversationModal(){
     const { data } = await supabase.from("profiles").select("id,name,role").neq("id", session.user.id).order("name");
     people = data || [];
   } else {
-    const { data } = await supabase.from("profiles").select("id,name,role").eq("role","admin").order("name");
+    const { data } = await supabase.from("profiles").select("id,name,role").in("role",["admin","supervisor"]).order("name");
     people = data || [];
   }
   if(!people.length){
@@ -4053,7 +4083,7 @@ async function openNewConversationModal(){
     <div class="field">
       <label>To</label>
       <select id="newconvo-person">
-        ${people.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}${p.role==='admin'?' (Admin)':''}</option>`).join("")}
+        ${people.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}${p.role==='admin'?' (Admin)':p.role==='supervisor'?' (Supervisor)':''}</option>`).join("")}
       </select>
     </div>
     ${richEditorHtml(editorId, "")}
