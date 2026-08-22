@@ -419,19 +419,31 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r122";
+const BUILD_VERSION = "2026-07-27T00:00Z-r123";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
 
 // Must be read BEFORE createClient() below — Supabase's own detectSessionInUrl
-// behavior (on by default) consumes this hash as part of establishing the
-// session, so this is the only reliable point to know whether this page load
-// came from an invite/recovery email link versus a normal visit.
+// behavior (on by default) consumes the hash-fragment format as part of
+// establishing the session, so this is the only reliable point to know
+// whether this page load came from an invite/recovery email link versus a
+// normal visit.
+//
+// Two different link formats are possible depending on how this project's
+// email templates are configured: an older hash-fragment style
+// (#access_token=...&type=invite), which Supabase auto-handles on its own,
+// and a newer query-param style (?token_hash=...&type=invite), which does
+// NOT get consumed automatically and needs an explicit verifyOtp() call in
+// init() below to actually turn into a session.
+const _urlParams = new URLSearchParams(window.location.search);
+const TOKEN_HASH = _urlParams.get("token_hash");
 const AUTH_LINK_TYPE = (()=>{
   const hash = window.location.hash || "";
   if(hash.includes("type=invite")) return "invite";
   if(hash.includes("type=recovery")) return "recovery";
+  const qType = _urlParams.get("type");
+  if(TOKEN_HASH && (qType === "invite" || qType === "recovery")) return qType;
   return null;
 })();
 
@@ -7859,9 +7871,23 @@ function render(){
   window.loadingBarSuppressed = true;
   applyTheme(currentTheme());
   view="loading"; render();
-  const { data } = await supabase.auth.getSession();
-  if(data.session){
-    session = data.session;
+
+  // The query-param/token_hash link format doesn't establish a session on
+  // its own the way the hash-fragment format does — it has to be explicitly
+  // exchanged first. Tried before the normal getSession() check below,
+  // since without this exchange there'd be no session yet to find.
+  let landedSession = null;
+  if(TOKEN_HASH && (AUTH_LINK_TYPE === "invite" || AUTH_LINK_TYPE === "recovery")){
+    const { data: verifyData } = await supabase.auth.verifyOtp({ token_hash: TOKEN_HASH, type: AUTH_LINK_TYPE });
+    if(verifyData && verifyData.session) landedSession = verifyData.session;
+  }
+  if(!landedSession){
+    const { data } = await supabase.auth.getSession();
+    landedSession = data.session;
+  }
+
+  if(landedSession){
+    session = landedSession;
     if(AUTH_LINK_TYPE === "invite" || AUTH_LINK_TYPE === "recovery"){
       window.loadingBarSuppressed = false;
       view = "set-password";
@@ -7872,9 +7898,9 @@ function render(){
   } else {
     window.loadingBarSuppressed = false;
     if(AUTH_LINK_TYPE === "invite" || AUTH_LINK_TYPE === "recovery"){
-      // The hash said this was an invite/recovery link, but no session came
-      // of it — the link had already been used or expired. Land on the
-      // normal login screen with an explanation rather than a dead end.
+      // This was an invite/recovery link, but no session came of it — the
+      // link had already been used or expired. Land on the normal login
+      // screen with an explanation rather than a dead end.
       authError = "This link has expired or already been used. Ask an admin to resend it.";
     }
     view="auth"; render();
