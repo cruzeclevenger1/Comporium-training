@@ -419,10 +419,21 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r115";
+const BUILD_VERSION = "2026-07-27T00:00Z-r120";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
+
+// Must be read BEFORE createClient() below — Supabase's own detectSessionInUrl
+// behavior (on by default) consumes this hash as part of establishing the
+// session, so this is the only reliable point to know whether this page load
+// came from an invite/recovery email link versus a normal visit.
+const AUTH_LINK_TYPE = (()=>{
+  const hash = window.location.hash || "";
+  if(hash.includes("type=invite")) return "invite";
+  if(hash.includes("type=recovery")) return "recovery";
+  return null;
+})();
 
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -541,7 +552,7 @@ let myInteractivePicProgress = {}; // interactivePictureId -> Set of read hotspo
 let dismissedModulePopups = new Set(); // moduleIds this user chose "don't show again" for
 
 let view = "loading";       // loading | auth | dashboard | lesson | quiz | results | editor | team
-let authMode = "login";     // login | signup
+let authMode = "login";     // vestigial — signup mode was removed, self-service accounts are no longer allowed
 let authError = "";
 let authInfo = "";
 
@@ -692,6 +703,7 @@ function isEditor(){ if(guestMode) return false; return profile && profile.role 
 function canEditContent(){ if(guestMode) return guestViewingAsAdmin; return isAdmin() || (profile && profile.perm_edit_content); }
 function canCreateQuizzes(){ if(guestMode) return guestViewingAsAdmin; return isAdmin() || (profile && profile.perm_create_quizzes); }
 function canManagePeople(){ if(guestMode) return guestViewingAsAdmin; return isAdmin() || (profile && profile.perm_manage_people); }
+function canCreateAccounts(){ if(guestMode) return guestViewingAsAdmin; return isAdmin() || (profile && profile.perm_create_accounts); }
 function canEdit(){ return canEditContent() && editMode; }
 
 /* ============================================================
@@ -786,21 +798,15 @@ function renderAuth(){
         <div class="brand-text"><div class="name">${T('brand.name','COMPORIUM TRAINING MODULES')}</div></div>
       </div>
       <div class="card">
-        <div class="auth-toggle">
-          <button id="tab-login" class="${authMode==='login'?'active':''}">Log in</button>
-          <button id="tab-signup" class="${authMode==='signup'?'active':''}">Sign up</button>
-        </div>
         ${authError ? `<div class="error-msg">${escapeHtml(authError)}</div>` : ""}
         ${authInfo ? `<div class="info-msg">${escapeHtml(authInfo)}</div>` : ""}
-        ${authMode==='signup' ? `<div style="display:flex;gap:10px;"><div class="field" style="flex:1;"><label>First name</label><input type="text" id="auth-first-name" placeholder="Jordan"></div><div class="field" style="flex:1;"><label>Last name</label><input type="text" id="auth-last-name" placeholder="Smith"></div></div>` : ""}
         <div class="field"><label>Email</label><input type="email" id="auth-email" placeholder="you@company.com"></div>
         <div class="field"><label>Password</label><input type="password" id="auth-password" placeholder="••••••••"></div>
-        <button class="btn primary" id="auth-submit" style="width:100%;">${authMode==='login'?'Log in':'Create account'}</button>
+        <button class="btn primary" id="auth-submit" style="width:100%;">Log in</button>
+        <p class="hint" style="text-align:center;margin-top:14px;">Need an account? Ask an admin to add you.</p>
       </div>
     </div>
   `;
-  document.getElementById("tab-login").addEventListener("click", ()=>{ authMode="login"; authError=""; authInfo=""; renderAuth(); });
-  document.getElementById("tab-signup").addEventListener("click", ()=>{ authMode="signup"; authError=""; authInfo=""; renderAuth(); });
   document.getElementById("auth-submit").addEventListener("click", submitAuth);
 }
 
@@ -1053,25 +1059,46 @@ async function submitAuth(){
   const password = document.getElementById("auth-password").value;
   if(!email || !password){ authError = "Enter an email and password."; renderAuth(); return; }
 
-  if(authMode==="signup"){
-    const firstRaw = document.getElementById("auth-first-name").value.trim();
-    const lastRaw = document.getElementById("auth-last-name").value.trim();
-    if(!firstRaw || !lastRaw){ authError = "Enter your first and last name."; renderAuth(); return; }
-    const name = `${formatNamePart(firstRaw)} ${formatNamePart(lastRaw)}`;
-    const { data, error } = await supabase.auth.signUp({ email, password, options:{ data:{ name } } });
-    if(error){ authError = error.message; renderAuth(); return; }
-    if(data.session){
-      session = data.session; await afterLogin();
-    } else {
-      authInfo = "Account created — check your email to confirm, then log in.";
-      authMode = "login"; renderAuth();
-    }
-    return;
-  }
-
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if(error){ authError = error.message; renderAuth(); return; }
   session = data.session;
+  await afterLogin();
+}
+
+function renderSetPassword(){
+  root.innerHTML = `
+    <div class="auth-wrap">
+      <div style="text-align:center;margin-bottom:26px;">
+        <div class="brand-text"><div class="name">${T('brand.name','COMPORIUM TRAINING MODULES')}</div></div>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0;">${AUTH_LINK_TYPE==='recovery' ? 'Reset your password' : "You're almost in"}</h3>
+        <p class="sub">${AUTH_LINK_TYPE==='recovery' ? 'Choose a new password for your account.' : 'Choose a password to finish setting up your account.'}</p>
+        ${authError ? `<div class="error-msg">${escapeHtml(authError)}</div>` : ""}
+        <div class="field"><label>New password</label><input type="password" id="setpw-1" placeholder="••••••••"></div>
+        <div class="field"><label>Confirm password</label><input type="password" id="setpw-2" placeholder="••••••••"></div>
+        <button class="btn primary" id="setpw-submit" style="width:100%;">Set password &amp; continue</button>
+      </div>
+    </div>
+  `;
+  document.getElementById("setpw-submit").addEventListener("click", submitSetPassword);
+}
+
+async function submitSetPassword(){
+  authError = "";
+  const pw1 = document.getElementById("setpw-1").value;
+  const pw2 = document.getElementById("setpw-2").value;
+  if(!pw1 || pw1.length<6){ authError = "Password must be at least 6 characters."; renderSetPassword(); return; }
+  if(pw1 !== pw2){ authError = "Passwords don't match."; renderSetPassword(); return; }
+  const btn = document.getElementById("setpw-submit");
+  btn.disabled = true; btn.textContent = "Saving…";
+  const { error } = await supabase.auth.updateUser({ password: pw1 });
+  if(error){
+    authError = error.message;
+    btn.disabled = false; btn.textContent = "Set password & continue";
+    renderSetPassword();
+    return;
+  }
   await afterLogin();
 }
 
@@ -1885,10 +1912,10 @@ let pendingRoleChanges = {}; // userId -> { role, perms:{editContent,createQuizz
 let permissionsPanelOpen = new Set(); // userIds with the Permissions checklist expanded
 
 const ROLE_PRESETS = {
-  admin:  { editContent:true,  createQuizzes:true,  managePeople:true },
-  supervisor: { editContent:true, createQuizzes:true, managePeople:true },
-  editor: { editContent:true,  createQuizzes:false, managePeople:false },
-  agent:  { editContent:false, createQuizzes:false, managePeople:false }
+  admin:  { editContent:true,  createQuizzes:true,  managePeople:true,  createAccounts:true },
+  supervisor: { editContent:true, createQuizzes:true, managePeople:true, createAccounts:true },
+  editor: { editContent:true,  createQuizzes:false, managePeople:false, createAccounts:false },
+  agent:  { editContent:false, createQuizzes:false, managePeople:false, createAccounts:false }
 };
 function computeDisplayRole(perms, actualRole){
   // admin and supervisor share an identical permission preset (both get
@@ -1897,11 +1924,11 @@ function computeDisplayRole(perms, actualRole){
   // falling back to matching by permission combination for everything else.
   if(actualRole === "admin" || actualRole === "supervisor"){
     const preset = ROLE_PRESETS[actualRole];
-    if(preset.editContent===perms.editContent && preset.createQuizzes===perms.createQuizzes && preset.managePeople===perms.managePeople) return actualRole;
+    if(preset.editContent===perms.editContent && preset.createQuizzes===perms.createQuizzes && preset.managePeople===perms.managePeople && preset.createAccounts===perms.createAccounts) return actualRole;
   }
   for(const roleName of ["admin","editor","agent"]){
     const preset = ROLE_PRESETS[roleName];
-    if(preset.editContent===perms.editContent && preset.createQuizzes===perms.createQuizzes && preset.managePeople===perms.managePeople) return roleName;
+    if(preset.editContent===perms.editContent && preset.createQuizzes===perms.createQuizzes && preset.managePeople===perms.managePeople && preset.createAccounts===perms.createAccounts) return roleName;
   }
   return "custom";
 }
@@ -1969,10 +1996,67 @@ async function openTeamProgress(){
     const mastered = values.filter(v=>v===100).length;
     const teamIds = (memberships||[]).filter(m=>m.user_id===p.id).map(m=>m.team_id);
     return { id:p.id, name:p.name, role:p.role, perModule, perModuleRaw, overall, mastered, teamIds,
-      permEditContent: !!p.perm_edit_content, permCreateQuizzes: !!p.perm_create_quizzes, permManagePeople: !!p.perm_manage_people,
+      permEditContent: !!p.perm_edit_content, permCreateQuizzes: !!p.perm_create_quizzes, permManagePeople: !!p.perm_manage_people, permCreateAccounts: !!p.perm_create_accounts,
       canAccessTs: !!p.can_access_ts, canAccessCs: !!p.can_access_cs, canAccessTestboard: !!p.can_access_testboard };
   });
   view = "team"; render();
+}
+
+function openAddNewUserModal(){
+  const mine = myDepartments();
+  openModal(`
+    <h3>Add New User</h3>
+    <p class="sub">This sends them an invite email with a link to set their own password — nothing is set here.</p>
+    <div class="field"><label>Name</label><input type="text" id="newuser-name" placeholder="Jordan Smith"></div>
+    <div class="field"><label>Email</label><input type="email" id="newuser-email" placeholder="jordan@company.com"></div>
+    <div class="field"><label>Role</label>
+      <select id="newuser-role">
+        <option value="agent">User</option>
+        <option value="editor">Editor</option>
+        <option value="admin">Admin</option>
+        <option value="supervisor">Supervisor</option>
+      </select>
+    </div>
+    <div class="field"><label>Department access</label>
+      ${DEPARTMENTS.map(d=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-newuser-dept="${d.id}" ${mine.includes(d.id)?'checked':''}> ${escapeHtml(d.label)}</label>`).join("")}
+      <p class="hint">Check one or more.</p>
+    </div>
+    <div class="modal-error" id="newuser-error" style="display:none;"></div>
+    <div class="modal-actions"><button class="btn" id="newuser-cancel">Cancel</button><button class="btn primary" id="newuser-submit">Send Invite</button></div>
+  `, true);
+  document.getElementById("newuser-cancel").addEventListener("click", closeModal);
+  document.getElementById("newuser-submit").addEventListener("click", async ()=>{
+    const nameRaw = document.getElementById("newuser-name").value.trim();
+    const emailRaw = document.getElementById("newuser-email").value.trim();
+    const role = document.getElementById("newuser-role").value;
+    const errEl = document.getElementById("newuser-error");
+    const showErr = (msg)=>{ errEl.textContent = msg; errEl.style.display = "block"; };
+    errEl.style.display = "none";
+    if(!nameRaw){ showErr("Enter a name."); return; }
+    if(!emailRaw || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)){ showErr("Enter a valid email address."); return; }
+    const departments = {};
+    let anyDept = false;
+    DEPARTMENTS.forEach(d=>{
+      const checked = !!document.querySelector(`[data-newuser-dept="${d.id}"]`)?.checked;
+      departments[d.id] = checked;
+      if(checked) anyDept = true;
+    });
+    if(!anyDept){ showErr("Check at least one department."); return; }
+    const btn = document.getElementById("newuser-submit");
+    btn.disabled = true; btn.textContent = "Sending…";
+    const { data, error } = await supabase.functions.invoke("admin-create-user", {
+      body: { name: nameRaw, email: emailRaw, role, departments, redirectTo: window.location.origin }
+    });
+    if(error || (data && data.error)){
+      showErr((data && data.error) || error.message || "Something went wrong.");
+      btn.disabled = false; btn.textContent = "Send Invite";
+      return;
+    }
+    logEdit("created", "user_account", `${nameRaw} (${emailRaw}) invited as ${role}`);
+    closeModal();
+    showToast(`Invite sent to ${emailRaw}.`);
+    await openTeamProgress(); // refresh the roster so the new account shows up
+  });
 }
 
 function openTeamManageModal(teamId){
@@ -2077,13 +2161,6 @@ function renderTeam(){
     const q = teamSearchQuery.trim().toLowerCase();
     filteredRows = filteredRows.filter(r=> r.name.toLowerCase().includes(q));
   }
-  // Supervisors have full admin-equivalent access and aren't part of the
-  // trainee population these progress rosters are meant to track, so
-  // they're hidden by default. Explicitly filtering to "Supervisors" means
-  // the opposite is obviously wanted, so that case is exempted.
-  if(!includeSupervisorsInProgress && teamRosterFilter !== 'role:supervisor'){
-    filteredRows = filteredRows.filter(r=> r.role !== 'supervisor');
-  }
 
   const focusModule = teamModuleFilter ? modById(teamModuleFilter) : null;
 
@@ -2091,7 +2168,7 @@ function renderTeam(){
   const peopleRows = filteredRows.map(r=>{
     const isSelf = r.id===profile.id;
     const pending = pendingRoleChanges[r.id];
-    const storedPerms = { editContent:r.permEditContent, createQuizzes:r.permCreateQuizzes, managePeople:r.permManagePeople };
+    const storedPerms = { editContent:r.permEditContent, createQuizzes:r.permCreateQuizzes, managePeople:r.permManagePeople, createAccounts:r.permCreateAccounts };
     const currentPerms = pending ? pending.perms : storedPerms;
     const displayRole = computeDisplayRole(currentPerms, pending ? pending.role : r.role);
     const panelOpen = permissionsPanelOpen.has(r.id);
@@ -2122,6 +2199,7 @@ function renderTeam(){
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:editContent" ${currentPerms.editContent?'checked':''}> Can edit modules, lessons and module quizzes</label>
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:createQuizzes" ${currentPerms.createQuizzes?'checked':''}> Can create quizzes</label>
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:managePeople" ${currentPerms.managePeople?'checked':''}> Can edit users and teams</label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:createAccounts" ${currentPerms.createAccounts?'checked':''}> Can add new user accounts</label>
           <div style="border-top:1px solid var(--stroke);margin-top:6px;padding-top:10px;">` : ""}
             ${DEPARTMENTS.map(d=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-top:4px;"><input type="checkbox" data-dept-check="${r.id}:${d.id}" ${r[d.rowField]?'checked':''}> Can access ${escapeHtml(d.label)}</label>`).join("")}
           ${!isSelf ? `</div>` : ""}
@@ -2145,11 +2223,20 @@ function renderTeam(){
   function deptMasteredFor(r){
     return deptModulesForRoster.filter(m=> r.perModule[m.id]===100).length;
   }
-  const moduleSortedRows = teamModuleSort ? filteredRows.slice().sort((a,b)=>{
+  // Supervisors have full admin-equivalent access and aren't part of the
+  // trainee population Module Progress is meant to track, so they're hidden
+  // by default here — but NOT from the People list above, which should
+  // always show everyone regardless of this toggle. Explicitly filtering to
+  // "Supervisors" means the opposite is obviously wanted, so that case is
+  // exempted from the hide.
+  const moduleProgressRows = (!includeSupervisorsInProgress && teamRosterFilter !== 'role:supervisor')
+    ? filteredRows.filter(r=> r.role !== 'supervisor')
+    : filteredRows;
+  const moduleSortedRows = teamModuleSort ? moduleProgressRows.slice().sort((a,b)=>{
     const va = focusModule ? (a.perModule[focusModule.id]||0) : deptOverallFor(a);
     const vb = focusModule ? (b.perModule[focusModule.id]||0) : deptOverallFor(b);
     return teamModuleSort==="asc" ? va-vb : vb-va;
-  }) : filteredRows.slice().sort((a,b)=> a.name.localeCompare(b.name));
+  }) : moduleProgressRows.slice().sort((a,b)=> a.name.localeCompare(b.name));
   const moduleRows = moduleSortedRows.map(r=>{
     const expanded = teamExpandedRows.has(r.id);
     const moduleGrid = deptModulesForRoster.map(m=>{
@@ -2272,7 +2359,7 @@ function renderTeam(){
       ${sectionHeader('people', 'People', deptRows.length)}
       ${teamsSectionOpen.people ? `
         <div style="margin-top:14px;">
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
             <input type="text" id="team-search-people" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" class="search-input" style="width:180px;">
             <select id="team-filter-people" style="width:auto;">
               <option value="">All teams</option>
@@ -2282,6 +2369,7 @@ function renderTeam(){
               <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
               ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
             </select>
+            ${canCreateAccounts() ? `<button class="btn primary" id="add-new-user-btn" style="margin-left:auto;">+ Add New User</button>` : ""}
           </div>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th><th></th></tr></thead><tbody>${peopleRows || `<tr><td colspan="3" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
         </div>` : ""}
@@ -2357,6 +2445,7 @@ function renderTeam(){
   }));
 
   document.getElementById("new-team-btn")?.addEventListener("click", ()=> openTeamManageModal(null));
+  document.getElementById("add-new-user-btn")?.addEventListener("click", openAddNewUserModal);
   root.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
   document.getElementById("module-filter")?.addEventListener("change", (e)=>{ teamModuleFilter = e.target.value; render(); });
   document.getElementById("module-sort")?.addEventListener("change", (e)=>{ teamModuleSort = e.target.value; render(); });
@@ -2394,7 +2483,7 @@ function renderTeam(){
     if(newRole === "custom"){
       permissionsPanelOpen.add(id);
       if(!pendingRoleChanges[id]){
-        pendingRoleChanges[id] = { role: row.role, perms: { editContent:row.permEditContent, createQuizzes:row.permCreateQuizzes, managePeople:row.permManagePeople } };
+        pendingRoleChanges[id] = { role: row.role, perms: { editContent:row.permEditContent, createQuizzes:row.permCreateQuizzes, managePeople:row.permManagePeople, createAccounts:row.permCreateAccounts } };
       }
     } else {
       pendingRoleChanges[id] = { role: newRole, perms: { ...ROLE_PRESETS[newRole] } };
@@ -2411,7 +2500,7 @@ function renderTeam(){
     const [id, key] = el.getAttribute("data-perm-check").split(":");
     const row = teamRows.find(r=>r.id===id);
     if(!pendingRoleChanges[id]){
-      pendingRoleChanges[id] = { role: row.role, perms: { editContent:row.permEditContent, createQuizzes:row.permCreateQuizzes, managePeople:row.permManagePeople } };
+      pendingRoleChanges[id] = { role: row.role, perms: { editContent:row.permEditContent, createQuizzes:row.permCreateQuizzes, managePeople:row.permManagePeople, createAccounts:row.permCreateAccounts } };
     }
     pendingRoleChanges[id].perms[key] = e.target.checked;
     const newDisplayRole = computeDisplayRole(pendingRoleChanges[id].perms, pendingRoleChanges[id].role);
@@ -2441,7 +2530,8 @@ function renderTeam(){
       role: pending.role,
       perm_edit_content: pending.perms.editContent,
       perm_create_quizzes: pending.perms.createQuizzes,
-      perm_manage_people: pending.perms.managePeople
+      perm_manage_people: pending.perms.managePeople,
+      perm_create_accounts: pending.perms.createAccounts
     }).eq("id", id);
     if(error){ alert("Couldn't save: " + error.message); return; }
     delete pendingRoleChanges[id];
@@ -7705,6 +7795,7 @@ function render(){
       <div class="loading-label">Establishing connection…</div>
     </div>`;
   else if(view==="auth") renderAuth();
+  else if(view==="set-password") renderSetPassword();
   else if(view==="home") renderHome();
   else if(view==="dashboard") renderDashboard();
   else if(view==="lesson") renderLesson();
@@ -7735,8 +7826,25 @@ function render(){
   applyTheme(currentTheme());
   view="loading"; render();
   const { data } = await supabase.auth.getSession();
-  if(data.session){ session = data.session; await afterLogin(); }
-  else { window.loadingBarSuppressed = false; view="auth"; render(); }
+  if(data.session){
+    session = data.session;
+    if(AUTH_LINK_TYPE === "invite" || AUTH_LINK_TYPE === "recovery"){
+      window.loadingBarSuppressed = false;
+      view = "set-password";
+      render();
+    } else {
+      await afterLogin();
+    }
+  } else {
+    window.loadingBarSuppressed = false;
+    if(AUTH_LINK_TYPE === "invite" || AUTH_LINK_TYPE === "recovery"){
+      // The hash said this was an invite/recovery link, but no session came
+      // of it — the link had already been used or expired. Land on the
+      // normal login screen with an explanation rather than a dead end.
+      authError = "This link has expired or already been used. Ask an admin to resend it.";
+    }
+    view="auth"; render();
+  }
 
   supabase.auth.onAuthStateChange((event, newSession)=>{
     if(event === "SIGNED_OUT"){ session=null; profile=null; view="auth"; render(); }
