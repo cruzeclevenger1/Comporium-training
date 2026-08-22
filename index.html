@@ -80,10 +80,6 @@
   .card .body p{ color:#C7CFE0; font-size:14.5px; line-height:1.75; margin:0 0 14px; }
   .card .body ul, .card .body ol{ margin:0 0 14px; padding-left:20px; color:#C7CFE0; font-size:14.5px; line-height:1.8; } .card .body li{ margin-bottom:4px; } .card .body strong{ color:var(--text); }
   .card .body img{ max-width:100%; border-radius:8px; margin:10px 0; display:block; }
-  .light-table{ display:grid; grid-template-columns:auto 1fr; gap:10px 16px; margin:16px 0 18px; font-size:13.5px; }
-  .light-table .lt-led{ display:flex; align-items:center; gap:8px; font-family:var(--mono); color:var(--text-dim); } .light-table .lt-desc{ color:#C7CFE0; }
-  .callout{ border-left:3px solid var(--amber); background:var(--amber-dim); border-radius:0 8px 8px 0; padding:12px 16px; font-size:13.5px; color:#F3DCB0; margin:16px 0; }
-  .callout.tip{ border-left-color:var(--cyan); background:var(--cyan-dim); color:#C9EEF2; }
   .nav-buttons{ display:flex; justify-content:space-between; margin-top:22px; gap:10px; flex-wrap:wrap; }
   .btn{ font-family:var(--mono); font-size:12.5px; letter-spacing:.03em; padding:10px 18px; border-radius:8px; border:1px solid var(--stroke); background:#182236; color:var(--text); cursor:pointer; transition:.15s; }
   .btn:hover{ border-color:#4a5b82; } .btn.primary{ background:linear-gradient(155deg,#1c3a35,#14261f); border-color:var(--green); color:var(--green); }
@@ -123,9 +119,6 @@
   .role-tag.admin{ color:var(--amber); border-color:var(--amber-dim); background:var(--amber-dim); }
   .role-tag.supervisor{ color:var(--cyan); border-color:var(--cyan-dim); background:var(--cyan-dim); }
   .auth-wrap{ max-width:400px; margin:60px auto; }
-  .auth-toggle{ display:flex; gap:8px; margin-bottom:20px; }
-  .auth-toggle button{ flex:1; padding:10px; border-radius:8px; border:1px solid var(--stroke); background:#141d30; color:var(--text-dim); cursor:pointer; font-family:var(--mono); font-size:12px; }
-  .auth-toggle button.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
   .error-msg{ color:var(--red); font-size:12.5px; font-family:var(--mono); margin:-6px 0 12px; }
   .info-msg{ color:var(--cyan); font-size:12.5px; font-family:var(--mono); margin:-6px 0 12px; }
   @media (max-width:640px){ .hero h1{ font-size:21px; } .card{ padding:18px; } }
@@ -197,7 +190,6 @@
   html.theme-light .explain{ background:var(--input-bg); }
   html.theme-light .opt{ background:var(--input-bg); }
   html.theme-light .sub-card{ background:var(--input-bg); }
-  html.theme-light .export-textarea{ background:var(--input-bg); color:#1b6b52; }
   html.theme-light .field input[type=text], html.theme-light .field input[type=email], html.theme-light .field input[type=password], html.theme-light .field textarea{ background:var(--input-bg); }
   html.theme-light .search-input{ background:var(--input-bg); }
   html.theme-light .btn{ background:var(--input-bg); }
@@ -226,8 +218,6 @@
   .top-nav-btn{ font-family:var(--mono); font-size:12px; letter-spacing:.03em; padding:9px 16px; border-radius:8px; border:1px solid var(--stroke); background:var(--panel); color:var(--text-dim); cursor:pointer; }
   .top-nav-btn:hover{ border-color:#3a4a70; color:var(--text); }
   .top-nav-btn.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); }
-  .two-col-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-  @media (max-width:640px){ .two-col-grid{ grid-template-columns:1fr; } }
   .three-col-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
   @media (max-width:860px){ .three-col-grid{ grid-template-columns:1fr 1fr; } }
   @media (max-width:560px){ .three-col-grid{ grid-template-columns:1fr; } }
@@ -258,15 +248,7 @@
 
   .bell-wrap{ position:relative; }
   .notif-dot{ position:absolute; top:4px; right:4px; width:8px; height:8px; border-radius:50%; background:var(--red); box-shadow:0 0 6px var(--red); }
-  .notif-panel{ position:absolute; top:100%; right:0; margin-top:8px; width:320px; max-height:420px; overflow-y:auto; background:var(--panel); border:1px solid var(--stroke); border-radius:12px; padding:14px; z-index:60; box-shadow:0 12px 30px #00000055; }
-  .notif-panel-head{ font-family:var(--mono); font-size:12px; letter-spacing:.05em; text-transform:uppercase; color:var(--text-faint); margin-bottom:10px; }
-  .notif-section-title{ font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--text-faint); margin:14px 0 6px; }
-  .notif-item{ background:var(--input-bg); border:1px solid var(--stroke); border-radius:8px; padding:9px 10px; margin-bottom:6px; font-size:12.5px; }
-  html.theme-light .notif-item{ background:var(--input-bg); }
   .notif-item.unread{ border-color:var(--cyan-dim); }
-  .notif-item-body{ color:var(--text); margin-bottom:4px; }
-  .notif-item-meta{ color:var(--text-faint); font-size:10.5px; font-family:var(--mono); margin-bottom:4px; }
-  .notif-empty{ color:var(--text-faint); font-size:12px; }
 
   .admin-menu{ position:relative; }
   .admin-menu-panel{ display:none; flex-direction:column; gap:2px; position:absolute; top:100%; right:0; margin-top:6px; background:var(--panel); border:1px solid var(--stroke); border-radius:10px; padding:6px; min-width:210px; z-index:60; box-shadow:0 12px 30px #00000055; }
@@ -353,10 +335,6 @@
   .sim-screen-canvas .sim-canvas-hint{ position:absolute; top:8px; left:8px; background:#000000cc; color:var(--amber); font-size:11px; font-family:var(--mono); padding:4px 9px; border-radius:5px; pointer-events:none; opacity:0; transition:opacity .12s; z-index:3; }
   .sim-screen-canvas:hover .sim-canvas-hint{ opacity:1; }
   .sim-zone, .sim-zone *{ cursor:pointer !important; }
-  .feature-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:9px; }
-  .feature-pill{ background:var(--input-bg); border:1px solid var(--stroke); border-radius:8px; padding:10px 13px; font-size:13.5px; color:var(--text); }
-  .feature-pill:first-letter{ color:var(--green); }
-  html.theme-light .feature-pill{ background:var(--input-bg); }
   .interactive-pic-embed{ display:inline-block; position:relative; margin:8px 4px; border-radius:8px; overflow:hidden; vertical-align:bottom; max-width:100%; border:1px solid var(--stroke); }
   .ip-embed-overlay{ background:var(--input-bg); padding:8px 10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .ip-embed-badge{ font-size:11px; color:var(--cyan); font-family:var(--mono); margin-right:auto; }
@@ -418,7 +396,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r128";
+const BUILD_VERSION = "2026-07-27T00:00Z-r129";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -834,12 +812,6 @@ function promptDepartmentChoice(){
     // Deliberately never resolves — there's nothing for afterLogin() to
     // proceed into for an account with no department access at all.
   });
-}
-
-function formatNamePart(str){
-  return str.trim().split(/\s+/).filter(Boolean).map(word=>
-    word.split('-').map(seg => seg.charAt(0).toUpperCase() + seg.slice(1).toLowerCase()).join('-')
-  ).join(' ');
 }
 
 async function submitAuth(){
@@ -4146,7 +4118,6 @@ function openEditPersonModal(userId, name){
 /* ============================================================
    EDITOR (admin only) — module / lessons / quiz CRUD
    ============================================================ */
-function blankModule(){ return { id:null, title:"", short:"", ledColor:"green", lessons:[], quiz:[] }; }
 function blankLesson(){ return { title:"New lesson", label:"Lesson · Untitled", body:"<p>Write the lesson content here.</p>" }; }
 function blankQuestion(){ return { q:"New question", opts:["Option A","Option B"], correct:0, explain:"", type:"multiple_choice", simScreens:[], endGoal:"button", finalScreenId:null }; }
 
@@ -5520,114 +5491,6 @@ document.addEventListener("mouseup", (e)=>{
   if(onBoxAdded) onBoxAdded(box);
 });
 
-// ============================================================
-// ONE-TIME MIGRATION — moves images that were embedded as base64
-// directly in database text/jsonb columns out to actual file
-// storage, replacing them with a short URL instead. Existing
-// content saved before compressImageFile() switched to uploading
-// still has these embedded, which is what was inflating the lessons
-// table alone to ~17MB fetched on every login. Safe to re-run —
-// anything already migrated (a real URL, not a data: URL) is
-// skipped automatically.
-// ============================================================
-async function migrateOneBase64Image(dataUrl){
-  try{
-    const blob = await (await fetch(dataUrl)).blob();
-    const ext = (blob.type.split("/")[1] || "png").split("+")[0];
-    const path = `img_${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`;
-    const { error } = await supabase.storage.from("lesson-images").upload(path, blob, { contentType: blob.type || "image/png" });
-    if(error) return null;
-    const { data } = supabase.storage.from("lesson-images").getPublicUrl(path);
-    return data.publicUrl;
-  }catch(e){ return null; }
-}
-async function migrateBase64InHtml(html){
-  if(!html || !html.includes("data:image")) return html; // fast path — nothing to do, most rows won't have any
-  const regex = /src="(data:image\/[a-zA-Z0-9.+-]+;base64,[^"]+)"/g;
-  const dataUrls = [...new Set([...html.matchAll(regex)].map(m=>m[1]))]; // de-duped — an image pasted twice shouldn't upload twice
-  let updated = html;
-  for(const dataUrl of dataUrls){
-    const url = await migrateOneBase64Image(dataUrl);
-    if(url) updated = updated.split(dataUrl).join(url); // split/join replaces every occurrence, not just the first
-  }
-  return updated;
-}
-async function runImageMigration(onProgress){
-  let migratedCount = 0, failedCount = 0;
-  const bump = (label)=>{ migratedCount++; onProgress(`${label} (${migratedCount} migrated so far)…`); };
-
-  const { data: lessons } = await supabase.from("lessons").select("id,body");
-  for(const l of (lessons||[])){
-    if(!l.body || !l.body.includes("data:image")) continue;
-    const updated = await migrateBase64InHtml(l.body);
-    if(updated !== l.body){
-      const { error } = await supabase.from("lessons").update({ body: updated }).eq("id", l.id);
-      if(error) failedCount++; else bump("Migrating lesson content");
-    }
-  }
-
-  const { data: refPages } = await supabase.from("reference_pages").select("id,body");
-  for(const r of (refPages||[])){
-    if(!r.body || !r.body.includes("data:image")) continue;
-    const updated = await migrateBase64InHtml(r.body);
-    if(updated !== r.body){
-      const { error } = await supabase.from("reference_pages").update({ body: updated }).eq("id", r.id);
-      if(error) failedCount++; else bump("Migrating reference guide content");
-    }
-  }
-
-  const { data: ipics } = await supabase.from("interactive_pictures").select("id,image");
-  for(const ip of (ipics||[])){
-    if(!ip.image || !ip.image.startsWith("data:image")) continue;
-    const url = await migrateOneBase64Image(ip.image);
-    if(!url){ failedCount++; continue; }
-    const { error } = await supabase.from("interactive_pictures").update({ image: url }).eq("id", ip.id);
-    if(error){ failedCount++; continue; }
-    if(INTERACTIVE_PICTURES[ip.id]) INTERACTIVE_PICTURES[ip.id].image = url;
-    bump("Migrating interactive pictures");
-  }
-
-  const { data: simQuestions } = await supabase.from("quiz_questions").select("id,sim_screens").eq("question_type","simulation");
-  for(const q of (simQuestions||[])){
-    if(!q.sim_screens || !q.sim_screens.length) continue;
-    let changed = false;
-    for(const scr of q.sim_screens){
-      if(scr.image && scr.image.startsWith("data:image")){
-        const url = await migrateOneBase64Image(scr.image);
-        if(url){ scr.image = url; changed = true; } else failedCount++;
-      }
-    }
-    if(changed){
-      const { error } = await supabase.from("quiz_questions").update({ sim_screens: q.sim_screens }).eq("id", q.id);
-      if(error) failedCount++; else bump("Migrating simulation screenshots");
-    }
-  }
-
-  return { migratedCount, failedCount };
-}
-function openImageMigrationModal(){
-  openModal(`
-    <h3>Move embedded images to storage</h3>
-    <p class="sub">Scans lessons, the reference guide, interactive pictures, and simulation screenshots for images still saved as embedded data rather than uploaded files, and moves them to storage. This is what's currently making the lessons data alone ~17MB on every login. Safe to run more than once — anything already migrated is skipped.</p>
-    <p class="sub" style="color:var(--amber);">Note: personal notes aren't included — they're private per person, so each person would need to migrate their own. Ask me if you'd like that added separately.</p>
-    <div class="modal-actions"><button class="btn" id="img-migrate-cancel">Cancel</button><button class="btn primary" id="img-migrate-go">Start</button></div>
-  `, false, true);
-  document.getElementById("img-migrate-cancel").addEventListener("click", closeModal);
-  document.getElementById("img-migrate-go").addEventListener("click", async ()=>{
-    document.querySelector("#app-modal-overlay .modal").innerHTML = `
-      <h3>Migrating…</h3>
-      <p class="sub" id="img-migrate-status">Starting…</p>
-    `;
-    const statusEl = document.getElementById("img-migrate-status");
-    const { migratedCount, failedCount } = await runImageMigration((label)=>{ if(statusEl) statusEl.textContent = label; });
-    document.querySelector("#app-modal-overlay .modal").innerHTML = `
-      <h3>${migratedCount ? "Done" : "Nothing to migrate"}</h3>
-      <p class="sub">${migratedCount ? `Moved ${migratedCount} item${migratedCount===1?'':'s'} to storage.` : "No embedded images were found — everything's already migrated, or there was nothing to move."}${failedCount ? ` ${failedCount} item${failedCount===1?'':'s'} failed and were left as-is — safe to run again to retry just those.` : ""}</p>
-      <div class="modal-actions"><button class="btn primary" id="img-migrate-done">Done</button></div>
-    `;
-    document.getElementById("img-migrate-done").addEventListener("click", async ()=>{ closeModal(); await loadEverything(); if(view==="editor") renderEditor(); else render(); });
-  });
-}
 
 function openHotspotEditModal(ip, hi, onSaved){
   const h = ip.hotspots[hi];
