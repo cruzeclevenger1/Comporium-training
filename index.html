@@ -396,7 +396,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r129";
+const BUILD_VERSION = "2026-07-27T00:00Z-r130";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -561,6 +561,44 @@ let realtimeChannels = [];
 
 const root = document.getElementById("app");
 function escapeHtml(s){ const d=document.createElement("div"); d.textContent=s==null?"":s; return d.innerHTML; }
+
+// Sanitizes rich-text HTML (bold/lists/links/images/etc, produced by this
+// app's own editors) before it's ever inserted into the page. Strips
+// anything capable of executing script — script/iframe/object/embed tags,
+// on*="" event handler attributes, javascript: URLs in href/src — while
+// preserving the actual formatting these fields are meant to contain.
+// Applied at RENDER time rather than at save time: content can reach the
+// database through more paths than just this app's own editor UI (direct
+// API calls bypass whatever a UI editor happens to produce), so sanitizing
+// only on the way in would leave existing bad data, and any future write
+// path added later, unprotected. Rendering is the one place every path
+// through this data has to pass through regardless of how it got saved.
+const SANITIZE_ALLOWED_TAGS = new Set(['P','BR','B','STRONG','I','EM','U','S','STRIKE','UL','OL','LI','A','SPAN','DIV','IMG','H1','H2','H3','H4','BLOCKQUOTE','TABLE','THEAD','TBODY','TR','TD','TH','HR','SUB','SUP','FONT']);
+const SANITIZE_ALLOWED_ATTRS = new Set(['href','src','style','class','target','rel','colspan','rowspan','alt','width','height','data-interactive-pic-id','contenteditable','data-hotspot-id']);
+function sanitizeHtml(html){
+  if(!html) return '';
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const walk = (node)=>{
+    Array.from(node.childNodes).forEach(child=>{
+      if(child.nodeType !== 1) return; // only elements need checking — text nodes can't execute anything
+      if(!SANITIZE_ALLOWED_TAGS.has(child.tagName)){
+        // Unwrap rather than delete outright — keeps any legitimate text or
+        // inline content that was sitting inside an otherwise-disallowed tag.
+        while(child.firstChild) node.insertBefore(child.firstChild, child);
+        node.removeChild(child);
+        return;
+      }
+      Array.from(child.attributes).forEach(attr=>{
+        const name = attr.name.toLowerCase();
+        if(name.startsWith('on') || !SANITIZE_ALLOWED_ATTRS.has(name)){ child.removeAttribute(attr.name); return; }
+        if((name==='href' || name==='src') && /^\s*javascript:/i.test(attr.value)) child.removeAttribute(attr.name);
+      });
+      walk(child);
+    });
+  };
+  walk(doc.body);
+  return doc.body.innerHTML;
+}
 
 /* ============================================================
    ULTIMATE EDIT MODE — one specific person can override any
@@ -941,7 +979,7 @@ async function showUnseenAnnouncements(){
         <div class="sub-card" data-digest-item="${a.id}">
           <div class="sub-card-head"><span class="tag">📣 ${escapeHtml(a.sender_name)} · ${new Date(a.created_at).toLocaleString()}</span>
             <button class="mini-btn" data-digest-dismiss="${a.id}">Dismiss</button></div>
-          <div style="font-size:14px;color:var(--text);">${a.body}</div>
+          <div style="font-size:14px;color:var(--text);">${sanitizeHtml(a.body)}</div>
         </div>`).join("")}
     ` : "";
 
@@ -950,7 +988,7 @@ async function showUnseenAnnouncements(){
       ${unreadMessages.map(m=>`
         <div class="sub-card">
           <div class="sub-card-head"><span class="tag">💬 ${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</span></div>
-          <div style="font-size:14px;color:var(--text);">${m.body}</div>
+          <div style="font-size:14px;color:var(--text);">${sanitizeHtml(m.body)}</div>
         </div>`).join("")}
       <button class="btn" id="digest-go-chat" style="margin-top:4px;">Open Chat →</button>
     ` : "";
@@ -1364,7 +1402,7 @@ function renderLesson(){
     : `<button class="btn primary" id="next-lesson" ${nextDisabled?'disabled':''}>Next lesson →</button>`;
   renderShell(`
     <div class="lesson-nav">${tabs}${editBtn}${quizTab}</div>
-    <div class="card"><div class="k-label">${escapeHtml(lesson.label)}</div><h2>${escapeHtml(lesson.title)}</h2><div class="body">${lesson.body}</div>
+    <div class="card"><div class="k-label">${escapeHtml(lesson.label)}</div><h2>${escapeHtml(lesson.title)}</h2><div class="body">${sanitizeHtml(lesson.body)}</div>
       ${nextDisabled ? `<p style="color:var(--amber);font-size:13px;margin-top:14px;">⚠ Finish exploring the interactive content above before you can continue.</p>` : ''}
       <div class="nav-buttons"><button class="btn" id="prev-lesson" ${currentLessonIdx===0?'disabled':''}>← Previous</button>
       ${nextBtnHtml}</div>
@@ -3494,7 +3532,7 @@ function threadCardHtml(t){
     const mine = m.sender_id === session.user.id;
     return `<div class="chat-bubble ${mine?'mine':'theirs'}">
       <div class="chat-bubble-meta">${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</div>
-      <div class="chat-bubble-body">${m.body}</div>
+      <div class="chat-bubble-body">${sanitizeHtml(m.body)}</div>
     </div>`;
   }).join("");
 
@@ -3537,7 +3575,7 @@ function renderNotifications(){
     <div class="sub-card">
       <div class="sub-card-head"><span class="tag">📣 ${escapeHtml(a.sender_name)} · ${new Date(a.created_at).toLocaleString()}</span>
         <button class="mini-btn" data-dismiss-announce="${a.id}">Dismiss</button></div>
-      <div style="font-size:14px;color:var(--text);">${a.body}</div>
+      <div style="font-size:14px;color:var(--text);">${sanitizeHtml(a.body)}</div>
     </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">No announcements yet.</p>`;
 
   const unclaimedHtml = NOTIF_UNCLAIMED.map(m=>{
@@ -3545,7 +3583,7 @@ function renderNotifications(){
       return `
         <div class="sub-card">
           <div class="sub-card-head"><span class="tag">🔑 ADMIN REQUEST · ${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</span></div>
-          <div style="font-size:14px;margin-bottom:12px;color:var(--text);">${m.body}</div>
+          <div style="font-size:14px;margin-bottom:12px;color:var(--text);">${sanitizeHtml(m.body)}</div>
           <div style="display:flex;gap:10px;">
             <button class="btn primary" data-admreq-accept="${m.id}" data-admreq-user="${m.sender_id}" data-admreq-name="${escapeHtml(m.sender_name)}">Accept</button>
             <button class="btn danger" data-admreq-deny="${m.id}" data-admreq-user="${m.sender_id}" data-admreq-name="${escapeHtml(m.sender_name)}">Deny</button>
@@ -3557,7 +3595,7 @@ function renderNotifications(){
       <div class="sub-card-head"><span class="tag">${typeLabel[m.type]||m.type} · ${escapeHtml(m.sender_name)} · ${new Date(m.created_at).toLocaleString()}</span>
         <button class="mini-btn danger" data-discard-thread="${m.id}">Discard</button></div>
       ${m.context ? `<div style="font-size:12px;color:var(--text-faint);margin-bottom:6px;">${escapeHtml(m.context)}</div>` : ""}
-      <div style="font-size:14px;margin-bottom:12px;color:var(--text);">${m.body}</div>
+      <div style="font-size:14px;margin-bottom:12px;color:var(--text);">${sanitizeHtml(m.body)}</div>
       <div class="field"><label>Reply</label>${richEditorHtml(`thread-rte-${m.id}`, "")}</div>
       <button class="mini-btn" data-send-thread="${m.id}" style="margin-top:8px;">Send</button>
     </div>`;
@@ -4771,7 +4809,7 @@ function richEditorHtml(id, initialHtml){
       <div class="rte-sep"></div>
       <button type="button" data-cmd="clearFormat" title="Clear formatting">Tx</button>
     </div>
-    <div class="rte-body" id="${id}" contenteditable="true">${initialHtml || ""}</div>
+    <div class="rte-body" id="${id}" contenteditable="true">${sanitizeHtml(initialHtml)}</div>
   `;
 }
 function clearFormatting(editorEl){
@@ -6934,7 +6972,7 @@ function renderReference(){
       <div class="card">
         <div class="k-label">REFERENCE GUIDE</div>
         <h2>${escapeHtml(page.title)}</h2>
-        <div class="body">${page.body}</div>
+        <div class="body">${sanitizeHtml(page.body)}</div>
         <div class="nav-buttons"><div></div>${editBtn}</div>
       </div>`;
   }
