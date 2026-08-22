@@ -419,7 +419,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r125";
+const BUILD_VERSION = "2026-07-27T00:00Z-r126";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1037,43 +1037,26 @@ async function silentSave(fn){
 
 function promptDepartmentChoice(){
   return new Promise((resolve)=>{
-    function draw(){
-      openModal(`
-        <h3>Which team are you on?</h3>
-        <p class="sub">This decides which training modules and reference guide you'll see. An admin can always add access to the other team later if that changes.</p>
-        <div class="modal-error" id="dept-pick-error" style="display:none;"></div>
-        <div class="modal-actions" style="justify-content:center;gap:14px;flex-wrap:wrap;">
-          ${DEPARTMENTS.map(d=>`<button class="btn primary" data-dept-pick="${d.id}" style="flex:1;">${escapeHtml(d.label)}</button>`).join("")}
-        </div>
-      `, false, true);
-      // No close/cancel path is wired here on purpose — this has to be
-      // answered before the account is usable, since which modules even
-      // exist for this person depends on the answer.
-      const finish = async (dep, btn)=>{
-        const field = dep.profileField;
-        btn.disabled = true; btn.textContent = "Saving…";
-        const { error } = await supabase.from("profiles").update({ [field]: true }).eq("id", session.user.id);
-        if(error){
-          // AUDIT FIX: this used to proceed regardless of whether the save
-          // actually succeeded, which meant a failed write here (network
-          // blip, etc.) let the person into the app with a choice that was
-          // never actually persisted — silently bringing this same picker
-          // back on their next login. Now it stays open and lets them retry.
-          const err = document.getElementById("dept-pick-error");
-          if(err){ err.textContent = "Couldn't save: " + error.message + " — try again."; err.style.display = "block"; }
-          btn.disabled = false; btn.textContent = dep.label;
-          return;
-        }
-        profile[field] = true;
-        closeModal();
-        resolve();
-      };
-      document.querySelectorAll("[data-dept-pick]").forEach(el=> el.addEventListener("click", (e)=>{
-        const dep = DEPARTMENTS.find(d=>d.id===el.getAttribute("data-dept-pick"));
-        if(dep) finish(dep, e.target);
-      }));
-    }
-    draw();
+    // Self-service department selection is no longer possible — every
+    // legitimate account gets its department access set by the admin who
+    // creates it now, and the database itself actively blocks anyone from
+    // granting this to themselves directly. Reaching this screen at all
+    // means either a legacy account from before that change, or someone
+    // trying to self-grant access, which would just fail regardless. There's
+    // nothing to do here but explain that and let them log out.
+    openModal(`
+      <h3>No department access yet</h3>
+      <p class="sub">Your account doesn't have access to any department's training content yet. An admin needs to grant this from People — reach out to one to get set up.</p>
+      <div class="modal-actions" style="justify-content:center;">
+        <button class="btn" id="dept-pick-logout">Log out</button>
+      </div>
+    `, false, true);
+    document.getElementById("dept-pick-logout").addEventListener("click", async ()=>{
+      closeModal();
+      await supabase.auth.signOut();
+    });
+    // Deliberately never resolves — there's nothing for afterLogin() to
+    // proceed into for an account with no department access at all.
   });
 }
 
