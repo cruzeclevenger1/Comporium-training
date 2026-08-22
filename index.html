@@ -419,7 +419,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r120";
+const BUILD_VERSION = "2026-07-27T00:00Z-r121";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -803,7 +803,6 @@ function renderAuth(){
         <div class="field"><label>Email</label><input type="email" id="auth-email" placeholder="you@company.com"></div>
         <div class="field"><label>Password</label><input type="password" id="auth-password" placeholder="••••••••"></div>
         <button class="btn primary" id="auth-submit" style="width:100%;">Log in</button>
-        <p class="hint" style="text-align:center;margin-top:14px;">Need an account? Ask an admin to add you.</p>
       </div>
     </div>
   `;
@@ -4219,7 +4218,8 @@ function openEditPersonModal(userId, name){
     <div class="modal-error" id="edit-person-error" style="display:none;"></div>
 
     <div class="field"><label>Name</label><input type="text" id="edit-person-name" value="${escapeHtml(name)}"></div>
-    <div class="modal-actions" style="margin-bottom:22px;"><div></div><button class="btn primary" id="edit-person-save-name">Save name</button></div>
+    <div class="field"><label>Email</label><input type="email" id="edit-person-email" placeholder="Leave blank to keep current email"></div>
+    <div class="modal-actions" style="margin-bottom:22px;"><div></div><button class="btn primary" id="edit-person-save-name">Save changes</button></div>
 
     <div style="border-top:1px solid var(--stroke);padding-top:16px;margin-bottom:18px;">
       <label style="font-size:11.5px;color:var(--text-faint);font-family:var(--mono);display:block;margin-bottom:10px;letter-spacing:.05em;">RESET PASSWORD</label>
@@ -4241,14 +4241,27 @@ function openEditPersonModal(userId, name){
 
   document.getElementById("edit-person-save-name").addEventListener("click", async ()=>{
     const newName = document.getElementById("edit-person-name").value.trim();
+    const newEmail = document.getElementById("edit-person-email").value.trim();
     if(!newName){ showErr("Enter a name."); return; }
+    if(newEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)){ showErr("Enter a valid email address, or leave it blank."); return; }
     const btn = document.getElementById("edit-person-save-name");
     btn.disabled = true; btn.textContent = "Saving…";
-    const { error } = await supabase.from("profiles").update({ name: newName }).eq("id", userId);
-    if(error){ showErr("Couldn't update name: " + error.message); btn.disabled=false; btn.textContent="Save name"; return; }
-    logEdit("updated", "person_name", `${name} → ${newName}`);
+    // Routed through the server (service role, bypasses RLS entirely)
+    // rather than a direct client-side update — guarantees this actually
+    // persists regardless of any RLS/trigger interaction, and is required
+    // anyway for the email half of this, which the client can never do for
+    // someone else's account on its own.
+    const { data, error } = await supabase.functions.invoke("admin-update-account", {
+      body: { userId, name: newName, email: newEmail || null }
+    });
+    if(error || (data && data.error)){
+      showErr("Couldn't save: " + ((data && data.error) || error.message));
+      btn.disabled = false; btn.textContent = "Save changes";
+      return;
+    }
+    logEdit("updated", "person_account", `${name} → ${newName}${newEmail ? ` (email changed)` : ''}`);
     closeModal();
-    showToast("Name updated.");
+    showToast("Saved.");
     await openTeamProgress();
   });
 
@@ -7187,8 +7200,10 @@ function renderSettings(){
     const newName = document.getElementById("set-name").value.trim();
     const status = document.getElementById("name-status");
     if(!newName){ status.textContent = "Name can't be empty."; status.style.color = "var(--red)"; return; }
-    const { error } = await supabase.from("profiles").update({ name:newName }).eq("id", session.user.id);
-    if(error){ status.textContent = "Couldn't save: " + error.message; status.style.color = "var(--red)"; return; }
+    const { data, error } = await supabase.functions.invoke("admin-update-account", {
+      body: { userId: session.user.id, name: newName }
+    });
+    if(error || (data && data.error)){ status.textContent = "Couldn't save: " + ((data && data.error) || error.message); status.style.color = "var(--red)"; return; }
     profile.name = newName;
     status.textContent = "Saved."; status.style.color = "var(--green)";
     const pill = document.querySelector(".pill-btn"); if(pill) pill.textContent = newName;
