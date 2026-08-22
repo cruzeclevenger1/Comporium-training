@@ -347,7 +347,6 @@
   .lightbox-close{ position:absolute; top:22px; right:26px; background:none; border:1px solid #ffffff55; color:#fff; font-size:20px; width:40px; height:40px; border-radius:50%; cursor:pointer; z-index:2; }
   .lightbox-hint{ position:absolute; bottom:22px; left:50%; transform:translateX(-50%); color:#ffffff99; font-family:var(--mono); font-size:11px; letter-spacing:.03em; }
 
-  .guest-banner{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; background:var(--amber-dim); border:1px solid var(--amber); border-radius:10px; padding:10px 16px; margin-bottom:16px; font-size:13px; color:var(--amber); }
   .feedback-fab{ position:fixed; bottom:24px; left:24px; z-index:400; background:var(--panel); border:1px solid var(--stroke); color:var(--text); padding:12px 18px; border-radius:30px; font-family:var(--sans); font-size:13.5px; cursor:pointer; box-shadow:0 8px 24px #000000aa; transition:border-color .15s, color .15s; }
   .sim-screen-canvas, .sim-screen-canvas img, .sim-screen-canvas *{ cursor:crosshair !important; }
   .sim-screen-canvas{ position:relative; display:inline-block; max-width:100%; touch-action:none; }
@@ -419,7 +418,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r127";
+const BUILD_VERSION = "2026-07-27T00:00Z-r128";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -515,42 +514,6 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     return result;
   };
 })();
-
-/* ============================================================
-   GUEST MODE — lets a visitor tour the real app with sample data
-   and zero writes ever reaching the database. Rather than
-   rewriting every screen to use fake data, we let the real
-   render/data functions run exactly as normal, but transparently
-   redirect every supabase.from(...) call to an in-memory,
-   always-empty, always-successful fake result while guest mode is
-   on. Combined with skipping the handful of top-level "load from
-   DB" functions (which would otherwise overwrite our sample data
-   with that emptiness), this means the whole app just works as a
-   sandbox with zero risk to real data and zero code duplication.
-   ============================================================ */
-let guestMode = false;
-let guestViewingAsAdmin = false;
-
-function _fakeQueryChain(){
-  const result = { data: [], error: null, count: 0 };
-  const chain = {
-    select(){ return chain; }, insert(){ return chain; }, update(){ return chain; }, upsert(){ return chain; }, delete(){ return chain; },
-    eq(){ return chain; }, neq(){ return chain; }, in(){ return chain; }, is(){ return chain; },
-    gt(){ return chain; }, gte(){ return chain; }, lt(){ return chain; }, lte(){ return chain; },
-    order(){ return chain; }, limit(){ return chain; }, range(){ return chain; },
-    single(){ return Promise.resolve({ data:null, error:null }); },
-    then(resolve, reject){ return Promise.resolve(result).then(resolve, reject); },
-    catch(reject){ return Promise.resolve(result).catch(reject); },
-  };
-  return chain;
-}
-const _realSupabaseFrom = supabase.from.bind(supabase);
-supabase.from = function(table){ return guestMode ? _fakeQueryChain() : _realSupabaseFrom(table); };
-const _realInvoke = supabase.functions.invoke.bind(supabase.functions);
-supabase.functions.invoke = function(name, opts){
-  if(guestMode){ showToast("Preview only — nothing was actually changed."); return Promise.resolve({ data:{ success:true }, error:null }); }
-  return _realInvoke(name, opts);
-};
 
 // supabase-js discards the actual response body whenever an edge function
 // returns a non-2xx status, leaving only a generic, useless message on
@@ -728,20 +691,17 @@ async function markLessonViewed(m, lessonId){
   }, { onConflict: "user_id,module_id" });
 }
 let editMode = false;
-function isAdmin(){ if(guestMode) return guestViewingAsAdmin; return profile && (profile.role === "admin" || profile.role === "supervisor"); }
-function isSupervisor(){ return !guestMode && profile && profile.role === "supervisor"; }
-function isEditor(){ if(guestMode) return false; return profile && profile.role === "editor"; }
-function canEditContent(){ if(guestMode) return guestViewingAsAdmin; return isAdmin() || (profile && profile.perm_edit_content); }
-function canCreateQuizzes(){ if(guestMode) return guestViewingAsAdmin; return isAdmin() || (profile && profile.perm_create_quizzes); }
-function canManagePeople(){ if(guestMode) return guestViewingAsAdmin; return isAdmin() || (profile && profile.perm_manage_people); }
-function canCreateAccounts(){ if(guestMode) return guestViewingAsAdmin; return isAdmin() || (profile && profile.perm_create_accounts); }
+function isAdmin(){ return profile && (profile.role === "admin" || profile.role === "supervisor"); }
+function canEditContent(){ return isAdmin() || (profile && profile.perm_edit_content); }
+function canCreateQuizzes(){ return isAdmin() || (profile && profile.perm_create_quizzes); }
+function canManagePeople(){ return isAdmin() || (profile && profile.perm_manage_people); }
+function canCreateAccounts(){ return isAdmin() || (profile && profile.perm_create_accounts); }
 function canEdit(){ return canEditContent() && editMode; }
 
 /* ============================================================
    DATA LOADING
    ============================================================ */
 async function loadEverything(){
-  if(guestMode) return;
   // All eight of these are independent of each other — none reads a result
   // from any of the others, only session.user.id, which is already
   // available before this function even runs. Previously split into two
@@ -811,7 +771,6 @@ async function ensureInteractivePicSlides(ipId){
 }
 
 async function loadProfile(){
-  if(guestMode) return;
   const { data } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
   profile = data;
   simWarningDismissed = !!(profile && profile.sim_warning_dismissed);
@@ -840,189 +799,6 @@ function renderAuth(){
   document.getElementById("auth-submit").addEventListener("click", submitAuth);
 }
 
-/* ============================================================
-   GUEST MODE — intro flow, fixtures, and tour
-   ============================================================ */
-function openGuestIntroModal(){
-  openModal(`
-    <h3>You're about to view a guest preview</h3>
-    <p class="sub">Feel free to click around — but nothing here is real data. Any module edits, quiz answers, notes, announcements, or messages you create will <strong style="color:var(--text);">not</strong> be saved anywhere. This is a sandboxed look at the site, not the live system.</p>
-    <div class="modal-actions"><button class="btn" id="guest-cancel">Never mind</button><button class="btn primary" id="guest-continue">Got it, continue</button></div>
-  `);
-  document.getElementById("guest-cancel").addEventListener("click", closeModal);
-  document.getElementById("guest-continue").addEventListener("click", ()=>{ closeModal(); openGuestTourChoiceModal(); });
-}
-
-function openGuestTourChoiceModal(){
-  openModal(`
-    <h3>Would you like to review all the features?</h3>
-    <p class="sub">I can show you a quick rundown of what this platform can do — especially the admin side — or you can jump straight in and explore on your own with sample data. Either way, you can pull up the feature list anytime from the button at the top.</p>
-    <div class="modal-actions"><button class="btn" id="guest-explore">No thanks, let me explore</button><button class="btn primary" id="guest-review-features">Yes, show me</button></div>
-  `);
-  document.getElementById("guest-explore").addEventListener("click", ()=>{ closeModal(); enterGuestMode(false); });
-  document.getElementById("guest-review-features").addEventListener("click", ()=>{ closeModal(); enterGuestMode(true); });
-}
-
-async function fetchGuestDemoCustomization(){
-  try{
-    const { data, error } = await supabase.from("guest_demo_data").select("*").eq("id", 1).single();
-    if(error || !data) return null;
-    return data.data || null;
-  }catch(e){ return null; }
-}
-
-async function enterGuestMode(showFeatures){
-  const customization = await fetchGuestDemoCustomization(); // fetched BEFORE guestMode flips on, using the real client
-  guestMode = true;
-  guestViewingAsAdmin = false;
-  buildGuestFixtures(customization);
-  view = showFeatures ? "guest-features" : "home";
-  render();
-}
-
-function exitGuestMode(){
-  guestMode = false; guestViewingAsAdmin = false;
-  session = null; profile = null;
-  MODULES = []; progressMap = {}; REFERENCE_PAGES = []; PERSONAL_NOTES = []; TEAMS_LIST = []; teamRows = [];
-  NOTIF_ANNOUNCEMENTS = []; NOTIF_THREADS = []; NOTIF_UNCLAIMED = [];
-  removeFeedbackButton();
-  view = "auth"; authMode = "login"; render();
-}
-
-function defaultGuestData(){
-  return {
-    modules: [
-      { id:"guest-modems", title:"Modems & Routers", short:"Reading the box: DOCSIS basics, LED patterns, and power-cycle order.", ledColor:"green",
-        lessons:[
-          { id:"gl1", label:"Lesson 1 · Fundamentals", title:"What the modem actually does", body:"<p>A modem's only job is to translate the signal coming from the provider into something the customer's local network can use — and back again.</p>" },
-          { id:"gl2", label:"Lesson 2 · Diagnostics", title:"Reading the lights", body:"<p>Every light on a modem reports a stage of a process. Learn the pattern, and the lights stop being decoration and start being a diagnosis.</p>" }
-        ],
-        quiz:[
-          { id:"gq1", q:"What does a solid green Online light usually mean?", opts:["The modem is registered and passing traffic","The modem has no power","The WiFi password is wrong","The account is suspended"], correct:0, explain:"Solid Online means the modem finished registering with the head-end." },
-          { id:"gq2", q:"What's the correct order for a power cycle?", opts:["Router, then modem","Modem, wait 30 seconds, then router","Both at the same time","Never restart either"], correct:1, explain:"The modem needs to fully re-register before the router builds a connection on top of it." }
-        ] },
-      { id:"guest-fiber", title:"Fiber Connections", short:"ONT lights, loss of signal, and when it's a truck-roll, not a reset.", ledColor:"cyan",
-        lessons:[
-          { id:"gl3", label:"Lesson 1 · Fundamentals", title:"How fiber carries data", body:"<p>Fiber sends pulses of light down glass — immune to electrical interference, but physically fragile in different ways than copper.</p>" }
-        ],
-        quiz:[
-          { id:"gq3", q:"A solid red LOS light on an ONT usually means:", opts:["A software glitch","No optical signal reaching the ONT at all","The WiFi needs a reset","Normal startup behavior"], correct:1, explain:"LOS means Loss of Signal — a physical fiber issue, not something a reset fixes." }
-        ] }
-    ],
-    referencePages: [
-      { id:"grp1", parent_id:null, title:"Pulling up a modem", body:"<p>To look up a modem, search the account number or the MAC address on the customer's internet account.</p>" },
-      { id:"grp2", parent_id:"grp1", title:"Finding the MAC address", body:"<p>Click View under Details, then scroll to Internet Equipment.</p>" },
-      { id:"grp3", parent_id:null, title:"Common truck-roll triggers", body:"<p>LOS lights, damaged coax at the pole, and repeated failed self-installs.</p>" }
-    ],
-    notes: [ { id:"gn1", title:"Shortcuts I keep forgetting", body:"<p>DS = downstream, US = upstream.</p>" } ],
-    team: [
-      { name:"Jordan Smith", role:"agent", overall:50, mastered:0 },
-      { name:"Alex Rivera", role:"agent", overall:100, mastered:2 },
-      { name:"Guest Visitor", role:"agent", overall:25, mastered:0 }
-    ],
-    announcement: { senderName:"Sam (Admin)", body:"<p>Welcome to the new Fiber Connections module — go take a look!</p>" }
-  };
-}
-
-function buildGuestFixtures(customization){
-  const now = new Date().toISOString();
-  session = { user: { id: "guest-user", email: "guest@example.com" } };
-  const defaults = defaultGuestData();
-  const g = (customization && typeof customization === "object") ? customization : {};
-
-  profile = { id:"guest-user", name:"Guest Visitor", role:"agent", created_at: now, is_first_login:false, last_seen_announcement_at: now };
-  wasFirstLoginThisSession = false;
-  editMode = false;
-
-  const srcModules = (g.modules && g.modules.length) ? g.modules : defaults.modules;
-  MODULES = srcModules.map((m,mi)=>({
-    id: m.id || `guest-mod-${mi}`,
-    title: m.title || "Untitled module",
-    short: m.short || "",
-    ledColor: m.ledColor || "green",
-    lessons: (m.lessons||[]).map((l,li)=>({ id: l.id || `guest-lesson-${mi}-${li}`, label: l.label||"", title: l.title||"", body: l.body||"" })),
-    quiz: (m.quiz||[]).map((q,qi)=>({ id: q.id || `guest-q-${mi}-${qi}`, q: q.q||"", opts: q.opts||["Option A","Option B"], correct: q.correct||0, explain: q.explain||"" }))
-  }));
-  progressMap = {};
-  if(MODULES[0]){
-    progressMap[MODULES[0].id] = { best: MODULES[0].quiz.length?1:0, total: MODULES[0].quiz.length, lastScore: MODULES[0].quiz.length?1:0, attempts: MODULES[0].quiz.length?1:0, lessonsViewed: MODULES[0].lessons.map(l=>l.id) };
-  }
-
-  const srcRef = (g.referencePages && g.referencePages.length) ? g.referencePages : defaults.referencePages;
-  REFERENCE_PAGES = srcRef.map((p,i)=>({ id: p.id || `guest-ref-${i}`, parent_id: p.parent_id || null, sort_order: i, title: p.title||"Untitled page", body: p.body||"" }));
-  currentRefId = REFERENCE_PAGES[0] ? REFERENCE_PAGES[0].id : null;
-  refEditing = false; notesCollapsed = new Set(); refCollapsed = new Set();
-
-  const srcNotes = (g.notes && g.notes.length) ? g.notes : defaults.notes;
-  PERSONAL_NOTES = srcNotes.map((n,i)=>({ id: n.id || `guest-note-${i}`, parent_id:null, sort_order:i, title: n.title||"Untitled note", body: n.body||"" }));
-  currentNoteId = PERSONAL_NOTES[0] ? PERSONAL_NOTES[0].id : null;
-
-  const srcTeam = (g.team && g.team.length) ? g.team : defaults.team;
-  TEAMS_LIST = [ { id:"gt1", name:"July 2026 New Hires", memberIds: srcTeam.map((_,i)=>`gu${i}`) } ];
-  teamRows = srcTeam.map((t,i)=>{
-    const overall = typeof t.overall === "number" ? t.overall : 0;
-    const perModule = {}; const perModuleRaw = {};
-    MODULES.forEach(m=>{
-      perModule[m.id] = overall;
-      perModuleRaw[m.id] = { best: Math.round((overall/100)*(m.quiz.length||0)), total: m.quiz.length, attempts: overall>0?1:0 };
-    });
-    return { id:`gu${i}`, name: t.name||"Unnamed", role: t.role||"agent", perModule, perModuleRaw, overall, mastered: t.mastered!=null ? t.mastered : (overall===100?MODULES.length:0), teamIds:["gt1"] };
-  });
-
-  const srcAnn = (g.announcement && g.announcement.body) ? g.announcement : defaults.announcement;
-  NOTIF_ANNOUNCEMENTS = [ { id:"gann1", sender_name: srcAnn.senderName || "Admin", created_at: now, body: srcAnn.body } ];
-  NOTIF_THREADS = [];
-  NOTIF_UNCLAIMED = (MODULES[1] && MODULES[1].quiz[0]) ? [ { id:"gflag1", type:"flag", sender_name: teamRows[0]?teamRows[0].name:"A teammate", created_at: now, context:`${MODULES[1].title} — Q1`, body:"<p>Is this question worded confusingly? Just double-checking before I answer.</p>" } ] : [];
-
-  UI_TEXT = {}; UI_TEXT_DEFAULTS = {};
-}
-
-function renderGuestFeatureList(){
-  const pill = (text)=> `<div class="feature-pill">✓ ${escapeHtml(text)}</div>`;
-
-  const teamFeatures = [
-    "Structured training modules with scored quizzes",
-    "Searchable Reference Guide with nested pages",
-    "Private notes only you can see",
-    "Standalone quizzes sent straight to you",
-    "Hands-on Simulated Navigation practice",
-    "Click-through Interactive Picture walkthroughs",
-    "Retake only what you missed — nothing else held against you",
-    "Built-in messaging straight to an admin",
-    "Live notifications the moment something's sent",
-    "Real-time progress tracking, always up to date"
-  ];
-  const adminFeatures = [
-    "Full no-code content editor, autosaves as you type",
-    "Granular permissions beyond Admin/Editor/User",
-    "Teams & People management in one place",
-    "One-click password reset & account management",
-    "Module and quiz progress drill-downs, question by question",
-    "Team-wide Analyze — completion rates and common misses",
-    "Targeted announcements & quizzes by team or person",
-    "Full audit trail of every content change",
-    "Fullscreen builder for Simulated Navigation",
-    "Point-and-click Interactive Picture hotspot editor",
-    "Custom, fully controllable Guest Preview sandbox"
-  ];
-
-  renderShell(`
-    <div class="card">
-      <div class="eyebrow">GUEST PREVIEW</div>
-      <h1 style="margin-bottom:6px;">Everything this platform can do</h1>
-      <p style="color:var(--text-dim);margin-bottom:22px;">One system for training, testing, and tracking your whole team — click into anything below, nothing here touches real data.</p>
-
-      <div class="editor-section-head"><h3>For your whole team</h3></div>
-      <div class="feature-grid">${teamFeatures.map(pill).join("")}</div>
-
-      <div class="editor-section-head" style="margin-top:24px;"><h3>For admins</h3></div>
-      <div class="feature-grid">${adminFeatures.map(pill).join("")}</div>
-
-      <button class="btn primary" id="guest-features-done" style="margin-top:24px;">Start exploring →</button>
-    </div>
-  `);
-  document.getElementById("guest-features-done").addEventListener("click", ()=>{ view="home"; render(); });
-}
 
 // Wrap an autosave's Supabase call so the global loading bar skips it —
 // autosave-on-typing already shows its own "Saving…/Saved" text right next
@@ -1267,14 +1043,6 @@ function renderShell(inner){
   const section = view==="home" ? "home" : ["dashboard","lesson","quiz","results","editor"].includes(view) ? "modules" : view==="reference" ? "reference" : view==="notes" ? "notes" : null;
 
   root.innerHTML = `
-    ${guestMode ? `
-    <div class="guest-banner">
-      <span>👀 Guest preview — nothing you do here is saved</span>
-      <div style="display:flex;gap:8px;">
-        <button class="mini-btn" id="guest-list-features">📋 List Features</button>
-        <button class="mini-btn" id="guest-view-toggle">Viewing as: ${guestViewingAsAdmin ? "Admin" : "Agent"} (switch)</button>
-      </div>
-    </div>` : ""}
     <header class="top">
       <div class="brand">
         <button class="gear-btn" id="open-settings" title="Settings">⚙</button>
@@ -1302,10 +1070,10 @@ function renderShell(inner){
               <button id="open-view-feedback">🗣 View Feedback</button>
             </div>
           </div>` : (canEditContent() && !isAdmin()) ? `<button class="pill-btn" id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>` : ""}
-        <button class="pill-btn" id="logout-btn">${guestMode ? "Exit guest mode" : "Log out"}</button>
+        <button class="pill-btn" id="logout-btn">Log out</button>
       </div>
     </header>
-    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes"||view==="guest-features") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'PEOPLE':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='guest-editor'?'EDIT GUEST PREVIEW':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='quiz-sent-detail'?'SENT QUIZ':view==='edit-log'?'EDIT LOG':''))}`}</nav>`}
+    ${ (view==="home"||view==="dashboard"||view==="reference"||view==="notes"||view==="quizzes") ? "" : `<nav class="crumbs-row">${`<button id="crumb-home">${crumbLabel}</button> / ${escapeHtml((inModulesFlow && currentModId && modById(currentModId)) ? modById(currentModId).title.toUpperCase() : (view==='editor'?'EDITOR':view==='team'?'PEOPLE':view==='settings'?'SETTINGS':view==='notifications'?'NOTIFICATIONS':view==='chat'?'CHAT':view==='quiz-take'?'TAKE QUIZ':view==='quiz-result-standalone'?'RESULTS':view==='quiz-builder'?'EDIT QUIZ':view==='quiz-sent-detail'?'SENT QUIZ':view==='edit-log'?'EDIT LOG':''))}`}</nav>`}
     <div class="top-nav">
       <button class="top-nav-btn ${section==='home'?'active':''}" id="nav-home">${T('nav.dashboard','Dashboard')}</button>
       <button class="top-nav-btn ${section==='modules'?'active':''}" id="nav-modules">${T('nav.modules','Training Modules')}</button>
@@ -1334,7 +1102,7 @@ function renderShell(inner){
   document.getElementById("open-settings").addEventListener("click", ()=>{ themeDropdownOpen = false; view="settings"; render(); });
   const ultToggle = document.getElementById("ult-edit-toggle");
   if(ultToggle) ultToggle.addEventListener("click", ()=>{ ultimateEditMode = !ultimateEditMode; render(); });
-  document.getElementById("logout-btn").addEventListener("click", ()=>{ guestMode ? exitGuestMode() : logout(); });
+  document.getElementById("logout-btn").addEventListener("click", logout);
   document.getElementById("notif-bell").addEventListener("click", openNotifications);
   document.getElementById("chat-bubble").addEventListener("click", ()=> openChat());
   const toggleEdit = document.getElementById("toggle-edit-mode");
@@ -1347,10 +1115,6 @@ function renderShell(inner){
   if(openViewFeedbackBtn) openViewFeedbackBtn.addEventListener("click", openViewFeedbackModal);
   const goTeamBtn = document.getElementById("go-team-btn");
   if(goTeamBtn) goTeamBtn.addEventListener("click", openTeamProgress);
-  const guestViewToggle = document.getElementById("guest-view-toggle");
-  if(guestViewToggle) guestViewToggle.addEventListener("click", ()=>{ guestViewingAsAdmin = !guestViewingAsAdmin; view="home"; render(); });
-  const guestListFeaturesBtn = document.getElementById("guest-list-features");
-  if(guestListFeaturesBtn) guestListFeaturesBtn.addEventListener("click", ()=>{ view="guest-features"; render(); });
   // Every single page render — however it was reached, including internal calls
   // that bypass the top-level render() router entirely — passes through here.
   // That makes this the one guaranteed place to catch and fix any raw/oversized
@@ -1443,7 +1207,6 @@ function rawRowHasDeptAccess(row, deptId){
   return d ? !!row[d.teamDbField] : false;
 }
 function canAccessDepartment(dept){
-  if(guestMode) return true; // guest preview shows everything regardless of department
   if(!profile) return false;
   const d = DEPARTMENTS.find(x=>x.id===dept);
   return d ? !!profile[d.profileField] : false;
@@ -1462,7 +1225,7 @@ let themeDropdownOpen = false;
 
 function renderDashboard(){
   lastModuleContext = { view:"dashboard" };
-  if(!guestMode && myDepartments().length===0){
+  if(myDepartments().length===0){
     renderShell(`
       <div class="card">
         <div class="k-label">NO ACCESS YET</div>
@@ -1474,7 +1237,7 @@ function renderDashboard(){
   }
   const editOn = canEdit();
   const dept = currentActiveDepartment();
-  const deptModules = guestMode ? MODULES : MODULES.filter(m=> m.department===dept);
+  const deptModules = MODULES.filter(m=> m.department===dept);
   const visibleModules = dashboardShowCompleted ? deptModules : deptModules.filter(m=> moduleStatus(m.id)!=="mastered");
   const cards = visibleModules.map(m=>{
     const status = moduleStatus(m.id); const s = progressMap[m.id];
@@ -1496,7 +1259,7 @@ function renderDashboard(){
   const doneQ = deptModules.reduce((a,m)=>a+((progressMap[m.id]&&progressMap[m.id].best)||0),0);
   const modsMastered = deptModules.filter(m=>moduleStatus(m.id)==="mastered").length;
   const emptyFilterMsg = (!dashboardShowCompleted && !visibleModules.length && deptModules.length) ? `<p style="color:var(--text-faint);font-size:13.5px;padding:10px 2px;">Everything's mastered — nice work. Tap "Show Completed" above to see them.</p>` : "";
-  const deptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
+  const deptTabsHtml = (myDepartments().length>1) ? `<div class="dept-tabs">
       ${renderDeptTabsHtml(dept, 'dept')}
     </div>` : "";
 
@@ -1518,7 +1281,7 @@ function renderDashboard(){
   document.getElementById("toggle-incomplete-filter").addEventListener("click", async ()=>{
     dashboardShowCompleted = !dashboardShowCompleted;
     render();
-    if(!guestMode) await supabase.from("profiles").update({ dashboard_show_completed: dashboardShowCompleted }).eq("id", session.user.id);
+    await supabase.from("profiles").update({ dashboard_show_completed: dashboardShowCompleted }).eq("id", session.user.id);
   });
 
   root.querySelectorAll(".mod-card").forEach(el=> el.addEventListener("click",(e)=>{
@@ -1725,7 +1488,7 @@ function scheduleQuizProgressSave(){
   // test runs are never real attempts to begin with, and a missed-retake
   // session is short-lived by nature (it only exists right after finishing
   // a full attempt).
-  if(quizIsTestRun || !session || guestMode) return;
+  if(quizIsTestRun || !session) return;
   clearTimeout(quizProgressSaveTimer);
   quizProgressSaveTimer = setTimeout(async ()=>{
     modulesWithResumableQuiz.add(currentModId);
@@ -1980,7 +1743,7 @@ let quizProgressExpandedRows = new Set();
 async function loadQuizProgressData(){
   const dept = currentActiveDepartment();
   const { data: quizzesRaw } = await supabase.from("standalone_quizzes").select("*").eq("sent", true);
-  const quizzes = guestMode ? quizzesRaw : (quizzesRaw||[]).filter(q=> rawRowHasDeptAccess(q, dept));
+  const quizzes = (quizzesRaw||[]).filter(q=> rawRowHasDeptAccess(q, dept));
   const { data: attempts } = await supabase.from("standalone_quiz_attempts").select("*");
   const { data: recipients } = await supabase.from("standalone_quiz_recipients").select("*");
   const { data: allTeamMembers } = await supabase.from("team_members").select("*");
@@ -2002,7 +1765,6 @@ async function loadQuizProgressData(){
 }
 
 async function openTeamProgress(){
-  if(guestMode){ view = "team"; render(); return; }
   const { data: people } = await supabase.from("profiles").select("*").order("name");
   const { data: allProgress } = await supabase.from("progress").select("*");
   const { data: teamsData } = await supabase.from("teams").select("*").order("name");
@@ -2215,7 +1977,7 @@ function renderTeam(){
     loadQuizProgressData().then(()=> render());
   }
   const dept = currentActiveDepartment();
-  const deptTeams = guestMode ? TEAMS_LIST : TEAMS_LIST.filter(t=> teamHasDeptAccess(t, dept));
+  const deptTeams = TEAMS_LIST.filter(t=> teamHasDeptAccess(t, dept));
   const teamsHtml = deptTeams.length ? deptTeams.map(t=>`
     <button class="mini-btn" data-manage-team="${t.id}" style="margin:0 6px 6px 0;">${escapeHtml(t.name)} · ${t.memberIds.length}</button>
   `).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No teams yet.</p>`;
@@ -2225,7 +1987,7 @@ function renderTeam(){
   // names, roles, module progress, and quiz progress. Scope the base roster
   // to people who actually have access to the department being viewed
   // before any of the existing role/team/search filters apply on top.
-  const deptRows = guestMode ? teamRows : teamRows.filter(r=> canAccessDeptForRow(r, dept));
+  const deptRows = teamRows.filter(r=> canAccessDeptForRow(r, dept));
   let filteredRows = deptRows;
   if(teamRosterFilter.startsWith("role:")){
     const role = teamRosterFilter.slice(5);
@@ -2285,7 +2047,7 @@ function renderTeam(){
   }).join("");
 
   // ---- Module progress rows ----
-  const deptModulesForRoster = guestMode ? MODULES : MODULES.filter(m=> m.department===dept);
+  const deptModulesForRoster = MODULES.filter(m=> m.department===dept);
   // AUDIT FIX: r.overall / r.mastered were computed once at load time across
   // every module the admin can see, mixing both departments together —
   // switching tabs changed which module pills showed, but not these
@@ -2366,7 +2128,7 @@ function renderTeam(){
   // ---- Quiz progress rows ----
   let quizRowsHtml = `<p style="color:var(--text-faint);font-size:13px;">Loading…</p>`;
   if(QUIZ_PROGRESS_ROWS){
-    let filteredQuizRows = guestMode ? QUIZ_PROGRESS_ROWS : QUIZ_PROGRESS_ROWS.filter(r=> canAccessDeptForRow(r, dept));
+    let filteredQuizRows = QUIZ_PROGRESS_ROWS.filter(r=> canAccessDeptForRow(r, dept));
     if(teamRosterFilter.startsWith("role:")){
       filteredQuizRows = filteredQuizRows.filter(r=> r.role === teamRosterFilter.slice(5));
     } else if(teamRosterFilter){
@@ -2413,7 +2175,7 @@ function renderTeam(){
     </div>`;
   }
 
-  const teamPageDeptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
+  const teamPageDeptTabsHtml = (myDepartments().length>1) ? `<div class="dept-tabs">
       ${renderDeptTabsHtml(dept, 'team-dept')}
     </div>` : "";
 
@@ -2700,20 +2462,6 @@ async function openInlineAttemptDetail(userId, moduleId){
   const m = modById(moduleId);
   if(!m || !m.quiz.length){ attemptDetailData = []; render(); return; }
 
-  if(guestMode){
-    const person = teamRows.find(r=>r.id===userId);
-    const raw = person ? person.perModuleRaw[moduleId] : null;
-    if(!raw || !raw.attempts){ attemptDetailData = []; render(); return; }
-    // Simulate which questions were "missed" so the count matches their displayed score — guest mode has no real attempt rows to show.
-    const answers = m.quiz.map((q,i)=>{
-      const isCorrect = i < raw.best;
-      const selected = isCorrect ? q.correct : (q.correct === 0 ? 1 : 0);
-      return { question: q.q, options: q.opts, selected, correct: q.correct, is_correct: isCorrect };
-    });
-    attemptDetailData = [{ score: raw.best, total: raw.total, answers }];
-    render();
-    return;
-  }
   const { data: attempts } = await supabase.from("quiz_attempts").select("*").eq("user_id", userId).eq("module_id", moduleId).order("created_at", { ascending:false }).limit(MAX_QUIZ_ATTEMPTS);
   // Only apply the fetch if this is still the module someone's looking at —
   // clicking a different pill while this was in flight shouldn't have a
@@ -2883,7 +2631,7 @@ async function showStandaloneQuizAttemptDetail(userId, quizId, holderId, personN
    ============================================================ */
 function renderQuizzesList(){
   const dept = currentActiveDepartment();
-  const deptQuizzes = guestMode ? QUIZZES : QUIZZES.filter(q=> teamHasDeptAccess(q, dept));
+  const deptQuizzes = QUIZZES.filter(q=> teamHasDeptAccess(q, dept));
   const canManageQuizzes = canCreateQuizzes();
   const myQuizzes = deptQuizzes.filter(q=> q.isRecipient);
   const pending = myQuizzes.filter(q=> !q.myAttempt);
@@ -2928,7 +2676,7 @@ function renderQuizzesList(){
 
   const effectiveMode = canManageQuizzes ? quizPageMode : "mine"; // no toggle reachable at all without manage permission, so always fall back to "mine" regardless of whatever the variable happens to hold
   const addBtn = (canManageQuizzes && effectiveMode==='manage') ? `<button class="dashed-btn" id="add-quiz" style="margin-top:14px;">+ New quiz</button>` : "";
-  const quizDeptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
+  const quizDeptTabsHtml = (myDepartments().length>1) ? `<div class="dept-tabs">
       ${renderDeptTabsHtml(dept, 'quiz-dept')}
     </div>` : "";
   const modeTabsHtml = canManageQuizzes ? `<div class="dept-tabs" style="margin-bottom:18px;">
@@ -3450,7 +3198,6 @@ let quizBuilderDraft = null;
 let expandedQuizQuestionIdx = null;
 
 async function loadStandaloneQuizzes(){
-  if(guestMode){ QUIZZES = []; return; }
   const [{ data: quizzes }, { data: questions }, { data: myAttempts }, { data: myTeamMemberships }, { data: myRecipientRows }] = await Promise.all([
     supabase.from("standalone_quizzes").select("*").order("created_at", { ascending:false }),
     supabase.from("standalone_quiz_questions").select("*").order("sort_order"),
@@ -3462,7 +3209,7 @@ async function loadStandaloneQuizzes(){
   const myRecipientQuizIds = new Set((myRecipientRows||[]).map(r=>r.quiz_id));
 
   QUIZZES = (quizzes||[])
-    .filter(q=> guestMode || myDepartments().some(id=> rawRowHasDeptAccess(q, id)))
+    .filter(q=> myDepartments().some(id=> rawRowHasDeptAccess(q, id)))
     .map(q=>{
     // Broad visibility (via RLS) lets any quiz-manager see every quiz, for
     // management purposes. That's NOT the same as "this quiz is actually
@@ -3547,7 +3294,7 @@ const EDIT_LOG_ACTION_COLORS = { created:"var(--green)", updated:"var(--cyan)", 
 
 function renderEditLog(){
   const dept = currentActiveDepartment();
-  let rows = guestMode ? EDIT_LOG_ROWS : EDIT_LOG_ROWS.filter(r=> !r.department || r.department===dept);
+  let rows = EDIT_LOG_ROWS.filter(r=> !r.department || r.department===dept);
   if(editLogTypeFilter) rows = rows.filter(r=> r.entity_type === editLogTypeFilter);
   if(editLogSearchQuery.trim()){
     const q = editLogSearchQuery.trim().toLowerCase();
@@ -3573,7 +3320,7 @@ function renderEditLog(){
     </tr>`;
   }).join("");
 
-  const deptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
+  const deptTabsHtml = (myDepartments().length>1) ? `<div class="dept-tabs">
       ${renderDeptTabsHtml(dept, 'editlog-dept')}
     </div>` : "";
 
@@ -3636,7 +3383,6 @@ function renderEditLog(){
    NOTIFICATIONS / MESSAGING
    ============================================================ */
 async function loadAllNotifications(){
-  if(guestMode) return;
   const joinCutoff = (profile && profile.created_at) ? profile.created_at : "1970-01-01T00:00:00Z";
   const admin = isAdmin();
   // None of these seven depend on each other's results — only followUps
@@ -4037,7 +3783,7 @@ async function sendThreadMessage(rootId){
 function stripHtml(html){ const d = document.createElement("div"); d.innerHTML = html; return (d.textContent||"").trim(); }
 
 function logEdit(action, entityType, entityLabel, details, department){
-  if(guestMode || !session) return;
+  if(!session) return;
   supabase.from("edit_log").insert({
     actor_id: session.user.id, actor_name: profile.name,
     action, entity_type: entityType, entity_label: entityLabel || "", details: details || null, department: department || null
@@ -6344,7 +6090,7 @@ async function navigateToSiteLink(linkEl){
     const modId = linkEl.getAttribute("data-link-mod");
     const m = modById(modId);
     if(!m){ alert("That module isn't available — it may have been removed, or belongs to a department you don't have access to."); return; }
-    if(!guestMode) activeDepartment = m.department; // switch tabs to match, so the target module is actually visible
+    activeDepartment = m.department; // switch tabs to match, so the target module is actually visible
     currentModId = modId;
     currentLessonIdx = type === "lesson" ? (+linkEl.getAttribute("data-link-lesson") || 0) : 0;
     if(currentLessonIdx >= m.lessons.length) currentLessonIdx = 0; // stale link (that lesson's since been removed) — fall back rather than crash
@@ -6355,7 +6101,7 @@ async function navigateToSiteLink(linkEl){
     await loadReference(); // may not have been fetched yet this session, since it's normally only loaded on opening the Reference Guide
     const page = REFERENCE_PAGES.find(p=>p.id===refId);
     if(!page){ alert("That reference page isn't available — it may have been removed or moved."); return; }
-    if(!guestMode) refActiveDepartment = page.department;
+    refActiveDepartment = page.department;
     currentRefId = refId;
     refEditing = false;
     view = "reference";
@@ -7041,151 +6787,6 @@ function wireEditorEvents(){
   });
 }
 
-/* ============================================================
-   EDIT GUEST PREVIEW (admin only) — customizes what a guest sees
-   ============================================================ */
-let guestEditorDraft = null;
-
-async function openGuestEditor(){
-  const { data } = await supabase.from("guest_demo_data").select("*").eq("id", 1).single();
-  const existing = (data && data.data) ? data.data : null;
-  const defaults = defaultGuestData();
-  guestEditorDraft = (existing && Object.keys(existing).length) ? existing : JSON.parse(JSON.stringify(defaults));
-  guestEditorDraft.modules = guestEditorDraft.modules && guestEditorDraft.modules.length ? guestEditorDraft.modules : defaults.modules;
-  guestEditorDraft.referencePages = guestEditorDraft.referencePages && guestEditorDraft.referencePages.length ? guestEditorDraft.referencePages : defaults.referencePages;
-  guestEditorDraft.notes = guestEditorDraft.notes && guestEditorDraft.notes.length ? guestEditorDraft.notes : defaults.notes;
-  guestEditorDraft.team = guestEditorDraft.team && guestEditorDraft.team.length ? guestEditorDraft.team : defaults.team;
-  guestEditorDraft.announcement = guestEditorDraft.announcement || defaults.announcement;
-  view = "guest-editor"; render();
-}
-
-function renderGuestEditor(){
-  const d = guestEditorDraft;
-
-  const modulesHtml = d.modules.map((m,mi)=>`
-    <div class="sub-card">
-      <div class="sub-card-head"><span class="tag">MODULE ${mi+1}</span><button class="mini-btn danger" data-gmod-del="${mi}">Delete module</button></div>
-      <div class="field"><label>Title</label><input type="text" data-gmod-title="${mi}" value="${escapeHtml(m.title)}"></div>
-      <div class="field"><label>Short description</label><input type="text" data-gmod-short="${mi}" value="${escapeHtml(m.short)}"></div>
-      <div class="editor-section-head" style="margin-top:12px;"><h3 style="font-size:11px;">Lessons</h3></div>
-      ${(m.lessons||[]).map((l,li)=>`
-        <div class="sub-card" style="background:#0a0f1c;">
-          <div class="sub-card-head"><span class="tag">LESSON ${li+1}</span><button class="mini-btn danger" data-glesson-del="${mi}:${li}">Delete</button></div>
-          <div class="field"><label>Title</label><input type="text" data-glesson-title="${mi}:${li}" value="${escapeHtml(l.title)}"></div>
-          <div class="field"><label>Body (HTML)</label><textarea data-glesson-body="${mi}:${li}" style="min-height:70px;">${escapeHtml(l.body)}</textarea></div>
-        </div>`).join("")}
-      <button class="mini-btn" data-gmod-addlesson="${mi}">+ Add lesson</button>
-      <div class="editor-section-head" style="margin-top:14px;"><h3 style="font-size:11px;">Quiz questions</h3></div>
-      ${(m.quiz||[]).map((q,qi)=>`
-        <div class="sub-card" style="background:#0a0f1c;">
-          <div class="sub-card-head"><span class="tag">QUESTION ${qi+1}</span><button class="mini-btn danger" data-gq-del="${mi}:${qi}">Delete</button></div>
-          <div class="field"><label>Question</label><textarea data-gq-text="${mi}:${qi}" style="min-height:50px;">${escapeHtml(q.q)}</textarea></div>
-          <div class="field"><label>Options (select correct)</label>
-            ${q.opts.map((opt,oi)=>`<div class="opt-row"><input type="radio" name="gcorrect-${mi}-${qi}" data-gq-correct="${mi}:${qi}" value="${oi}" ${q.correct===oi?'checked':''}><input type="text" data-gq-opt="${mi}:${qi}:${oi}" value="${escapeHtml(opt)}"></div>`).join("")}
-          </div>
-          <div class="field"><label>Explanation</label><textarea data-gq-explain="${mi}:${qi}" style="min-height:50px;">${escapeHtml(q.explain)}</textarea></div>
-        </div>`).join("")}
-      <button class="mini-btn" data-gmod-addq="${mi}">+ Add question</button>
-    </div>`).join("");
-
-  const refHtml = d.referencePages.map((p,i)=>`
-    <div class="sub-card">
-      <div class="sub-card-head"><span class="tag">PAGE ${i+1}</span><button class="mini-btn danger" data-gref-del="${i}">Delete</button></div>
-      <div class="field"><label>Title</label><input type="text" data-gref-title="${i}" value="${escapeHtml(p.title)}"></div>
-      <div class="field"><label>Body (HTML)</label><textarea data-gref-body="${i}" style="min-height:70px;">${escapeHtml(p.body)}</textarea></div>
-    </div>`).join("");
-
-  const notesHtml = d.notes.map((n,i)=>`
-    <div class="sub-card">
-      <div class="sub-card-head"><span class="tag">NOTE ${i+1}</span><button class="mini-btn danger" data-gnote-del="${i}">Delete</button></div>
-      <div class="field"><label>Title</label><input type="text" data-gnote-title="${i}" value="${escapeHtml(n.title)}"></div>
-      <div class="field"><label>Body (HTML)</label><textarea data-gnote-body="${i}" style="min-height:60px;">${escapeHtml(n.body)}</textarea></div>
-    </div>`).join("");
-
-  const teamHtml = d.team.map((t,i)=>`
-    <div class="sub-card">
-      <div class="sub-card-head"><span class="tag">PERSON ${i+1}</span><button class="mini-btn danger" data-gteam-del="${i}">Delete</button></div>
-      <div class="field"><label>Name</label><input type="text" data-gteam-name="${i}" value="${escapeHtml(t.name)}"></div>
-      <div class="field"><label>Overall progress % (0-100)</label><input type="text" data-gteam-overall="${i}" value="${t.overall}"></div>
-    </div>`).join("");
-
-  renderShell(`
-    <div class="card">
-      <div class="k-label">ADMIN</div>
-      <h2 style="margin-bottom:4px;">Edit Guest Preview</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">This is exactly what someone sees when they click "View site as guest." Changes here only affect that demo — never real data or real people.</p>
-
-      <div class="editor-section"><div class="editor-section-head"><h3>Sample Modules</h3></div>${modulesHtml||'<p style="color:var(--text-faint);font-size:13px;">No modules yet.</p>'}<button class="dashed-btn" id="gadd-module">+ Add module</button></div>
-      <div class="editor-section"><div class="editor-section-head"><h3>Sample Reference Pages</h3></div>${refHtml||'<p style="color:var(--text-faint);font-size:13px;">No pages yet.</p>'}<button class="dashed-btn" id="gadd-ref">+ Add page</button></div>
-      <div class="editor-section"><div class="editor-section-head"><h3>Sample Notes</h3></div>${notesHtml||'<p style="color:var(--text-faint);font-size:13px;">No notes yet.</p>'}<button class="dashed-btn" id="gadd-note">+ Add note</button></div>
-      <div class="editor-section"><div class="editor-section-head"><h3>Sample Team Roster</h3></div>${teamHtml||'<p style="color:var(--text-faint);font-size:13px;">No one yet.</p>'}<button class="dashed-btn" id="gadd-team">+ Add person</button></div>
-      <div class="editor-section">
-        <div class="editor-section-head"><h3>Sample Announcement</h3></div>
-        <div class="field"><label>From</label><input type="text" id="gann-sender" value="${escapeHtml(d.announcement.senderName||'')}"></div>
-        <div class="field"><label>Message (HTML)</label><textarea id="gann-body" style="min-height:60px;">${escapeHtml(d.announcement.body||'')}</textarea></div>
-      </div>
-
-      <div class="nav-buttons"><button class="btn" id="gedit-cancel">Cancel</button><button class="btn primary" id="gedit-save">Save guest preview</button></div>
-    </div>`);
-  wireGuestEditorEvents();
-}
-
-function wireGuestEditorEvents(){
-  const d = guestEditorDraft;
-
-  root.querySelectorAll("[data-gmod-title]").forEach(el=> el.addEventListener("input", e=>{ d.modules[+el.dataset.gmodTitle].title = e.target.value; }));
-  root.querySelectorAll("[data-gmod-short]").forEach(el=> el.addEventListener("input", e=>{ d.modules[+el.dataset.gmodShort].short = e.target.value; }));
-  root.querySelectorAll("[data-gmod-del]").forEach(el=> el.addEventListener("click", ()=>{ if(confirm("Delete this module?")){ d.modules.splice(+el.dataset.gmodDel,1); renderGuestEditor(); } }));
-  root.querySelectorAll("[data-gmod-addlesson]").forEach(el=> el.addEventListener("click", ()=>{
-    const mi = +el.dataset.gmodAddlesson;
-    (d.modules[mi].lessons = d.modules[mi].lessons||[]).push({ title:"New lesson", body:"<p>Write here.</p>" });
-    renderGuestEditor();
-  }));
-  root.querySelectorAll("[data-gmod-addq]").forEach(el=> el.addEventListener("click", ()=>{
-    const mi = +el.dataset.gmodAddq;
-    (d.modules[mi].quiz = d.modules[mi].quiz||[]).push({ q:"New question", opts:["Option A","Option B"], correct:0, explain:"" });
-    renderGuestEditor();
-  }));
-
-  root.querySelectorAll("[data-glesson-title]").forEach(el=> el.addEventListener("input", e=>{ const [mi,li]=el.dataset.glessonTitle.split(":").map(Number); d.modules[mi].lessons[li].title = e.target.value; }));
-  root.querySelectorAll("[data-glesson-body]").forEach(el=> el.addEventListener("input", e=>{ const [mi,li]=el.dataset.glessonBody.split(":").map(Number); d.modules[mi].lessons[li].body = e.target.value; }));
-  root.querySelectorAll("[data-glesson-del]").forEach(el=> el.addEventListener("click", ()=>{ const [mi,li]=el.dataset.glessonDel.split(":").map(Number); d.modules[mi].lessons.splice(li,1); renderGuestEditor(); }));
-
-  root.querySelectorAll("[data-gq-text]").forEach(el=> el.addEventListener("input", e=>{ const [mi,qi]=el.dataset.gqText.split(":").map(Number); d.modules[mi].quiz[qi].q = e.target.value; }));
-  root.querySelectorAll("[data-gq-explain]").forEach(el=> el.addEventListener("input", e=>{ const [mi,qi]=el.dataset.gqExplain.split(":").map(Number); d.modules[mi].quiz[qi].explain = e.target.value; }));
-  root.querySelectorAll("[data-gq-opt]").forEach(el=> el.addEventListener("input", e=>{ const [mi,qi,oi]=el.dataset.gqOpt.split(":").map(Number); d.modules[mi].quiz[qi].opts[oi] = e.target.value; }));
-  root.querySelectorAll("[data-gq-correct]").forEach(el=> el.addEventListener("change", e=>{ const [mi,qi]=el.dataset.gqCorrect.split(":").map(Number); d.modules[mi].quiz[qi].correct = +e.target.value; }));
-  root.querySelectorAll("[data-gq-del]").forEach(el=> el.addEventListener("click", ()=>{ const [mi,qi]=el.dataset.gqDel.split(":").map(Number); d.modules[mi].quiz.splice(qi,1); renderGuestEditor(); }));
-
-  document.getElementById("gadd-module").addEventListener("click", ()=>{ d.modules.push({ title:"New module", short:"", ledColor:"green", lessons:[], quiz:[] }); renderGuestEditor(); });
-
-  root.querySelectorAll("[data-gref-title]").forEach(el=> el.addEventListener("input", e=>{ d.referencePages[+el.dataset.grefTitle].title = e.target.value; }));
-  root.querySelectorAll("[data-gref-body]").forEach(el=> el.addEventListener("input", e=>{ d.referencePages[+el.dataset.grefBody].body = e.target.value; }));
-  root.querySelectorAll("[data-gref-del]").forEach(el=> el.addEventListener("click", ()=>{ d.referencePages.splice(+el.dataset.grefDel,1); renderGuestEditor(); }));
-  document.getElementById("gadd-ref").addEventListener("click", ()=>{ d.referencePages.push({ parent_id:null, title:"New page", body:"<p>Write here.</p>" }); renderGuestEditor(); });
-
-  root.querySelectorAll("[data-gnote-title]").forEach(el=> el.addEventListener("input", e=>{ d.notes[+el.dataset.gnoteTitle].title = e.target.value; }));
-  root.querySelectorAll("[data-gnote-body]").forEach(el=> el.addEventListener("input", e=>{ d.notes[+el.dataset.gnoteBody].body = e.target.value; }));
-  root.querySelectorAll("[data-gnote-del]").forEach(el=> el.addEventListener("click", ()=>{ d.notes.splice(+el.dataset.gnoteDel,1); renderGuestEditor(); }));
-  document.getElementById("gadd-note").addEventListener("click", ()=>{ d.notes.push({ title:"New note", body:"<p>Write here.</p>" }); renderGuestEditor(); });
-
-  root.querySelectorAll("[data-gteam-name]").forEach(el=> el.addEventListener("input", e=>{ d.team[+el.dataset.gteamName].name = e.target.value; }));
-  root.querySelectorAll("[data-gteam-overall]").forEach(el=> el.addEventListener("input", e=>{ d.team[+el.dataset.gteamOverall].overall = Math.max(0, Math.min(100, parseInt(e.target.value)||0)); }));
-  root.querySelectorAll("[data-gteam-del]").forEach(el=> el.addEventListener("click", ()=>{ d.team.splice(+el.dataset.gteamDel,1); renderGuestEditor(); }));
-  document.getElementById("gadd-team").addEventListener("click", ()=>{ d.team.push({ name:"New person", role:"agent", overall:0, mastered:0 }); renderGuestEditor(); });
-
-  document.getElementById("gann-sender").addEventListener("input", e=>{ d.announcement.senderName = e.target.value; });
-  document.getElementById("gann-body").addEventListener("input", e=>{ d.announcement.body = e.target.value; });
-
-  document.getElementById("gedit-cancel").addEventListener("click", ()=>{ view="home"; render(); });
-  document.getElementById("gedit-save").addEventListener("click", async ()=>{
-    const { error } = await supabase.from("guest_demo_data").upsert({ id:1, data: d, updated_at: new Date().toISOString() });
-    if(error){ alert("Couldn't save: " + error.message); return; }
-    alert("Guest preview updated.");
-    view = "home"; render();
-  });
-}
-
 function openNewModuleNotifyModal(title){
   openModal(`
     <h3>Module created</h3>
@@ -7264,7 +6865,7 @@ function renderSettings(){
         })()}
       </div>
 
-      ${(!isAdmin() && !guestMode) ? `
+      ${!isAdmin() ? `
       <div class="editor-section">
         <div class="editor-section-head"><h3>Admin access</h3></div>
         <p style="color:var(--text-dim);font-size:13px;margin:0 0 12px;">If you need admin access — for content editing, team management, etc. — you can request it. Any admin can approve or deny it from their Notifications.</p>
@@ -7400,7 +7001,6 @@ function currentActiveRefDepartment(){
 }
 
 async function loadReference(){
-  if(guestMode) return;
   const { data } = await supabase.from("reference_pages").select("*").order("sort_order");
   REFERENCE_PAGES = data || [];
   if(!REFERENCE_PAGES.find(p=>p.id===currentRefId)) currentRefId = null;
@@ -7414,7 +7014,7 @@ async function openReference(){
   }
   view = "reference"; render();
 }
-function topLevelPages(){ return REFERENCE_PAGES.filter(p=>!p.parent_id && (guestMode || p.department===currentActiveRefDepartment())).sort((a,b)=>a.sort_order-b.sort_order); }
+function topLevelPages(){ return REFERENCE_PAGES.filter(p=>!p.parent_id && p.department===currentActiveRefDepartment()).sort((a,b)=>a.sort_order-b.sort_order); }
 function childPages(parentId){ return REFERENCE_PAGES.filter(p=>p.parent_id===parentId).sort((a,b)=>a.sort_order-b.sort_order); }
 
 function renderReference(){
@@ -7476,7 +7076,7 @@ function renderReference(){
       </div>`;
   }
 
-  const refDeptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
+  const refDeptTabsHtml = (myDepartments().length>1) ? `<div class="dept-tabs">
       ${renderDeptTabsHtml(currentActiveRefDepartment(), 'ref-dept')}
     </div>` : "";
 
@@ -7681,7 +7281,6 @@ function currentActiveNotesDepartment(){
 }
 
 async function loadPersonalNotes(){
-  if(guestMode) return;
   const { data } = await supabase.from("personal_notes").select("*").eq("user_id", session.user.id).order("sort_order");
   PERSONAL_NOTES = data || [];
   if(!PERSONAL_NOTES.find(n=>n.id===currentNoteId)) currentNoteId = null;
@@ -7694,7 +7293,7 @@ async function openNotes(){
   }
   view = "notes"; render();
 }
-function topLevelNotes(){ return PERSONAL_NOTES.filter(n=>!n.parent_id && (guestMode || n.department===currentActiveNotesDepartment())).sort((a,b)=>a.sort_order-b.sort_order); }
+function topLevelNotes(){ return PERSONAL_NOTES.filter(n=>!n.parent_id && n.department===currentActiveNotesDepartment()).sort((a,b)=>a.sort_order-b.sort_order); }
 function childNotes(parentId){ return PERSONAL_NOTES.filter(n=>n.parent_id===parentId).sort((a,b)=>a.sort_order-b.sort_order); }
 
 function renderNotes(){
@@ -7743,7 +7342,7 @@ function renderNotes(){
       </div>`;
   }
 
-  const notesDeptTabsHtml = (!guestMode && myDepartments().length>1) ? `<div class="dept-tabs">
+  const notesDeptTabsHtml = (myDepartments().length>1) ? `<div class="dept-tabs">
       ${renderDeptTabsHtml(currentActiveNotesDepartment(), 'notes-dept')}
     </div>` : "";
 
@@ -7931,8 +7530,6 @@ function render(){
   else if(view==="notifications") renderNotifications();
   else if(view==="chat") renderChat();
   else if(view==="notes") renderNotes();
-  else if(view==="guest-editor") renderGuestEditor();
-  else if(view==="guest-features") renderGuestFeatureList();
   else if(view==="quizzes") renderQuizzesList();
   else if(view==="quiz-take") renderQuizTake();
   else if(view==="quiz-result-standalone") renderQuizResultStandalone();
