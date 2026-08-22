@@ -419,7 +419,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r123";
+const BUILD_VERSION = "2026-07-27T00:00Z-r124";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1096,14 +1096,17 @@ async function submitAuth(){
 }
 
 function renderSetPassword(){
+  const isMandatoryChange = profile && profile.must_change_password;
+  const heading = AUTH_LINK_TYPE==='recovery' ? 'Reset your password' : isMandatoryChange ? 'Set a new password' : "You're almost in";
+  const sub = AUTH_LINK_TYPE==='recovery' ? 'Choose a new password for your account.' : isMandatoryChange ? "Your admin set a temporary password to get you started — choose your own before continuing." : 'Choose a password to finish setting up your account.';
   root.innerHTML = `
     <div class="auth-wrap">
       <div style="text-align:center;margin-bottom:26px;">
         <div class="brand-text"><div class="name">${T('brand.name','COMPORIUM TRAINING MODULES')}</div></div>
       </div>
       <div class="card">
-        <h3 style="margin-top:0;">${AUTH_LINK_TYPE==='recovery' ? 'Reset your password' : "You're almost in"}</h3>
-        <p class="sub">${AUTH_LINK_TYPE==='recovery' ? 'Choose a new password for your account.' : 'Choose a password to finish setting up your account.'}</p>
+        <h3 style="margin-top:0;">${heading}</h3>
+        <p class="sub">${sub}</p>
         ${authError ? `<div class="error-msg">${escapeHtml(authError)}</div>` : ""}
         <div class="field"><label>New password</label><input type="password" id="setpw-1" placeholder="••••••••"></div>
         <div class="field"><label>Confirm password</label><input type="password" id="setpw-2" placeholder="••••••••"></div>
@@ -1129,6 +1132,14 @@ async function submitSetPassword(){
     renderSetPassword();
     return;
   }
+  // Only relevant for the mandatory-change path — profile is already loaded
+  // there (afterLogin ran and returned early before reaching here), unlike
+  // the invite-link path, where this runs before afterLogin/loadProfile has
+  // ever executed at all, so profile would still be null.
+  if(profile && profile.must_change_password){
+    await supabase.from("profiles").update({ must_change_password:false }).eq("id", session.user.id);
+    profile.must_change_password = false;
+  }
   await afterLogin();
 }
 
@@ -1138,6 +1149,15 @@ async function afterLogin(){
   window.loadingBarSuppressed = true;
   view = "loading"; render();
   await loadProfile();
+  if(profile && profile.must_change_password){
+    // An admin set a temporary password for this account — block everything
+    // else until they've chosen their own. Reuses the same screen built for
+    // the invite-link flow, just reached a different way.
+    window.loadingBarSuppressed = false;
+    view = "set-password";
+    render();
+    return;
+  }
   wasFirstLoginThisSession = profile.is_first_login === true;
   if(wasFirstLoginThisSession){
     await supabase.from("profiles").update({ is_first_login:false }).eq("id", session.user.id);
@@ -2032,13 +2052,29 @@ async function openTeamProgress(){
   view = "team"; render();
 }
 
+function generateTempPassword(){
+  // Avoids visually ambiguous characters (0/O, 1/l/I) since this password
+  // has to be manually relayed to someone — verbally, over chat, whatever —
+  // not just copy-pasted by the same person who generated it.
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  let pw = "";
+  for(let i=0;i<10;i++) pw += chars[Math.floor(Math.random()*chars.length)];
+  return pw;
+}
+
 function openAddNewUserModal(){
   const mine = myDepartments();
   openModal(`
     <h3>Add New User</h3>
-    <p class="sub">This sends them an invite email with a link to set their own password — nothing is set here.</p>
+    <p class="sub">Set a temporary password — they'll be required to choose their own the first time they log in.</p>
     <div class="field"><label>Name</label><input type="text" id="newuser-name" placeholder="Jordan Smith"></div>
     <div class="field"><label>Email</label><input type="email" id="newuser-email" placeholder="jordan@company.com"></div>
+    <div class="field"><label>Temporary password</label>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="newuser-password" placeholder="At least 6 characters" style="flex:1;">
+        <button class="btn" id="newuser-generate-pw" type="button" style="flex:none;">Generate</button>
+      </div>
+    </div>
     <div class="field"><label>Role</label>
       <select id="newuser-role">
         <option value="agent">User</option>
@@ -2052,18 +2088,23 @@ function openAddNewUserModal(){
       <p class="hint">Check one or more.</p>
     </div>
     <div class="modal-error" id="newuser-error" style="display:none;"></div>
-    <div class="modal-actions"><button class="btn" id="newuser-cancel">Cancel</button><button class="btn primary" id="newuser-submit">Send Invite</button></div>
+    <div class="modal-actions"><button class="btn" id="newuser-cancel">Cancel</button><button class="btn primary" id="newuser-submit">Create Account</button></div>
   `, true);
   document.getElementById("newuser-cancel").addEventListener("click", closeModal);
+  document.getElementById("newuser-generate-pw").addEventListener("click", ()=>{
+    document.getElementById("newuser-password").value = generateTempPassword();
+  });
   document.getElementById("newuser-submit").addEventListener("click", async ()=>{
     const nameRaw = document.getElementById("newuser-name").value.trim();
     const emailRaw = document.getElementById("newuser-email").value.trim();
+    const passwordRaw = document.getElementById("newuser-password").value;
     const role = document.getElementById("newuser-role").value;
     const errEl = document.getElementById("newuser-error");
     const showErr = (msg)=>{ errEl.textContent = msg; errEl.style.display = "block"; };
     errEl.style.display = "none";
     if(!nameRaw){ showErr("Enter a name."); return; }
     if(!emailRaw || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)){ showErr("Enter a valid email address."); return; }
+    if(!passwordRaw || passwordRaw.length<6){ showErr("Password must be at least 6 characters — use Generate for one."); return; }
     const departments = {};
     let anyDept = false;
     DEPARTMENTS.forEach(d=>{
@@ -2073,19 +2114,35 @@ function openAddNewUserModal(){
     });
     if(!anyDept){ showErr("Check at least one department."); return; }
     const btn = document.getElementById("newuser-submit");
-    btn.disabled = true; btn.textContent = "Sending…";
+    btn.disabled = true; btn.textContent = "Creating…";
     const { data, error } = await supabase.functions.invoke("admin-create-user", {
-      body: { name: nameRaw, email: emailRaw, role, departments, redirectTo: window.location.origin }
+      body: { name: nameRaw, email: emailRaw, password: passwordRaw, role, departments }
     });
     if(error || (data && data.error)){
       showErr((data && data.error) || await extractFunctionError(error));
-      btn.disabled = false; btn.textContent = "Send Invite";
+      btn.disabled = false; btn.textContent = "Create Account";
       return;
     }
-    logEdit("created", "user_account", `${nameRaw} (${emailRaw}) invited as ${role}`);
-    closeModal();
-    showToast(`Invite sent to ${emailRaw}.`);
-    await openTeamProgress(); // refresh the roster so the new account shows up
+    logEdit("created", "user_account", `${nameRaw} (${emailRaw}) created as ${role}`);
+    await openTeamProgress(); // refresh the roster so the new account shows up — do this before swapping the modal content below, not after, so it can't be forgotten if something later fails
+    showNewUserCreatedModal(nameRaw, emailRaw, passwordRaw);
+  });
+}
+
+function showNewUserCreatedModal(name, email, password){
+  openModal(`
+    <h3>Account created</h3>
+    <p class="sub">This password won't be shown again — copy it now and give it to ${escapeHtml(name)} however you'd normally share something like this.</p>
+    <div class="sub-card" style="font-family:var(--mono);font-size:13.5px;">
+      <div style="margin-bottom:8px;"><span style="color:var(--text-faint);">Email:</span> ${escapeHtml(email)}</div>
+      <div><span style="color:var(--text-faint);">Password:</span> <span id="newuser-created-pw" style="color:var(--text);">${escapeHtml(password)}</span></div>
+    </div>
+    <div class="modal-actions"><button class="btn" id="newuser-copy-pw">Copy password</button><button class="btn primary" id="newuser-done">Done</button></div>
+  `, true);
+  document.getElementById("newuser-done").addEventListener("click", closeModal);
+  document.getElementById("newuser-copy-pw").addEventListener("click", async ()=>{
+    try{ await navigator.clipboard.writeText(password); showToast("Password copied."); }
+    catch(e){ /* clipboard access can fail in some contexts — the password is still visible on screen to copy manually */ }
   });
 }
 
