@@ -419,7 +419,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r121";
+const BUILD_VERSION = "2026-07-27T00:00Z-r122";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -539,6 +539,25 @@ supabase.functions.invoke = function(name, opts){
   if(guestMode){ showToast("Preview only — nothing was actually changed."); return Promise.resolve({ data:{ success:true }, error:null }); }
   return _realInvoke(name, opts);
 };
+
+// supabase-js discards the actual response body whenever an edge function
+// returns a non-2xx status, leaving only a generic, useless message on
+// error.message ("Edge Function returned a non-2xx status code") — this is
+// a known, longstanding behavior of the client library, not a bug in any
+// of this app's own edge functions. The real error text those functions
+// send back is only reachable by reading the raw Response object stashed
+// on error.context. Every place that calls an edge function should route
+// its error through this instead of reading error.message directly.
+async function extractFunctionError(error){
+  if(!error) return "Something went wrong.";
+  if(error.context && typeof error.context.json === "function"){
+    try{
+      const body = await error.context.clone().json();
+      if(body && body.error) return body.error;
+    }catch(e){ /* couldn't parse a body — fall through to the generic message below */ }
+  }
+  return error.message || "Something went wrong.";
+}
 
 /* ============================================================
    APP STATE
@@ -2047,7 +2066,7 @@ function openAddNewUserModal(){
       body: { name: nameRaw, email: emailRaw, role, departments, redirectTo: window.location.origin }
     });
     if(error || (data && data.error)){
-      showErr((data && data.error) || error.message || "Something went wrong.");
+      showErr((data && data.error) || await extractFunctionError(error));
       btn.disabled = false; btn.textContent = "Send Invite";
       return;
     }
@@ -4255,7 +4274,7 @@ function openEditPersonModal(userId, name){
       body: { userId, name: newName, email: newEmail || null }
     });
     if(error || (data && data.error)){
-      showErr("Couldn't save: " + ((data && data.error) || error.message));
+      showErr("Couldn't save: " + ((data && data.error) || await extractFunctionError(error)));
       btn.disabled = false; btn.textContent = "Save changes";
       return;
     }
@@ -4273,7 +4292,7 @@ function openEditPersonModal(userId, name){
     const btn = document.getElementById("edit-person-reset-pw");
     btn.disabled = true; btn.textContent = "Resetting…";
     const { data, error } = await supabase.functions.invoke("admin-reset-password", { body: { userId, newPassword: pw1 } });
-    if(error || (data && data.error)){ showErr("Couldn't reset password: " + (data && data.error ? data.error : error.message)); btn.disabled=false; btn.textContent="Reset password"; return; }
+    if(error || (data && data.error)){ showErr("Couldn't reset password: " + ((data && data.error) || await extractFunctionError(error))); btn.disabled=false; btn.textContent="Reset password"; return; }
     showToast("Password updated.");
     btn.disabled = false; btn.textContent = "Reset password";
     document.getElementById("edit-person-pw1").value = "";
@@ -4291,7 +4310,7 @@ function openEditPersonModal(userId, name){
     session = authData.session;
     btn.textContent = "Deleting…";
     const { data, error } = await supabase.functions.invoke("admin-delete-user", { body: { userId } });
-    if(error || (data && data.error)){ showErr("Couldn't delete: " + (data && data.error ? data.error : error.message)); btn.disabled=false; btn.textContent="Delete account permanently"; return; }
+    if(error || (data && data.error)){ showErr("Couldn't delete: " + ((data && data.error) || await extractFunctionError(error))); btn.disabled=false; btn.textContent="Delete account permanently"; return; }
     closeModal();
     alert(`${name}'s account has been deleted.`);
     await openTeamProgress();
@@ -7203,7 +7222,7 @@ function renderSettings(){
     const { data, error } = await supabase.functions.invoke("admin-update-account", {
       body: { userId: session.user.id, name: newName }
     });
-    if(error || (data && data.error)){ status.textContent = "Couldn't save: " + ((data && data.error) || error.message); status.style.color = "var(--red)"; return; }
+    if(error || (data && data.error)){ status.textContent = "Couldn't save: " + ((data && data.error) || await extractFunctionError(error)); status.style.color = "var(--red)"; return; }
     profile.name = newName;
     status.textContent = "Saved."; status.style.color = "var(--green)";
     const pill = document.querySelector(".pill-btn"); if(pill) pill.textContent = newName;
