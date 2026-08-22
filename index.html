@@ -419,7 +419,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r126";
+const BUILD_VERSION = "2026-07-27T00:00Z-r127";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1132,6 +1132,12 @@ async function afterLogin(){
   window.loadingBarSuppressed = true;
   view = "loading"; render();
   await loadProfile();
+  if(profile && profile.theme && THEME_NAMES.includes(profile.theme)){
+    // The account-level preference wins once we actually know who's logged
+    // in — this overrides whatever localStorage/default was showing on the
+    // pre-login screen a moment ago.
+    applyTheme(profile.theme);
+  }
   if(profile && profile.must_change_password){
     // An admin set a temporary password for this account — block everything
     // else until they've chosen their own. Reuses the same screen built for
@@ -7316,7 +7322,16 @@ function renderSettings(){
 
   const themeToggle = document.getElementById("theme-dropdown-toggle");
   if(themeToggle) themeToggle.addEventListener("click", (e)=>{ e.stopPropagation(); themeDropdownOpen = !themeDropdownOpen; renderSettings(); });
-  root.querySelectorAll("[data-theme]").forEach(el=> el.addEventListener("click", ()=>{ applyTheme(el.getAttribute("data-theme")); themeDropdownOpen = false; renderSettings(); }));
+  root.querySelectorAll("[data-theme]").forEach(el=> el.addEventListener("click", ()=>{
+    const t = el.getAttribute("data-theme");
+    applyTheme(t);
+    themeDropdownOpen = false;
+    renderSettings();
+    if(profile){
+      profile.theme = t;
+      silentSave(()=> supabase.from("profiles").update({ theme:t }).eq("id", session.user.id));
+    }
+  }));
 
   // The panel defaults to opening downward, but if there isn't enough room
   // left in the viewport below it, that pushes the bottom themes off screen
