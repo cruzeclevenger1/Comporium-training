@@ -396,23 +396,17 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r130";
+const BUILD_VERSION = "2026-07-27T00:00Z-r141";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
 
-// Must be read BEFORE createClient() below — Supabase's own detectSessionInUrl
-// behavior (on by default) consumes the hash-fragment format as part of
-// establishing the session, so this is the only reliable point to know
-// whether this page load came from an invite/recovery email link versus a
-// normal visit.
-//
-// Two different link formats are possible depending on how this project's
-// email templates are configured: an older hash-fragment style
-// (#access_token=...&type=invite), which Supabase auto-handles on its own,
-// and a newer query-param style (?token_hash=...&type=invite), which does
-// NOT get consumed automatically and needs an explicit verifyOtp() call in
-// init() below to actually turn into a session.
+// Read before createClient() below — Supabase's detectSessionInUrl consumes
+// the hash-fragment format when the client initializes, so this is the only
+// reliable point to detect an invite/recovery link. Two formats exist: the
+// older #access_token=...&type=invite (auto-handled by Supabase) and a
+// newer ?token_hash=...&type=invite (needs an explicit verifyOtp() call in
+// init() below — it doesn't establish a session on its own).
 const _urlParams = new URLSearchParams(window.location.search);
 const TOKEN_HASH = _urlParams.get("token_hash");
 const AUTH_LINK_TYPE = (()=>{
@@ -426,11 +420,9 @@ const AUTH_LINK_TYPE = (()=>{
 
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// A thin, unobtrusive loading bar at the top of the screen that appears
-// automatically during any save/load — every Supabase call (queries,
-// inserts, updates, deletes, edge functions) ultimately goes through
-// fetch(), so hooking in here covers all of it without needing to touch
-// every individual save call site, and without missing any.
+// A thin loading bar that appears automatically during any save/load —
+// every Supabase call ultimately goes through fetch(), so hooking in here
+// covers all of it without touching every individual call site.
 (function(){
   const bar = document.createElement('div');
   bar.id = 'global-loading-bar';
@@ -439,15 +431,11 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   let activeRequests = 0;
   let completeTimer = null;
   window.silentSaveDepth = 0;
-  // Shared across every autosave function in the app (lessons, modules, quiz
-  // questions, reference pages, notes) — each adds its own unique key here
-  // the moment a debounced save is scheduled, and removes it once that save
-  // actually completes. A Set rather than a counter specifically so rapid
-  // repeated keystrokes on the same field (which reschedule the same debounce
-  // over and over) don't inflate the count — only genuinely new pending saves
-  // add a new key. window.onbeforeunload below warns if anything is still in
-  // here when someone tries to leave, so a debounce that hasn't fired yet
-  // can't silently lose work the way navigating away mid-edit otherwise could.
+  // Tracks pending debounced saves across the app (lessons, modules, quiz
+  // questions, reference pages, notes). A Set, not a counter, so repeated
+  // keystrokes rescheduling the same debounce don't inflate it. beforeunload
+  // below warns if anything's still pending, so a debounce that hasn't
+  // fired yet can't silently lose work on navigation.
   window.pendingAutosaveKeys = new Set();
   window.addEventListener("beforeunload", (e)=>{
     if(window.pendingAutosaveKeys.size > 0){
@@ -493,14 +481,10 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   };
 })();
 
-// supabase-js discards the actual response body whenever an edge function
-// returns a non-2xx status, leaving only a generic, useless message on
-// error.message ("Edge Function returned a non-2xx status code") — this is
-// a known, longstanding behavior of the client library, not a bug in any
-// of this app's own edge functions. The real error text those functions
-// send back is only reachable by reading the raw Response object stashed
-// on error.context. Every place that calls an edge function should route
-// its error through this instead of reading error.message directly.
+// supabase-js discards the actual response body on a non-2xx edge function
+// response, leaving only a generic "non-2xx status code" message on
+// error.message — a known client library behavior, not a bug in these edge
+// functions. The real error text is only reachable via error.context.
 async function extractFunctionError(error){
   if(!error) return "Something went wrong.";
   if(error.context && typeof error.context.json === "function"){
@@ -562,17 +546,12 @@ let realtimeChannels = [];
 const root = document.getElementById("app");
 function escapeHtml(s){ const d=document.createElement("div"); d.textContent=s==null?"":s; return d.innerHTML; }
 
-// Sanitizes rich-text HTML (bold/lists/links/images/etc, produced by this
-// app's own editors) before it's ever inserted into the page. Strips
-// anything capable of executing script — script/iframe/object/embed tags,
-// on*="" event handler attributes, javascript: URLs in href/src — while
-// preserving the actual formatting these fields are meant to contain.
-// Applied at RENDER time rather than at save time: content can reach the
-// database through more paths than just this app's own editor UI (direct
-// API calls bypass whatever a UI editor happens to produce), so sanitizing
-// only on the way in would leave existing bad data, and any future write
-// path added later, unprotected. Rendering is the one place every path
-// through this data has to pass through regardless of how it got saved.
+// Sanitizes rich-text HTML before rendering: strips script/iframe/object/
+// embed tags, on*= handlers, and javascript: URLs, while preserving normal
+// formatting. Applied at render time, not save time — content can reach
+// the database through paths other than this app's own editor UI, so
+// sanitizing only on the way in would leave existing and future bad data
+// unprotected.
 const SANITIZE_ALLOWED_TAGS = new Set(['P','BR','B','STRONG','I','EM','U','S','STRIKE','UL','OL','LI','A','SPAN','DIV','IMG','H1','H2','H3','H4','BLOCKQUOTE','TABLE','THEAD','TBODY','TR','TD','TH','HR','SUB','SUP','FONT']);
 const SANITIZE_ALLOWED_ATTRS = new Set(['href','src','style','class','target','rel','colspan','rowspan','alt','width','height','data-interactive-pic-id','contenteditable','data-hotspot-id']);
 function sanitizeHtml(html){
@@ -718,13 +697,9 @@ function canEdit(){ return canEditContent() && editMode; }
    DATA LOADING
    ============================================================ */
 async function loadEverything(){
-  // All eight of these are independent of each other — none reads a result
-  // from any of the others, only session.user.id, which is already
-  // available before this function even runs. Previously split into two
-  // sequential Promise.all batches even though the second batch never
-  // actually needed anything from the first; combining them into one cuts
-  // the wait down to the single slowest query instead of the sum of two
-  // separate round-trip groups.
+  // All independent of each other and of only session.user.id — combined
+  // into one Promise.all so the wait is the single slowest query, not the
+  // sum of separate sequential batches.
   const [modsRes, lessonsRes, quizRes, progRes, dismissalsRes, ipicsRes, ipProgressRes, quizInProgressRes] = await Promise.all([
     supabase.from("modules").select("*").order("sort_order"),
     supabase.from("lessons").select("*").order("sort_order"),
@@ -737,13 +712,12 @@ async function loadEverything(){
   ]);
   const mods = modsRes.data, lessons = lessonsRes.data, quiz = quizRes.data;
   MODULES = (mods||[]).map(m=>({
-    id:m.id, title:m.title, short:m.short, ledColor:m.led_color, department: m.department || 'TS',
+    id:m.id, title:m.title, short:m.short, ledColor:m.led_color, accessTs: !!m.access_ts, accessCs: !!m.access_cs, accessTestboard: !!m.access_testboard,
     popupEnabled: !!m.popup_enabled, popupTitle: m.popup_title||"", popupBody: m.popup_body||"",
     lessons:(lessons||[]).filter(l=>l.module_id===m.id).map(l=>({id:l.id,label:l.label,title:l.title,body:l.body})),
-    // sim_screens (Simulated Navigation screenshots) deliberately excluded here — each one can hold
-    // several full-resolution screenshots, and bulk-loading every module's at login was the single
-    // biggest contributor to slow first-page load. Fetched lazily instead, only when actually needed
-    // (starting that quiz, or opening that module in the editor) — see ensureQuizSimScreens().
+    // sim_screens excluded here — full-resolution screenshots were the
+    // biggest contributor to slow first load. Fetched lazily instead, only
+    // when actually needed — see ensureQuizSimScreens().
     quiz:(quiz||[]).filter(q=>q.module_id===m.id).map(q=>({id:q.id,q:q.question,opts:q.options,correct:q.correct_index,explain:q.explanation,type:q.question_type||'multiple_choice',simScreens:null,endGoal:q.end_goal||'button',finalScreenId:q.final_screen_id||null}))
   }));
 
@@ -816,11 +790,9 @@ function renderAuth(){
 }
 
 
-// Wrap an autosave's Supabase call so the global loading bar skips it —
-// autosave-on-typing already shows its own "Saving…/Saved" text right next
-// to the field, so the global bar firing on every keystroke-triggered save
-// is redundant noise, unlike genuinely unindicated actions (deletes, page
-// loads, explicit button clicks) where the bar is the only feedback.
+// Wraps an autosave call so the global loading bar skips it — autosave
+// already shows its own "Saving…/Saved" text, unlike genuinely unindicated
+// actions (deletes, page loads, button clicks) where the bar is the only feedback.
 async function silentSave(fn){
   window.silentSaveDepth = (window.silentSaveDepth||0) + 1;
   try { return await fn(); }
@@ -829,13 +801,9 @@ async function silentSave(fn){
 
 function promptDepartmentChoice(){
   return new Promise((resolve)=>{
-    // Self-service department selection is no longer possible — every
-    // legitimate account gets its department access set by the admin who
-    // creates it now, and the database itself actively blocks anyone from
-    // granting this to themselves directly. Reaching this screen at all
-    // means either a legacy account from before that change, or someone
-    // trying to self-grant access, which would just fail regardless. There's
-    // nothing to do here but explain that and let them log out.
+    // Self-service department selection no longer exists — admins set this
+    // at account creation, and the database blocks self-granting it. This
+    // screen only appears for legacy accounts or self-grant attempts.
     openModal(`
       <h3>No department access yet</h3>
       <p class="sub">Your account doesn't have access to any department's training content yet. An admin needs to grant this from People — reach out to one to get set up.</p>
@@ -1176,25 +1144,19 @@ async function reorderModuleDrop(draggedId, targetId, pos){
 
 let dashboardShowCompleted = false; // hidden by default; loaded from profile.dashboard_show_completed at login
 let activeDepartment = null; // 'TS' or 'CS' — only meaningful for people with access to both; set on first render
-// AUDIT FIX: every fullscreen overlay (Simulated Navigation player/editor,
-// Interactive Picture config/viewer) is appended directly to document.body,
-// outside #root, so a normal render() never touches it. Each pushes its own
-// removal here when opened, so logout() (or anything else that needs to
-// force-close the app) can clean up whichever one happens to be open,
-// instead of leaving it visually stuck on screen with stale listeners.
+// Fullscreen overlays (Simulated Navigation player/editor, Interactive
+// Picture config/viewer) are appended directly to document.body, outside
+// #root, so render() never touches them. Each pushes its own removal here,
+// so logout() or anything else forcing a close can clean up whichever is open.
 window.activeFullscreenCleanups = [];
 function closeAllFullscreenOverlays(){
   window.activeFullscreenCleanups.forEach(fn=>{ try{ fn(); } catch(e){} });
   window.activeFullscreenCleanups = [];
 }
 
-// Central department registry — the single source of truth for which
-// departments exist. Adding a department here is necessary but not
-// sufficient on its own: pieces that call the helpers below (rather than
-// hardcoding their own TS/CS check) pick it up automatically, but several
-// places in this app hardcode a direct two-way check and need their own
-// explicit update — handled individually elsewhere, this registry doesn't
-// retroactively fix them by itself.
+// Single source of truth for which departments exist. Adding one here
+// isn't sufficient alone — code using the helpers below picks it up
+// automatically, but any hardcoded two-way check elsewhere needs its own update.
 const DEPARTMENTS = [
   { id:'TS', label:'Tech Support', profileField:'can_access_ts', rowField:'canAccessTs', teamField:'accessTs', teamDbField:'access_ts' },
   { id:'CS', label:'Customer Service', profileField:'can_access_cs', rowField:'canAccessCs', teamField:'accessCs', teamDbField:'access_cs' },
@@ -1207,6 +1169,13 @@ function renderDeptTabsHtml(activeDept, dataAttr){
 function teamHasDeptAccess(team, deptId){
   const d = DEPARTMENTS.find(x=>x.id===deptId);
   return d ? !!team[d.teamField] : false;
+}
+// For edit-log labeling only, where a single representative department is
+// enough — the log's own department field is just for filtering by tab,
+// not an authoritative record of everywhere a shared module is visible.
+function primaryDeptOf(obj){
+  const dep = DEPARTMENTS.find(dep=> obj[dep.teamField]);
+  return dep ? dep.id : null;
 }
 function canAccessDeptForRow(row, deptId){
   const d = DEPARTMENTS.find(x=>x.id===deptId);
@@ -1247,7 +1216,7 @@ function renderDashboard(){
   }
   const editOn = canEdit();
   const dept = currentActiveDepartment();
-  const deptModules = MODULES.filter(m=> m.department===dept);
+  const deptModules = MODULES.filter(m=> teamHasDeptAccess(m, dept));
   const visibleModules = dashboardShowCompleted ? deptModules : deptModules.filter(m=> moduleStatus(m.id)!=="mastered");
   const cards = visibleModules.map(m=>{
     const status = moduleStatus(m.id); const s = progressMap[m.id];
@@ -1421,12 +1390,9 @@ function renderLesson(){
 async function startQuiz(mode){
   const m = modById(currentModId);
   const wouldBeTestRun = canEditContent() && editMode;
-  // Already have this exact module's session live in memory (e.g. they went
-  // to recheck a lesson and are now coming straight back) — just resume,
-  // don't touch anything. Skipped for test runs specifically: an editor
-  // actively testing content may have just changed the simulation's screens,
-  // and a stale in-memory session could point at a screen index that no
-  // longer exists — always regenerate fresh in that case instead.
+  // Resume an already-live in-memory session as-is. Skipped for test runs —
+  // an editor may have just changed the simulation's screens, so a stale
+  // session could point at a screen index that no longer exists.
   if(mode !== "missed" && !wouldBeTestRun && quizInProgressModId === currentModId && quizActiveIndices.length){
     view = "quiz"; render();
     return;
@@ -1483,12 +1449,9 @@ async function startQuiz(mode){
   quizAnswers = new Array(quizActiveIndices.length).fill(null);
   quizRevealed = new Array(quizActiveIndices.length).fill(false);
   quizIdx = 0;
-  // Test runs never persist to quiz_in_progress (by design — they're not
-  // real attempts), so this marker must not get set for them either.
-  // Otherwise, leaving edit mode right after a test run and starting a
-  // real attempt would match the in-memory fast-path resume above and
-  // silently restore the test run's already-completed state instead of
-  // generating a genuinely fresh session — exactly what was happening here.
+  // Test runs never persist to quiz_in_progress, so this marker must skip
+  // them too — otherwise a real attempt right after could match the
+  // fast-path resume above and restore the test run's completed state.
   if(!quizIsTestRun) quizInProgressModId = currentModId;
   view = "quiz"; render();
 }
@@ -1629,14 +1592,9 @@ async function finishQuiz(){
 
   quizInProgressModId = null;
   modulesWithResumableQuiz.delete(m.id);
-  // Cancel any pending debounced save from scheduleQuizProgressSave() —
-  // without this, a save queued right as the last question was answered
-  // (a very plausible timing on a short quiz) can fire *after* this delete
-  // runs, silently re-creating the row via upsert with the now-stale,
-  // already-completed state still in it. The next "Retake" would then find
-  // that resurrected row and restore it as an in-progress session, showing
-  // whatever was already answered — including a simulation question
-  // appearing permanently "done" even on a fresh attempt.
+  // Cancel any pending debounced save first — otherwise a save queued right
+  // as the last question was answered could fire after this delete,
+  // resurrecting the row with stale completed state via upsert.
   clearTimeout(quizProgressSaveTimer);
   await supabase.from("quiz_in_progress").delete().eq("user_id", session.user.id).eq("module_id", m.id);
 
@@ -1675,13 +1633,9 @@ function renderResults(){
   }
 
   const s = progressMap[m.id];
-  // Deliberately based on s.lastScore (this specific attempt), not pct(s)
-  // (which reflects the best score ever achieved on this quiz) — the score
-  // number and LED count shown below already use lastScore, so using the
-  // best-ever percentage here for confetti/color/verdict was a real
-  // mismatch: retaking a quiz you'd once gotten 100% on, and failing it
-  // this time, could still show a green "fully registered" verdict and
-  // launch confetti, since the best score never actually changed.
+  // Based on s.lastScore (this attempt), not pct(s) (best-ever score) — a
+  // mismatch there could show a green "fully registered" verdict and
+  // confetti on a failed retake, since the best score never changed.
   const currentPct = s.total ? Math.round((s.lastScore/s.total)*100) : 0;
   if(quizJustFinished){ quizJustFinished = false; if(currentPct===100) launchConfetti(); }
   const leds = Array.from({length:5}).map((_,i)=>{ const lit = i < Math.round((s.lastScore/s.total)*5); const color = currentPct===100?"on-green":currentPct>=60?"on-amber":"on-red"; return `<span class="led ${lit?color:''}"></span>`; }).join("");
@@ -1992,11 +1946,9 @@ function renderTeam(){
     <button class="mini-btn" data-manage-team="${t.id}" style="margin:0 6px 6px 0;">${escapeHtml(t.name)} · ${t.memberIds.length}</button>
   `).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No teams yet.</p>`;
 
-  // AUDIT FIX: previously showed every person regardless of the viewing
-  // admin's own department access — a CS-only admin could see TS reps'
-  // names, roles, module progress, and quiz progress. Scope the base roster
-  // to people who actually have access to the department being viewed
-  // before any of the existing role/team/search filters apply on top.
+  // Scoped to people the viewing admin's own department access covers,
+  // before role/team/search filters apply on top — otherwise a CS-only
+  // admin could see TS reps' names, roles, and progress.
   const deptRows = teamRows.filter(r=> canAccessDeptForRow(r, dept));
   let filteredRows = deptRows;
   if(teamRosterFilter.startsWith("role:")){
@@ -2057,13 +2009,11 @@ function renderTeam(){
   }).join("");
 
   // ---- Module progress rows ----
-  const deptModulesForRoster = MODULES.filter(m=> m.department===dept);
-  // AUDIT FIX: r.overall / r.mastered were computed once at load time across
-  // every module the admin can see, mixing both departments together —
-  // switching tabs changed which module pills showed, but not these
-  // aggregate numbers, so someone could see "100% mastered" on a tab with
-  // zero modules in it. Recompute them fresh here, scoped to only the
-  // modules actually in the active department.
+  const deptModulesForRoster = MODULES.filter(m=> teamHasDeptAccess(m, dept));
+  // Recomputed here, scoped to only the active department's modules —
+  // r.overall/r.mastered were computed once across both departments mixed
+  // together, so switching tabs could still show "100% mastered" on a tab
+  // with zero modules in it.
   function deptOverallFor(r){
     const values = deptModulesForRoster.map(m=> r.perModule[m.id]).filter(v=> v!==undefined);
     return values.length ? Math.round(values.reduce((a,b)=>a+b,0)/values.length) : 0;
@@ -2071,12 +2021,9 @@ function renderTeam(){
   function deptMasteredFor(r){
     return deptModulesForRoster.filter(m=> r.perModule[m.id]===100).length;
   }
-  // Supervisors have full admin-equivalent access and aren't part of the
-  // trainee population Module Progress is meant to track, so they're hidden
-  // by default here — but NOT from the People list above, which should
-  // always show everyone regardless of this toggle. Explicitly filtering to
-  // "Supervisors" means the opposite is obviously wanted, so that case is
-  // exempted from the hide.
+  // Supervisors are hidden from Module Progress by default (not from
+  // People above, which always shows everyone) — filtering explicitly to
+  // "Supervisors" exempts the hide, since that obviously wants them.
   const moduleProgressRows = (!includeSupervisorsInProgress && teamRosterFilter !== 'role:supervisor')
     ? filteredRows.filter(r=> r.role !== 'supervisor')
     : filteredRows;
@@ -3395,11 +3342,9 @@ function renderEditLog(){
 async function loadAllNotifications(){
   const joinCutoff = (profile && profile.created_at) ? profile.created_at : "1970-01-01T00:00:00Z";
   const admin = isAdmin();
-  // None of these seven depend on each other's results — only followUps
-  // below does (it needs rootIds, computed from these). Previously run one
-  // at a time, up to 8 round trips in a row; now a single batch, cutting
-  // the wait to the slowest individual query plus one extra round trip for
-  // followUps, instead of the sum of all of them.
+  // None of these seven depend on each other — only followUps below does
+  // (needs rootIds from these). Batched into one round trip instead of
+  // running sequentially.
   const [
     { data: announcements, error: announceErr },
     { data: dismissals },
@@ -4046,12 +3991,9 @@ function openCoachingModal(targetUserId, targetName, context){
 }
 
 function openEditPersonModal(userId, name){
-  // Autofill prevention, applied consistently to name/email/reset-password
-  // fields: Chrome in particular tends to ignore a plain autocomplete="off"
-  // on fields shaped like a login form, so this combines several techniques
-  // together — the readonly-until-focus trick is the one that actually
-  // holds up against Chrome specifically, the rest cover other browsers
-  // and password managers.
+  // Chrome tends to ignore plain autocomplete="off" on login-shaped fields
+  // — readonly-until-focus is what actually holds up against it, plus
+  // ignore hints for other password managers.
   const noAutofillAttrs = `autocomplete="off" data-lpignore="true" data-1p-ignore readonly onfocus="this.removeAttribute('readonly');"`;
   const noAutofillPwAttrs = `autocomplete="new-password" data-lpignore="true" data-1p-ignore readonly onfocus="this.removeAttribute('readonly');"`;
   openModal(`
@@ -4245,15 +4187,11 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
     overlay.remove();
     quizAnswers[quizIdx] = "failed";
     scheduleQuizProgressSave();
-    // Deliberately just re-rendering the inline quiz view here rather than
-    // trying to advance to the next question directly — quizIdx is a
-    // parameter of this function, which shadows the actual global quizIdx
-    // that renderQuiz()'s own Next/Finish button logic reads and advances.
-    // Incrementing it here would silently touch a local copy about to be
-    // discarded, never the real counter. Re-rendering shows this same
-    // question in its now-failed state (matching how a revealed wrong
-    // multiple-choice answer looks), with that existing, correctly-wired
-    // button available to move forward.
+    // Re-render rather than advance directly — quizIdx here is a parameter
+    // shadowing the real global quizIdx that Next/Finish reads, so
+    // incrementing it would touch a local copy about to be discarded. This
+    // shows the question in its failed state with the existing, correctly-
+    // wired button to move forward.
     render();
   }
 
@@ -4344,15 +4282,9 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
       }
     });
   }
-  // Screenshots are now storage URLs (not base64 embedded directly in the
-  // question data), so the very first time each one displays, the browser
-  // has to actually fetch it over the network — that's the delay after
-  // clicking a zone. Preloading every screen's image up front, before
-  // showing the first one, means by the time someone starts clicking
-  // through, they're all already sitting in the browser's own image cache
-  // — no explicit "unload" step needed afterward either, since letting the
-  // preloaded Image objects go out of scope here is enough for the browser
-  // to garbage-collect them normally once this fullscreen view closes.
+  // Screenshots are storage URLs now, so the first display of each one
+  // needs a network fetch. Preloading every screen up front means they're
+  // all in the browser's cache before anyone starts clicking through.
   overlay.innerHTML = `<div style="color:var(--text-dim);font-family:var(--mono);font-size:13.5px;">Loading simulated navigation…</div>`;
   const preloadUrls = q.simScreens.map(s=> s.image).filter(Boolean);
   Promise.all(preloadUrls.map(url=> new Promise(resolve=>{
@@ -4530,7 +4462,7 @@ function promptModal(title, placeholder, defaultValue){
 function promptSiteLinkModal(){
   return new Promise((resolve)=>{
     const moduleOptionsByDept = {};
-    MODULES.forEach(m=>{ (moduleOptionsByDept[m.department] = moduleOptionsByDept[m.department]||[]).push(m); });
+    MODULES.forEach(m=>{ DEPARTMENTS.forEach(dep=>{ if(teamHasDeptAccess(m, dep.id)) (moduleOptionsByDept[dep.id] = moduleOptionsByDept[dep.id]||[]).push(m); }); });
     const moduleOptionsHtml = Object.keys(moduleOptionsByDept).sort().map(dept=>
       `<optgroup label="${deptLabel(dept)}">${moduleOptionsByDept[dept].map(m=>`<option value="${m.id}">${escapeHtml(m.title)}</option>`).join("")}</optgroup>`
     ).join("");
@@ -4643,11 +4575,9 @@ function promptTableSizeModal(){
   });
 }
 function buildTableHtml(rows, cols){
-  // <br> in each empty cell — some browsers won't let the cursor land in a
-  // genuinely empty <td>, which makes an otherwise-fine table feel broken
-  // to click into. The trailing empty paragraph guarantees there's always
-  // somewhere to keep typing below the table, rather than the cursor
-  // getting stuck with no way out if the table lands at the very end.
+  // <br> per cell — some browsers won't let the cursor land in a truly
+  // empty <td>. Trailing empty paragraph gives somewhere to keep typing
+  // if the table lands at the very end.
   const rowHtml = ()=> `<tr>${Array.from({length:cols}).map(()=>'<td><br></td>').join('')}</tr>`;
   return `<table class="rte-table">${Array.from({length:rows}).map(rowHtml).join('')}</table><p><br></p>`;
 }
@@ -4826,14 +4756,10 @@ function clearFormatting(editorEl){
   // already correctly scoped to the current selection by the browser itself.
   document.execCommand("removeFormat", false, null);
   document.execCommand("unlink", false, null);
-  // Pasted content (Word, Google Docs, other browser tabs, etc.) or a stray
-  // leftover from the color tools often carries inline style/color
-  // attributes that removeFormat doesn't touch. Extracting just the
-  // (possibly re-selected, post-removeFormat) selection into a detached
-  // container to clean up — same pattern used by the font-size tool —
-  // rather than querying the whole editor, which would strip formatting
-  // from unrelated content elsewhere in the same lesson that was never
-  // selected at all.
+  // Pasted content often carries inline style/color attributes removeFormat
+  // doesn't touch. Extracting just the selection into a detached container
+  // to clean up, rather than the whole editor, which would strip
+  // formatting from unrelated content elsewhere in the lesson.
   if(!sel.rangeCount) return;
   const range = sel.getRangeAt(0);
   if(range.collapsed) return;
@@ -5037,27 +4963,19 @@ function wireRichEditor(id){
   });
   const sizeInput = toolbar.querySelector('input[data-cmd="fontSizeNum"]');
   if(sizeInput){
-    // Deliberately not using execCommand("fontSize", ...) at all this time —
-    // that command wraps the selection in a legacy <font size> tag, and
-    // proved unreliable in practice for cleanly replacing an already-sized
-    // selection (nested/nesting-adjacent nesting quirks). This instead
-    // manually extracts the selected content, strips any font-size styling
-    // already inside it (so re-applying can't nest or conflict with itself),
-    // and wraps the whole thing in exactly one clean span with the exact
-    // pixel value requested — full control, no reliance on a specific
-    // browser's legacy-command behavior.
+    // Not using execCommand("fontSize") — it wraps selections in a legacy
+    // <font size> tag and was unreliable for cleanly replacing an
+    // already-sized selection. This manually strips existing font-size
+    // styling from the selection and wraps it in one clean span instead.
     sizeInput.addEventListener("mousedown", (e)=>{ e.stopPropagation(); saveCurrentRange(); });
     sizeInput.addEventListener("change", ()=>{
       let px = parseInt(sizeInput.value);
       if(!px || px<8) px = 8;
       if(px>96) px = 96;
-      // preventScroll — refocusing here (needed since the number input just
-      // had real focus, unlike other toolbar buttons which use
-      // mousedown+preventDefault to never let focus leave the editor at
-      // all) would otherwise make the browser default the cursor to the
-      // very start of the content and scroll that into view, before
-      // restoreRange() below even runs to fix the actual position. Skipping
-      // that default scroll entirely avoids the jump.
+      // preventScroll — the number input had real focus (unlike other
+      // toolbar buttons, which use mousedown+preventDefault to keep focus
+      // in the editor), so a normal focus() would jump the cursor to the
+      // start and scroll there before restoreRange() below fixes it.
       editorEl.focus({ preventScroll: true });
       restoreRange();
       const sel = window.getSelection();
@@ -5095,14 +5013,9 @@ function wireRichEditor(id){
         sel.addRange(newRange);
       }
       editorEl.dispatchEvent(new Event("input", { bubbles:true }));
-      // Set last, deliberately — editorEl.focus() above synchronously fires
-      // the editor's own "focus" listener, which calls updateToolbarState()
-      // immediately, before restoreRange() or the actual resize even runs.
-      // At that moment the selection is still stale, so that premature sync
-      // reads the wrong size and would otherwise silently overwrite this
-      // input's displayed value back to the old number right after applying
-      // a change — this final assignment guarantees it shows what was
-      // actually just applied, regardless of what happened in between.
+      // Set last, deliberately — editorEl.focus() above fires the editor's
+      // focus listener synchronously, which reads the still-stale selection
+      // and would otherwise overwrite this back to the old value.
       sizeInput.value = px;
     });
   }
@@ -5130,11 +5043,9 @@ function wireRichEditor(id){
   editorEl.addEventListener("paste", async (e)=>{
     const cd = e.clipboardData || window.clipboardData;
     const items = cd.items;
-    // Some browsers attach a flattened image snapshot alongside real HTML when you
-    // copy a mixed selection (text + images) from a page or document. If we only
-    // checked for an image item, we'd wrongly treat the WHOLE paste as "just an
-    // image" and silently discard all the actual text and other pictures. Only take
-    // the single-image fast path when there's genuinely no HTML riding along with it.
+    // Some browsers attach a flattened image snapshot alongside real HTML
+    // on a mixed paste — checking for an image item alone would wrongly
+    // treat the whole paste as "just an image" and discard the text.
     const hasHtml = Array.from(items).some(it => it.type === "text/html");
     if(!hasHtml){
       for(const item of items){
@@ -5161,13 +5072,10 @@ function wireRichEditor(id){
   attachImageResizeHandles(editorEl);
 }
 
-// A small persistent toolbar appears directly above whichever table the
-// cursor is currently in, rather than a floating tooltip that has to track
-// scroll position — simpler and more robust inside a hand-rolled
-// contenteditable editor. Operates directly on the DOM (this isn't backed
-// by execCommand, since there's no native table-editing command), then
-// dispatches a synthetic input event afterward so the existing debounced
-// autosave picks up the change exactly like any other edit would.
+// A small toolbar sits above whichever table the cursor is in, rather than
+// a floating tooltip tracking scroll. Operates directly on the DOM (no
+// native table-editing execCommand exists), then dispatches a synthetic
+// input event so the existing autosave picks it up like any other edit.
 function attachTableControls(editorEl){
   let toolbarEl = null;
   let activeCell = null;
@@ -5257,12 +5165,9 @@ function attachTableControls(editorEl){
   });
 }
 
-// Column handles hang off the first row's cells only — setting a column's
-// width via any single row's cell is enough to size the whole column, since
-// browsers align column widths across all rows in a table automatically.
-// Row handles hang off each row's first cell for the same reason on the
-// other axis. Re-run after every insert/delete since new cells need their
-// own handles too.
+// Column handles hang off the first row only (browsers align column widths
+// across all rows automatically); row handles off each row's first cell.
+// Re-run after every insert/delete since new cells need their own handles.
 function attachTableResizeHandles(editorEl){
   editorEl.querySelectorAll(".rte-table").forEach(table=>{
     const rows = Array.from(table.rows);
@@ -5349,16 +5254,10 @@ function getCleanEditorHtml(editorEl){
   if(!editorEl) return "";
   const clone = editorEl.cloneNode(true);
   clone.querySelectorAll(".rte-resize-handle, .rte-img-delete, .rte-table-toolbar, .rte-col-resize-handle, .rte-row-resize-handle").forEach(el=> el.remove());
-  // Leftover invisible font-size placeholders — see the font-size tool's
-  // collapsed-cursor path, which inserts a zero-width space to carry a new
-  // size forward for whatever gets typed next. If someone clicks away
-  // without ever typing there, this can be left behind: empty to the eye,
-  // but still a real inline element with its own font-size, which was
-  // quietly inflating that line's height even though nothing visibly
-  // changed. Spans that are ONLY this placeholder get removed outright;
-  // any stray copies of the character that ended up mixed into real
-  // typed text (rather than sitting alone) get stripped too, since the
-  // character itself was never meant to be real content either way.
+  // Cleans up leftover zero-width-space placeholders from the font-size
+  // tool's collapsed-cursor path — invisible but real elements that were
+  // quietly inflating line height. Empty spans containing only the
+  // character get removed; stray copies mixed into real text get stripped.
   clone.querySelectorAll("span").forEach(el=>{
     if(el.children.length===0 && el.textContent==="\u200b") el.remove();
   });
@@ -5417,18 +5316,14 @@ function attachImageResizeHandles(editorEl){
     }
   });
 }
-// The wrapper itself is draggable="true" (so the picture can be dragged to a new
-// spot in the text), but that same setting can hijack a mousedown-drag gesture
-// that started on the resize handle or delete button, turning it into a native
-// drag instead of our custom resize logic — which is what made resizing feel
-// inconsistent. Block native drag from ever starting on those two controls.
+// The wrapper's draggable="true" (for moving the picture in text) can
+// hijack a mousedown-drag on the resize handle or delete button into a
+// native drag instead of the custom resize logic. Block it on those two.
 document.addEventListener("dragstart", (e)=>{
   if(e.target.closest(".rte-resize-handle") || e.target.closest(".rte-img-delete")) e.preventDefault();
 });
-// Any link anywhere in rendered content (lessons, reference pages, notes,
-// chat, quiz explanations, feedback, etc.) opens in a new tab rather than
-// navigating away from the app — covers links already saved from before
-// this was added too, not just ones created going forward.
+// Any link in rendered content opens in a new tab rather than navigating
+// away — covers links saved before this was added too, not just new ones.
 document.addEventListener("click", (e)=>{
   const link = e.target.closest("a[href]");
   if(!link) return;
@@ -5501,14 +5396,10 @@ document.addEventListener("mousemove", (e)=>{
   const s = scale || 1;
   const x1 = Math.min(startX, e.clientX), x2 = Math.max(startX, e.clientX);
   const y1 = Math.min(startY, e.clientY), y2 = Math.max(startY, e.clientY);
-  // previewEl lives inside the zoomable canvas, which now carries a CSS
-  // transform (scale) — its own left/top/width/height are interpreted in
-  // that parent's local, unscaled coordinate space, then visually scaled
-  // up by the transform when rendered. Dividing by the current scale here
-  // converts the viewport-pixel delta into that local space, so the
-  // preview box actually appears at the size/position it should — without
-  // this, it renders at the wrong size (invisible or huge) whenever
-  // zoomed in at all, exactly when precise placement matters most.
+  // previewEl sits inside a CSS-transform-scaled canvas, so its coordinates
+  // are in that parent's unscaled space. Dividing by the current scale
+  // converts the viewport-pixel delta correctly, or the box renders at the
+  // wrong size whenever zoomed in.
   previewEl.style.left = ((x1 - rect.left) / s) + "px";
   previewEl.style.top = ((y1 - rect.top) / s) + "px";
   previewEl.style.width = ((x2-x1) / s) + "px";
@@ -5732,13 +5623,9 @@ function openInteractivePicConfigFullscreen(ipId){
     saveTimer = setTimeout(async ()=>{ await silentSave(()=> supabase.from("interactive_pictures").update({ hotspots: ip.hotspots }).eq("id", ipId)); }, 500);
   }
 
-  // Zoom capped so the image can never exceed the viewport in either
-  // dimension — same reasoning as the trainee viewer. Since the image can
-  // never overflow, there's genuinely nothing to pan to, which removes the
-  // need for the previous Space-to-pan gating entirely. getBoundingClientRect()
-  // (used below for box-draw coordinate math) automatically accounts for
-  // the scale transform, so the existing drawing logic needs no changes to
-  // keep working correctly zoomed in.
+  // Zoom capped so the image never exceeds the viewport — same as the
+  // trainee viewer, and removes the need for Space-to-pan entirely.
+  // getBoundingClientRect() below already accounts for the scale transform.
   let scale = 1;
   let currentViewport = null, currentCanvas = null, currentImg = null;
 
@@ -5919,14 +5806,9 @@ function normalizeInteractivePicEmbeds(root){
         el.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text-faint);font-family:var(--mono);font-size:12px;">Loading slideshow…</div>`;
         ensureInteractivePicSlides(ipId).then(()=>{
           el.removeAttribute('data-ip-loading');
-          // A full render() here, not just re-hydrating this one embed —
-          // the lesson's Next/Start Quiz button already evaluated whether
-          // every interactive item is complete *before* these slides had
-          // loaded (slides are fetched lazily, same as hotspot images),
-          // and nothing else would ever re-check that gate once they
-          // finish loading. Without this, the button stays stuck on its
-          // original, now-stale answer even though the embed's own badge
-          // updates correctly right next to it.
+          // Full render() needed — the Next/Start Quiz gate was evaluated
+          // before slides (fetched lazily) had loaded, and nothing else
+          // re-checks it once they finish, so the button would stay stuck.
           if(view === "lesson") render(); else normalizeInteractivePicEmbeds(root);
         });
         return;
@@ -5991,7 +5873,13 @@ async function navigateToSiteLink(linkEl){
     const modId = linkEl.getAttribute("data-link-mod");
     const m = modById(modId);
     if(!m){ alert("That module isn't available — it may have been removed, or belongs to a department you don't have access to."); return; }
-    activeDepartment = m.department; // switch tabs to match, so the target module is actually visible
+    if(!teamHasDeptAccess(m, activeDepartment)){
+      // Only switch if the current tab doesn't already show this module —
+      // and pick one the viewer actually has access to, since a shared
+      // module's other department(s) might not be visible to them at all.
+      const targetDept = DEPARTMENTS.find(dep=> teamHasDeptAccess(m, dep.id) && myDepartments().includes(dep.id));
+      if(targetDept) activeDepartment = targetDept.id;
+    }
     currentModId = modId;
     currentLessonIdx = type === "lesson" ? (+linkEl.getAttribute("data-link-lesson") || 0) : 0;
     if(currentLessonIdx >= m.lessons.length) currentLessonIdx = 0; // stale link (that lesson's since been removed) — fall back rather than crash
@@ -6233,20 +6121,9 @@ function insertResizableImage(editorEl, dataUrl){
   });
 }
 function compressImageFile(file, maxDim){
-  // PNG instead of JPEG — lossy JPEG compression is genuinely bad for screenshots
-  // with sharp text edges (the classic "ringing" artifacts that blur text right
-  // where you need it sharpest). PNG is lossless, ideal for UI/text screenshots.
-  // Also raised the max dimension substantially so real screenshots aren't
-  // downscaled at all unless they're unusually large.
-  //
-  // Uploads to Supabase Storage and returns a URL, rather than returning the
-  // image itself as a base64 data URL to be embedded directly in whatever
-  // database column it ends up in. Base64 embedding was inflating the
-  // lessons table alone to ~17MB fetched on every single login — every
-  // image in every lesson downloaded again by everyone, every time, since
-  // it was baked into the same text column as the lesson content itself. A
-  // short URL in that column instead means the actual image bytes only
-  // transfer when that specific image is actually rendered.
+  // PNG (not JPEG) to avoid ringing artifacts on screenshot text. Uploads
+  // to Storage and returns a URL instead of embedding base64 — base64 was
+  // inflating the lessons table to ~17MB fetched on every login.
   maxDim = maxDim || 1800;
   return new Promise((resolve, reject)=>{
     const reader = new FileReader();
@@ -6292,7 +6169,8 @@ async function openEditor(id, openToLessonIdx, openToQuestionIdx){
   const title = await promptModal("New module", "Module title");
   if(!title) return;
   const newId = slugify(title.trim()) || ("module-" + Date.now());
-  const { error } = await supabase.from("modules").insert({ id:newId, title:title.trim(), short:"", led_color:"green", department: currentActiveDepartment(), sort_order: MODULES.length+1 });
+  const activeDept = DEPARTMENTS.find(x=>x.id===currentActiveDepartment());
+  const { error } = await supabase.from("modules").insert({ id:newId, title:title.trim(), short:"", led_color:"green", [activeDept.teamDbField]:true, sort_order: MODULES.length+1 });
   if(error){ alert("Couldn't create module: " + error.message); return; }
   logEdit("created", "module", title.trim(), null, currentActiveDepartment());
   await loadEverything();
@@ -6362,11 +6240,9 @@ function renderEditor(){
       <div class="field"><label>Module title</label><input type="text" id="mod-title" value="${escapeHtml(d.title)}"></div>
       <div class="field"><label>Department</label>
         ${myDepartments().length>1 ? `
-        <select id="mod-department">
-          ${myDepartments().map(id=>`<option value="${id}" ${d.department===id?'selected':''}>${escapeHtml(deptLabel(id))}</option>`).join("")}
-        </select>
-        <p class="hint">Only people with access to this department will ever see this module.</p>
-        ` : `<p style="color:var(--text-dim);font-size:13px;margin:0;">${deptLabel(d.department)} — you only have access to one department, so this can't be changed here.</p>`}
+        ${DEPARTMENTS.filter(dep=>myDepartments().includes(dep.id)).map(dep=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-mod-dept-check="${dep.id}" ${d[dep.teamField]?'checked':''}> ${escapeHtml(dep.label)}</label>`).join("")}
+        <p class="hint">Visible to anyone with access to any checked department.</p>
+        ` : `<p style="color:var(--text-dim);font-size:13px;margin:0;">${deptLabel(myDepartments()[0])} — you only have access to one department, so this can't be changed here.</p>`}
       </div>
       <div class="field"><label>Short description</label><textarea id="mod-short" style="min-height:55px;">${escapeHtml(d.short)}</textarea></div>
       <div class="field">
@@ -6398,7 +6274,7 @@ function wireEditorEvents(){
     clearTimeout(modAutosaveTimer);
     window.pendingAutosaveKeys.add("mod:"+editingExistingId);
     modAutosaveTimer = setTimeout(async ()=>{
-      const { error } = await silentSave(()=> supabase.from("modules").update({ title:d.title, short:d.short, department:d.department, popup_enabled:d.popupEnabled, popup_title:d.popupTitle, popup_body:d.popupBody }).eq("id", editingExistingId));
+      const { error } = await silentSave(()=> supabase.from("modules").update({ title:d.title, short:d.short, access_ts:d.accessTs, access_cs:d.accessCs, access_testboard:d.accessTestboard, popup_enabled:d.popupEnabled, popup_title:d.popupTitle, popup_body:d.popupBody }).eq("id", editingExistingId));
       window.pendingAutosaveKeys.delete("mod:"+editingExistingId);
       const el = document.getElementById("mod-save-status");
       if(el){
@@ -6408,8 +6284,17 @@ function wireEditorEvents(){
     }, 600);
   }
   document.getElementById("mod-title").addEventListener("input", e=>{ d.title=e.target.value; scheduleModAutosave(); });
-  const deptSelectEl = document.getElementById("mod-department");
-  if(deptSelectEl) deptSelectEl.addEventListener("change", e=>{ d.department=e.target.value; scheduleModAutosave(); });
+  root.querySelectorAll("[data-mod-dept-check]").forEach(el=> el.addEventListener("change", (e)=>{
+    const dep = DEPARTMENTS.find(x=>x.id===el.getAttribute("data-mod-dept-check"));
+    if(!dep) return;
+    if(!e.target.checked && [d.accessTs, d.accessCs, d.accessTestboard].filter(Boolean).length<=1){
+      e.target.checked = true; // block leaving zero departments checked, rather than letting a save fail against the database's own at-least-one constraint
+      alert("A module needs at least one department checked.");
+      return;
+    }
+    d[dep.teamField] = e.target.checked;
+    scheduleModAutosave();
+  }));
   document.getElementById("mod-short").addEventListener("input", e=>{ d.short=e.target.value; scheduleModAutosave(); });
   document.getElementById("mod-popup-enabled").addEventListener("change", e=>{ d.popupEnabled=e.target.checked; scheduleModAutosave(); renderEditor(); });
   const popupTitleEl = document.getElementById("mod-popup-title");
@@ -6484,7 +6369,7 @@ function wireEditorEvents(){
     if(!confirm("Delete this lesson?")) return;
     const { error } = await supabase.from("lessons").delete().eq("id", d.lessons[i].id);
     if(error){ alert("Couldn't delete: " + error.message); return; }
-    logEdit("deleted", "lesson", `${d.title} — ${d.lessons[i].title}`, null, d.department);
+    logEdit("deleted", "lesson", `${d.title} — ${d.lessons[i].title}`, null, primaryDeptOf(d));
     d.lessons.splice(i,1);
     if(expandedLessonIdx===i) expandedLessonIdx=null;
     renderEditor();
@@ -6501,7 +6386,7 @@ function wireEditorEvents(){
     const blank = blankLesson();
     const { data, error } = await supabase.from("lessons").insert({ module_id: editingExistingId, sort_order: d.lessons.length, label: blank.label, title: blank.title, body: blank.body }).select().single();
     if(error){ alert("Couldn't add lesson: " + error.message); return; }
-    logEdit("created", "lesson", `${d.title} — ${blank.title}`, null, d.department);
+    logEdit("created", "lesson", `${d.title} — ${blank.title}`, null, primaryDeptOf(d));
     d.lessons.push({ id:data.id, label:data.label, title:data.title, body:data.body });
     expandedLessonIdx = d.lessons.length-1;
     renderEditor();
@@ -6648,7 +6533,7 @@ function wireEditorEvents(){
     if(!confirm("Delete this question?")) return;
     const { error } = await supabase.from("quiz_questions").delete().eq("id", d.quiz[i].id);
     if(error){ alert("Couldn't delete: " + error.message); return; }
-    logEdit("deleted", "module_quiz_question", `${d.title} — ${d.quiz[i].q}`, null, d.department);
+    logEdit("deleted", "module_quiz_question", `${d.title} — ${d.quiz[i].q}`, null, primaryDeptOf(d));
     d.quiz.splice(i,1);
     if(expandedQuestionIdx===i) expandedQuestionIdx=null;
     renderEditor();
@@ -6665,7 +6550,7 @@ function wireEditorEvents(){
     const blank = blankQuestion();
     const { data, error } = await supabase.from("quiz_questions").insert({ module_id: editingExistingId, sort_order: d.quiz.length, question: blank.q, options: blank.opts, correct_index: blank.correct, explanation: blank.explain, question_type: blank.type, sim_screens: blank.simScreens }).select().single();
     if(error){ alert("Couldn't add question: " + error.message); return; }
-    logEdit("created", "module_quiz_question", `${d.title} — ${blank.q}`, null, d.department);
+    logEdit("created", "module_quiz_question", `${d.title} — ${blank.q}`, null, primaryDeptOf(d));
     d.quiz.push({ id:data.id, q:data.question, opts:data.options, correct:data.correct_index, explain:data.explanation, type:data.question_type||'multiple_choice', simScreens:data.sim_screens||[] });
     expandedQuestionIdx = d.quiz.length-1;
     renderEditor();
@@ -6682,7 +6567,7 @@ function wireEditorEvents(){
   document.getElementById("editor-delete").addEventListener("click", async ()=>{
     if(confirm(`Delete "${d.title||'this module'}"? This can't be undone.`)){
       await supabase.from("modules").delete().eq("id", editingExistingId);
-      logEdit("deleted", "module", d.title, null, d.department);
+      logEdit("deleted", "module", d.title, null, primaryDeptOf(d));
       await loadEverything(); view="dashboard"; render();
     }
   });
