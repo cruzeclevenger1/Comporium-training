@@ -396,7 +396,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r145";
+const BUILD_VERSION = "2026-07-27T00:00Z-r147";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1705,14 +1705,22 @@ function computeDisplayRole(perms, actualRole){
 }
 let teamSearchQuery = "";
 let teamModuleFilter = "";
+let teamQuizFilter = "";
 let teamsSectionOpen = { teams:false, people:false, modules:false, quizzes:false };
 let QUIZ_PROGRESS_ROWS = null; // lazy-loaded the first time that section opens
+let quizProgressSentQuizzes = []; // sent quizzes for the active department, sorted most-recently-sent first — populated alongside QUIZ_PROGRESS_ROWS, powers the quiz-focus filter dropdown
 let quizProgressExpandedRows = new Set();
 
 async function loadQuizProgressData(){
   const dept = currentActiveDepartment();
   const { data: quizzesRaw } = await supabase.from("standalone_quizzes").select("*").eq("sent", true);
   const quizzes = (quizzesRaw||[]).filter(q=> rawRowHasDeptAccess(q, dept));
+  quizProgressSentQuizzes = quizzes.slice().sort((a,b)=>{
+    if(!a.sent_at && !b.sent_at) return 0;
+    if(!a.sent_at) return 1;  // unknown send date (sent before sent_at existed) sorts to the bottom
+    if(!b.sent_at) return -1;
+    return new Date(b.sent_at) - new Date(a.sent_at); // most recent first
+  });
   const { data: attempts } = await supabase.from("standalone_quiz_attempts").select("*");
   const { data: recipients } = await supabase.from("standalone_quiz_recipients").select("*");
   const { data: allTeamMembers } = await supabase.from("team_members").select("*");
@@ -2098,6 +2106,7 @@ function renderTeam(){
 
   // ---- Quiz progress rows ----
   let quizRowsHtml = `<p style="color:var(--text-faint);font-size:13px;">Loading…</p>`;
+  const focusQuiz = teamQuizFilter ? quizProgressSentQuizzes.find(q=>q.id===teamQuizFilter) : null;
   if(QUIZ_PROGRESS_ROWS){
     let filteredQuizRows = QUIZ_PROGRESS_ROWS.filter(r=> canAccessDeptForRow(r, dept));
     if(teamRosterFilter.startsWith("role:")){
@@ -2121,11 +2130,22 @@ function renderTeam(){
         const label = pq.needsGrading ? 'Needs grading' : pq.completed ? 'Completed' : 'Not started';
         return `<button class="status-pill ${cls}" ${pq.completed?`data-view-quiz-attempt="${r.id}:${pq.quizId}"`:''} style="${pq.completed?'cursor:pointer;':'cursor:default;'}">${escapeHtml(pq.title)} · ${label}</button>`;
       }).join("");
+      let progressCell, thirdCell;
+      if(focusQuiz){
+        const pq = r.perQuiz.find(x=>x.quizId===focusQuiz.id);
+        const pct = pq && pq.completed ? 100 : 0;
+        const status = !pq ? "Not eligible" : pq.needsGrading ? "Needs grading" : pq.completed ? "Completed" : "Not started";
+        progressCell = `<td style="min-width:160px;"><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="flex:1;"><div style="width:${pct}%"></div></div><span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${pct}%</span></div></td>`;
+        thirdCell = `<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${status}</td>`;
+      } else {
+        progressCell = `<td style="min-width:160px;"><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="flex:1;"><div style="width:${r.pct}%"></div></div><span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${r.pct}%</span></div></td>`;
+        thirdCell = `<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${r.completedCount}/${r.totalCount} completed</td>`;
+      }
       const mainRow = `
         <tr class="team-row-main" data-quiz-team-toggle="${r.id}" style="cursor:pointer;">
           <td>${escapeHtml(r.name)}</td>
-          <td style="min-width:160px;"><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="flex:1;"><div style="width:${r.pct}%"></div></div><span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${r.pct}%</span></div></td>
-          <td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${r.completedCount}/${r.totalCount} completed</td>
+          ${progressCell}
+          ${thirdCell}
           <td style="text-align:center;color:var(--text-faint);">${expanded?'▾':'▸'}</td>
         </tr>`;
       const detailRow = expanded ? `
@@ -2229,6 +2249,10 @@ function renderTeam(){
               <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
               ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
             </select>
+            <select id="quiz-filter" style="width:auto;">
+              <option value="">All quizzes (overall)</option>
+              ${quizProgressSentQuizzes.map(q=>`<option value="${q.id}" ${teamQuizFilter===q.id?'selected':''}>${escapeHtml(q.title)}</option>`).join("")}
+            </select>
             <select id="quiz-sort" style="width:auto;">
               <option value="">Sort: Alphabetical</option>
               <option value="asc" ${teamQuizSort==='asc'?'selected':''}>Least completed first</option>
@@ -2236,7 +2260,7 @@ function renderTeam(){
             </select>
             <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-dim);white-space:nowrap;"><input type="checkbox" id="include-supervisors-quizzes" ${includeSupervisorsInProgress?'checked':''}> Include Supervisors</label>
           </div>
-          <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Completion</th><th></th><th></th></tr></thead><tbody>${quizRowsHtml}</tbody></table></div>
+          <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>${focusQuiz ? escapeHtml(focusQuiz.title) : "Completion"}</th><th>${focusQuiz ? "Status" : ""}</th><th></th></tr></thead><tbody>${quizRowsHtml}</tbody></table></div>
         </div>` : ""}
     </div>` : ""}
 
@@ -2257,13 +2281,14 @@ function renderTeam(){
   document.getElementById("add-new-user-btn")?.addEventListener("click", openAddNewUserModal);
   root.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
   document.getElementById("module-filter")?.addEventListener("change", (e)=>{ teamModuleFilter = e.target.value; render(); });
+  document.getElementById("quiz-filter")?.addEventListener("change", (e)=>{ teamQuizFilter = e.target.value; render(); });
   document.getElementById("module-sort")?.addEventListener("change", (e)=>{ teamModuleSort = e.target.value; render(); });
   document.getElementById("quiz-sort")?.addEventListener("change", (e)=>{ teamQuizSort = e.target.value; render(); });
   document.getElementById("include-supervisors-modules")?.addEventListener("change", (e)=>{ includeSupervisorsInProgress = e.target.checked; render(); });
   document.getElementById("include-supervisors-quizzes")?.addEventListener("change", (e)=>{ includeSupervisorsInProgress = e.target.checked; render(); });
   root.querySelectorAll("[data-team-dept]").forEach(el=> el.addEventListener("click", ()=>{
     activeDepartment = el.getAttribute("data-team-dept");
-    teamRosterFilter = ""; teamModuleFilter = "";
+    teamRosterFilter = ""; teamModuleFilter = ""; teamQuizFilter = "";
     QUIZ_PROGRESS_ROWS = null; // quiz eligibility is department-scoped now, force a fresh load
     render();
   }));
@@ -3128,7 +3153,7 @@ function wireQuizBuilderEvents(){
       if(recErr){ alert("Couldn't send to the people you picked: " + recErr.message); sendBtn.disabled = false; sendBtn.textContent = "Send quiz →"; return; }
     }
 
-    const updateObj = { audience_type:d.audienceType, team_id: d.audienceType==="team"?d.teamId:null, sent:true };
+    const updateObj = { audience_type:d.audienceType, team_id: d.audienceType==="team"?d.teamId:null, sent:true, sent_at:new Date().toISOString() };
     DEPARTMENTS.forEach(dep=>{ updateObj[dep.teamDbField] = !!d[dep.teamField]; });
     const { error } = await supabase.from("standalone_quizzes").update(updateObj).eq("id", d.id);
     if(error){ alert("Couldn't send: " + error.message); sendBtn.disabled = false; sendBtn.textContent = "Send quiz →"; return; }
