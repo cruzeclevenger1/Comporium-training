@@ -396,7 +396,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r141";
+const BUILD_VERSION = "2026-07-27T00:00Z-r143";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -712,7 +712,7 @@ async function loadEverything(){
   ]);
   const mods = modsRes.data, lessons = lessonsRes.data, quiz = quizRes.data;
   MODULES = (mods||[]).map(m=>({
-    id:m.id, title:m.title, short:m.short, ledColor:m.led_color, accessTs: !!m.access_ts, accessCs: !!m.access_cs, accessTestboard: !!m.access_testboard,
+    id:m.id, title:m.title, short:m.short, ledColor:m.led_color, accessTs: !!m.access_ts, accessCs: !!m.access_cs, accessTestboard: !!m.access_testboard, isPublished: !!m.is_published,
     popupEnabled: !!m.popup_enabled, popupTitle: m.popup_title||"", popupBody: m.popup_body||"",
     lessons:(lessons||[]).filter(l=>l.module_id===m.id).map(l=>({id:l.id,label:l.label,title:l.title,body:l.body})),
     // sim_screens excluded here — full-resolution screenshots were the
@@ -1226,17 +1226,22 @@ function renderDashboard(){
       : `<span class="status-pill">Not started</span>`;
     const on = status!=="new"; const mastered = status==="mastered";
     const leds = `<span class="led ${on?'on-green':''}"></span><span class="led ${on?(mastered?'on-green':'on-amber blink'):''}"></span><span class="led ${mastered?'on-green':''}"></span>`;
+    const draftBadge = !m.isPublished ? `<span class="status-pill" style="background:var(--amber-dim);color:var(--amber);border-color:var(--amber);">Draft</span>` : "";
     const tools = editOn ? `<div class="card-tools"><span class="drag-handle" title="Drag to reorder">⠿</span><button class="icon-btn" data-edit="${m.id}" title="Edit module">✎</button><button class="icon-btn danger" data-del="${m.id}" title="Delete module">✕</button></div>` : "";
     return `<div class="mod-card" data-mod="${m.id}" data-mod-drag="${m.id}" draggable="${editOn}">${tools}
       <div class="row-top"><div><h3>${escapeHtml(m.title)}</h3><p class="sub">${escapeHtml(m.short)}</p></div><div class="led-strip">${leds}</div></div>
-      <div class="meta"><span>${m.lessons.length} LESSONS</span><span>${m.quiz.length} QUIZ Q's</span>${pillHtml}</div>
+      <div class="meta"><span>${m.lessons.length} LESSONS</span><span>${m.quiz.length} QUIZ Q's</span>${draftBadge}${pillHtml}</div>
       <div class="progress-bar"><div style="width:${overallPct(m)}%"></div></div></div>`;
   }).join("");
 
   const addCard = canEdit() ? `<div class="add-mod-card" id="add-module">+ ADD MODULE</div>` : "";
-  const totalQ = deptModules.reduce((a,m)=>a+m.quiz.length,0);
-  const doneQ = deptModules.reduce((a,m)=>a+((progressMap[m.id]&&progressMap[m.id].best)||0),0);
-  const modsMastered = deptModules.filter(m=>moduleStatus(m.id)==="mastered").length;
+  // Drafts excluded from these stats — they're not really part of the live
+  // curriculum yet, so counting them would misrepresent progress even for
+  // the editor who can see them.
+  const publishedDeptModules = deptModules.filter(m=>m.isPublished);
+  const totalQ = publishedDeptModules.reduce((a,m)=>a+m.quiz.length,0);
+  const doneQ = publishedDeptModules.reduce((a,m)=>a+((progressMap[m.id]&&progressMap[m.id].best)||0),0);
+  const modsMastered = publishedDeptModules.filter(m=>moduleStatus(m.id)==="mastered").length;
   const emptyFilterMsg = (!dashboardShowCompleted && !visibleModules.length && deptModules.length) ? `<p style="color:var(--text-faint);font-size:13.5px;padding:10px 2px;">Everything's mastered — nice work. Tap "Show Completed" above to see them.</p>` : "";
   const deptTabsHtml = (myDepartments().length>1) ? `<div class="dept-tabs">
       ${renderDeptTabsHtml(dept, 'dept')}
@@ -1246,7 +1251,7 @@ function renderDashboard(){
     <section class="hero">
       <div class="eyebrow">${T('dashboard.eyebrow','New Agent Onboarding')}</div>
       <h1>${T('dashboard.h1','Before you take a call, learn to read the box.')}</h1>
-      <div class="panel-row"><div class="stat"><div class="num">${modsMastered}/${deptModules.length}</div><div class="lbl">MODULES MASTERED</div></div>
+      <div class="panel-row"><div class="stat"><div class="num">${modsMastered}/${publishedDeptModules.length}</div><div class="lbl">MODULES MASTERED</div></div>
       <div class="stat"><div class="num">${doneQ}/${totalQ}</div><div class="lbl">BEST-SCORE QUESTIONS CORRECT</div></div></div>
     </section>
     ${deptTabsHtml}
@@ -6244,6 +6249,10 @@ function renderEditor(){
         <p class="hint">Visible to anyone with access to any checked department.</p>
         ` : `<p style="color:var(--text-dim);font-size:13px;margin:0;">${deptLabel(myDepartments()[0])} — you only have access to one department, so this can't be changed here.</p>`}
       </div>
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;"><input type="checkbox" id="mod-published" ${d.isPublished?'checked':''}> Published — visible to everyone with department access</label>
+        <p class="hint">Unchecked, this module is only visible to editors, admins, and supervisors — trainees won't see it at all until you check this.</p>
+      </div>
       <div class="field"><label>Short description</label><textarea id="mod-short" style="min-height:55px;">${escapeHtml(d.short)}</textarea></div>
       <div class="field">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;"><input type="checkbox" id="mod-popup-enabled" ${d.popupEnabled?'checked':''}> Show a popup when someone starts this module</label>
@@ -6274,7 +6283,7 @@ function wireEditorEvents(){
     clearTimeout(modAutosaveTimer);
     window.pendingAutosaveKeys.add("mod:"+editingExistingId);
     modAutosaveTimer = setTimeout(async ()=>{
-      const { error } = await silentSave(()=> supabase.from("modules").update({ title:d.title, short:d.short, access_ts:d.accessTs, access_cs:d.accessCs, access_testboard:d.accessTestboard, popup_enabled:d.popupEnabled, popup_title:d.popupTitle, popup_body:d.popupBody }).eq("id", editingExistingId));
+      const { error } = await silentSave(()=> supabase.from("modules").update({ title:d.title, short:d.short, access_ts:d.accessTs, access_cs:d.accessCs, access_testboard:d.accessTestboard, is_published:d.isPublished, popup_enabled:d.popupEnabled, popup_title:d.popupTitle, popup_body:d.popupBody }).eq("id", editingExistingId));
       window.pendingAutosaveKeys.delete("mod:"+editingExistingId);
       const el = document.getElementById("mod-save-status");
       if(el){
@@ -6296,6 +6305,7 @@ function wireEditorEvents(){
     scheduleModAutosave();
   }));
   document.getElementById("mod-short").addEventListener("input", e=>{ d.short=e.target.value; scheduleModAutosave(); });
+  document.getElementById("mod-published").addEventListener("change", e=>{ d.isPublished=e.target.checked; scheduleModAutosave(); });
   document.getElementById("mod-popup-enabled").addEventListener("change", e=>{ d.popupEnabled=e.target.checked; scheduleModAutosave(); renderEditor(); });
   const popupTitleEl = document.getElementById("mod-popup-title");
   if(popupTitleEl) popupTitleEl.addEventListener("input", e=>{ d.popupTitle=e.target.value; scheduleModAutosave(); });
