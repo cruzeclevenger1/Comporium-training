@@ -396,7 +396,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r143";
+const BUILD_VERSION = "2026-07-27T00:00Z-r144";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -2015,16 +2015,22 @@ function renderTeam(){
 
   // ---- Module progress rows ----
   const deptModulesForRoster = MODULES.filter(m=> teamHasDeptAccess(m, dept));
+  // Drafts excluded from the overall %/mastered stats — trainees can't
+  // access them at all, so counting them would understate real progress.
+  // Still included in deptModulesForRoster itself, since the per-person
+  // expanded view shows draft pills (greyed out) and the module filter
+  // dropdown below should still be able to target one.
+  const publishedModulesForRoster = deptModulesForRoster.filter(m=>m.isPublished);
   // Recomputed here, scoped to only the active department's modules —
   // r.overall/r.mastered were computed once across both departments mixed
   // together, so switching tabs could still show "100% mastered" on a tab
   // with zero modules in it.
   function deptOverallFor(r){
-    const values = deptModulesForRoster.map(m=> r.perModule[m.id]).filter(v=> v!==undefined);
+    const values = publishedModulesForRoster.map(m=> r.perModule[m.id]).filter(v=> v!==undefined);
     return values.length ? Math.round(values.reduce((a,b)=>a+b,0)/values.length) : 0;
   }
   function deptMasteredFor(r){
-    return deptModulesForRoster.filter(m=> r.perModule[m.id]===100).length;
+    return publishedModulesForRoster.filter(m=> r.perModule[m.id]===100).length;
   }
   // Supervisors are hidden from Module Progress by default (not from
   // People above, which always shows everyone) — filtering explicitly to
@@ -2040,6 +2046,9 @@ function renderTeam(){
   const moduleRows = moduleSortedRows.map(r=>{
     const expanded = teamExpandedRows.has(r.id);
     const moduleGrid = deptModulesForRoster.map(m=>{
+      if(!m.isPublished){
+        return `<span class="status-pill" title="Draft — not yet accessible to this person" style="cursor:not-allowed;opacity:.45;background:var(--panel);text-transform:none;letter-spacing:0;font-size:11.5px;">${escapeHtml(m.title)} · Draft</span>`;
+      }
       const pct = r.perModule[m.id];
       const cls = pct===100 ? "done" : pct>0 ? "progress" : "";
       const isSelected = attemptDetailFor && attemptDetailFor.userId===r.id && attemptDetailFor.moduleId===m.id;
@@ -2064,7 +2073,7 @@ function renderTeam(){
             <span style="font-family:var(--mono);font-size:11.5px;color:var(--text-dim);white-space:nowrap;">${deptOverallFor(r)}%</span>
           </div>
         </td>`;
-      thirdCell = `<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${deptMasteredFor(r)}/${deptModulesForRoster.length} (${deptModulesForRoster.length?Math.round((deptMasteredFor(r)/deptModulesForRoster.length)*100):0}%) mastered</td>`;
+      thirdCell = `<td style="font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;">${deptMasteredFor(r)}/${publishedModulesForRoster.length} (${publishedModulesForRoster.length?Math.round((deptMasteredFor(r)/publishedModulesForRoster.length)*100):0}%) mastered</td>`;
     }
 
     const mainRow = `
