@@ -396,7 +396,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-07-27T00:00Z-r144";
+const BUILD_VERSION = "2026-07-27T00:00Z-r145";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -553,7 +553,7 @@ function escapeHtml(s){ const d=document.createElement("div"); d.textContent=s==
 // sanitizing only on the way in would leave existing and future bad data
 // unprotected.
 const SANITIZE_ALLOWED_TAGS = new Set(['P','BR','B','STRONG','I','EM','U','S','STRIKE','UL','OL','LI','A','SPAN','DIV','IMG','H1','H2','H3','H4','BLOCKQUOTE','TABLE','THEAD','TBODY','TR','TD','TH','HR','SUB','SUP','FONT']);
-const SANITIZE_ALLOWED_ATTRS = new Set(['href','src','style','class','target','rel','colspan','rowspan','alt','width','height','data-interactive-pic-id','contenteditable','data-hotspot-id']);
+const SANITIZE_ALLOWED_ATTRS = new Set(['href','src','style','class','target','rel','colspan','rowspan','alt','width','height','data-interactive-pic-id','contenteditable','data-hotspot-id','data-align','draggable','data-link-type','data-link-mod','data-link-lesson','data-link-ref']);
 function sanitizeHtml(html){
   if(!html) return '';
   const doc = new DOMParser().parseFromString(html, 'text/html');
