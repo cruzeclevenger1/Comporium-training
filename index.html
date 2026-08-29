@@ -397,7 +397,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-08-28T00:00Z-r148";
+const BUILD_VERSION = "2026-08-28T01:00Z-r149";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5527,7 +5527,21 @@ function exportTrackerToExcel(person, template, personCells){
   ws['!cols'] = Array.from({length: template.cols}).map(()=>({wch:20}));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Tracker");
-  XLSX.writeFile(wb, `${person.name.replace(/[^a-z0-9]+/gi,'_')}_Tracker.xlsx`);
+  // Built manually (blob + anchor click) rather than XLSX.writeFile — writeFile's
+  // internal download strategy can fall back to a generic blob-UUID filename in
+  // some embedded/sandboxed browser contexts. This gives explicit control over
+  // both the filename and the correct XLSX MIME type.
+  const wbout = XLSX.write(wb, { bookType:'xlsx', type:'array' });
+  const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const filename = `${person.name.replace(/[^a-z0-9]+/gi,'_')}_Tracker.xlsx`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(()=> URL.revokeObjectURL(url), 1000);
 }
 
 async function openMasterTrackerEditor(){
