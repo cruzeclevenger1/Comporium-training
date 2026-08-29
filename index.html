@@ -397,7 +397,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-08-28T01:45Z-r151";
+const BUILD_VERSION = "2026-08-28T02:10Z-r152";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5539,20 +5539,21 @@ function exportTrackerToExcel(person, template, personCells){
   // bookSST forces a proper shared-string table (OOXML type "s") instead of the
   // default inline-as-"str" cells, which desktop Excel tolerates but Excel Online
   // is stricter about — this is the likely cause of intermittent open failures there.
-  const wbout = XLSX.write(wb, { bookType:'xlsx', type:'array', bookSST:true });
-  const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const wbout = XLSX.write(wb, { bookType:'xlsx', type:'base64', bookSST:true });
   const nameParts = person.name.trim().split(/\s+/).map(p=> p.replace(/[^a-zA-Z0-9]+/g, ''));
   const filename = `${nameParts.join('_')}_Training-Tracker.xlsx`;
-  const url = URL.createObjectURL(blob);
+  // data: URI instead of blob: URL — some mobile browsers/in-app WebViews
+  // ignore the download attribute for blob: URLs specifically (they only
+  // reliably honor filenames from a real Content-Disposition header or,
+  // sometimes, a data: URI) even though blob: works fine on desktop.
+  const url = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${wbout}`;
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(()=> URL.revokeObjectURL(url), 1000);
 }
-
 async function openMasterTrackerEditor(){
   await loadTrackerTemplate(true);
   const overlay = document.createElement("div");
