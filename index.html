@@ -397,7 +397,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-08-28T02:10Z-r152";
+const BUILD_VERSION = "2026-08-28T02:40Z-r153";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5511,48 +5511,17 @@ async function saveTrackerTemplate(){
     id:1, rows:TRACKER_TEMPLATE.rows, cols:TRACKER_TEMPLATE.cols, cells:TRACKER_TEMPLATE.cells, updated_at:new Date().toISOString()
   }));
 }
-function exportTrackerToExcel(person, template, personCells){
-  if(typeof XLSX === "undefined"){ alert("Export isn't available right now — try refreshing the page."); return; }
-  const aoa = [];
-  for(let r=0;r<template.rows;r++){
-    const row = [];
-    for(let c=0;c<template.cols;c++){
-      const key = trackerCellKey(r,c);
-      const tcell = template.cells[key] || { value:"", locked:false };
-      // undefined (not "") for blanks — aoa_to_sheet skips creating a cell
-      // entirely for undefined, whereas "" still creates a real (empty)
-      // string cell. Fewer, cleaner cells means less for any given XLSX
-      // reader to trip on.
-      const val = tcell.locked ? (tcell.value||"") : (personCells[key]||"");
-      row.push(val === "" ? undefined : val);
-    }
-    aoa.push(row);
-  }
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = Array.from({length: template.cols}).map(()=>({wch:20}));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Tracker");
-  // Built manually (blob + anchor click) rather than XLSX.writeFile — writeFile's
-  // internal download strategy can fall back to a generic blob-UUID filename in
-  // some embedded/sandboxed browser contexts. This gives explicit control over
-  // both the filename and the correct XLSX MIME type.
-  // bookSST forces a proper shared-string table (OOXML type "s") instead of the
-  // default inline-as-"str" cells, which desktop Excel tolerates but Excel Online
-  // is stricter about — this is the likely cause of intermittent open failures there.
-  const wbout = XLSX.write(wb, { bookType:'xlsx', type:'base64', bookSST:true });
-  const nameParts = person.name.trim().split(/\s+/).map(p=> p.replace(/[^a-zA-Z0-9]+/g, ''));
-  const filename = `${nameParts.join('_')}_Training-Tracker.xlsx`;
-  // data: URI instead of blob: URL — some mobile browsers/in-app WebViews
-  // ignore the download attribute for blob: URLs specifically (they only
-  // reliably honor filenames from a real Content-Disposition header or,
-  // sometimes, a data: URI) even though blob: works fine on desktop.
-  const url = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${wbout}`;
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+async function exportTrackerToExcel(personId){
+  const { data:{ session:activeSession } } = await supabase.auth.getSession();
+  if(!activeSession){ alert("Your session has expired — please log in again."); return; }
+  // A real top-level navigation (not fetch/XHR) is required here — this is what
+  // makes the browser treat the response's Content-Disposition header as an actual
+  // file download, the same way clicking a normal download link on any website
+  // works. That native handling is respected far more reliably across browsers
+  // and mobile/in-app WebViews than a JS-triggered blob/data URI + <a download>,
+  // which several real-world browsers were confirmed to ignore entirely.
+  const url = `${SUPABASE_URL}/functions/v1/export-tracker?user_id=${encodeURIComponent(personId)}&token=${encodeURIComponent(activeSession.access_token)}`;
+  window.location.href = url;
 }
 async function openMasterTrackerEditor(){
   await loadTrackerTemplate(true);
@@ -5737,7 +5706,7 @@ async function openTrackerModal(personId){
     personCells[el.getAttribute("data-tracker-cell")] = e.target.value;
     scheduleSave();
   }));
-  document.getElementById("tracker-export-btn").addEventListener("click", ()=> exportTrackerToExcel(person, t, personCells));
+  document.getElementById("tracker-export-btn").addEventListener("click", ()=> exportTrackerToExcel(personId));
 }
 
 function openSlideshowConfigFullscreen(ipId){
