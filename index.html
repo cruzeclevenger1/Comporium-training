@@ -397,7 +397,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-02T00:00Z-r154";
+const BUILD_VERSION = "2026-09-02T00:20Z-r155";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5667,6 +5667,23 @@ function trackerPersonAOA(data){
 function styleTrackerSheet(ws){
   ws['!cols'] = [{wch:32},{wch:16},{wch:14},{wch:16},{wch:14},{wch:16},{wch:18},{wch:16},{wch:22},{wch:22}];
 }
+// XLSX.writeFile()'s built-in download can lose the filename/extension in
+// some browsers and in-app webviews (the same "download attribute ignored
+// on blob: URIs" issue seen elsewhere in this app) — building the Blob and
+// triggering the download manually is more reliable.
+function triggerXlsxDownload(wb, filename){
+  const wbout = XLSX.write(wb, { bookType:"xlsx", type:"array", bookSST:true });
+  const blob = new Blob([wbout], { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(()=> URL.revokeObjectURL(url), 2000);
+}
 
 async function downloadPersonTracker(personId, personName){
   const btns = document.querySelectorAll(`[data-open-tracker="${personId}"]`);
@@ -5679,7 +5696,7 @@ async function downloadPersonTracker(personId, personName){
     styleTrackerSheet(ws);
     XLSX.utils.book_append_sheet(wb, ws, "Tracker");
     const safeName = (data.profile.name||personName||"trainee").replace(/[^a-z0-9]+/gi,"_");
-    XLSX.writeFile(wb, `Tracker_${safeName}.xlsx`, { bookSST:true });
+    triggerXlsxDownload(wb, `Tracker_${safeName}.xlsx`);
   } catch(err){
     alert("Couldn't build the tracker: " + err.message);
   } finally {
@@ -5720,7 +5737,7 @@ async function downloadFullTeamTracker(){
     });
 
     const stamp = new Date().toISOString().slice(0,10);
-    XLSX.writeFile(wb, `Team_Tracker_${stamp}.xlsx`, { bookSST:true });
+    triggerXlsxDownload(wb, `Team_Tracker_${stamp}.xlsx`);
   } catch(err){
     alert("Couldn't build the team tracker: " + err.message);
   } finally {
