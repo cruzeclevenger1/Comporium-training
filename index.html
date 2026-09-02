@@ -397,7 +397,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-08-28T02:40Z-r153";
+const BUILD_VERSION = "2026-09-02T00:00Z-r154";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -529,6 +529,7 @@ let quizIsTestRun = false; // true when a content editor takes a quiz while in e
 let quizJustFinished = false; // set true right when finishQuiz() transitions to results; consumed once, drives the 100% confetti
 let quizTestRunResult = null; // { lastScore, total } — used to show results for a test run without touching saved progress
 let quizCarriedAnswers = {}; // originalIndex -> answer detail, for missed-only retakes (previously-correct questions, not being retaken)
+let quizAttemptStartedAt = null; // ISO timestamp captured when a real (non-test-run) module quiz attempt begins — recorded on the attempt row for the Tracker export
 
 let draftModule = null; let editingExistingId = null;
 let expandedLessonIdx = null; let expandedQuestionIdx = null;
@@ -675,15 +676,22 @@ function overallPct(m){
   return Math.round((lessonFraction*0.5 + quizFraction*0.5) * 100);
 }
 async function markLessonViewed(m, lessonId){
-  const existing = progressMap[m.id] || { best:0, total:m.quiz.length, lastScore:0, attempts:0, lessonsViewed:[] };
+  const existing = progressMap[m.id] || { best:0, total:m.quiz.length, lastScore:0, attempts:0, lessonsViewed:[], startedAt:null, masteredAt:null };
   if(!existing.lessonsViewed) existing.lessonsViewed = [];
   if(existing.lessonsViewed.includes(lessonId)) return; // already recorded, skip the write
   existing.lessonsViewed = [...existing.lessonsViewed, lessonId];
+  if(!existing.startedAt) existing.startedAt = new Date().toISOString();
+  // No-quiz modules are "mastered" purely by lesson completion — record the
+  // finish date the moment the last lesson gets viewed. Modules with a quiz
+  // get their mastered_at set in finishQuiz() instead, once it's earned.
+  if(!m.quiz.length && !existing.masteredAt && m.lessons.length && existing.lessonsViewed.length >= m.lessons.length){
+    existing.masteredAt = new Date().toISOString();
+  }
   progressMap[m.id] = existing;
   await supabase.from("progress").upsert({
     user_id: session.user.id, module_id: m.id,
     best_score: existing.best, total: m.quiz.length, last_score: existing.lastScore, attempts: existing.attempts,
-    lessons_viewed: existing.lessonsViewed, updated_at: new Date().toISOString()
+    lessons_viewed: existing.lessonsViewed, started_at: existing.startedAt, mastered_at: existing.masteredAt, updated_at: new Date().toISOString()
   }, { onConflict: "user_id,module_id" });
 }
 let editMode = false;
@@ -725,7 +733,7 @@ async function loadEverything(){
   modulesWithResumableQuiz = new Set((quizInProgressRes.data||[]).map(r=>r.module_id));
 
   progressMap = {};
-  (progRes.data||[]).forEach(p=>{ progressMap[p.module_id] = { best:p.best_score, total:p.total, lastScore:p.last_score, attempts:p.attempts, lessonsViewed:p.lessons_viewed||[] }; });
+  (progRes.data||[]).forEach(p=>{ progressMap[p.module_id] = { best:p.best_score, total:p.total, lastScore:p.last_score, attempts:p.attempts, lessonsViewed:p.lessons_viewed||[], startedAt:p.started_at||null, masteredAt:p.mastered_at||null }; });
 
   dismissedModulePopups = new Set((dismissalsRes.data||[]).map(d=>d.module_id));
 
@@ -1048,7 +1056,7 @@ function renderShell(inner){
               <button id="open-announce">📣 Make Announcement</button>
               <button id="open-edit-log">📋 Edit Log</button>
               <button id="open-view-feedback">🗣 View Feedback</button>
-              <button id="open-master-tracker">🗂 Master Tracker</button>
+              <button id="open-master-tracker">⬇ Download Team Tracker</button>
             </div>
           </div>` : (canEditContent() && !isAdmin()) ? `<button class="pill-btn" id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>` : ""}
         <button class="pill-btn" id="logout-btn">Log out</button>
@@ -1097,7 +1105,7 @@ function renderShell(inner){
   const openViewFeedbackBtn = document.getElementById("open-view-feedback");
   if(openViewFeedbackBtn) openViewFeedbackBtn.addEventListener("click", openViewFeedbackModal);
   const openMasterTrackerBtn = document.getElementById("open-master-tracker");
-  if(openMasterTrackerBtn) openMasterTrackerBtn.addEventListener("click", openMasterTrackerEditor);
+  if(openMasterTrackerBtn) openMasterTrackerBtn.addEventListener("click", downloadFullTeamTracker);
   const goTeamBtn = document.getElementById("go-team-btn");
   if(goTeamBtn) goTeamBtn.addEventListener("click", openTeamProgress);
   // Every single page render — however it was reached, including internal calls
@@ -1438,6 +1446,24 @@ async function startQuiz(mode){
 
   quizSimScreenIndex = {};
   quizSimMisclicks = {};
+  if(!quizIsTestRun){
+    // Real attempt starting fresh (not resumed) — this is the timestamp
+    // that ends up on the quiz_attempts row once it's submitted.
+    quizAttemptStartedAt = new Date().toISOString();
+    // Also covers modules with no lessons at all, where a quiz attempt is
+    // the very first interaction — otherwise "Module Started" would stay
+    // N/A forever for those.
+    const existingProg = progressMap[m.id];
+    if(!existingProg || !existingProg.startedAt){
+      const rec = existingProg || { best:0, total:m.quiz.length, lastScore:0, attempts:0, lessonsViewed:[], masteredAt:null };
+      rec.startedAt = quizAttemptStartedAt;
+      progressMap[m.id] = rec;
+      await supabase.from("progress").upsert({
+        user_id: session.user.id, module_id: m.id, best_score: rec.best, total: m.quiz.length, last_score: rec.lastScore,
+        attempts: rec.attempts, lessons_viewed: rec.lessonsViewed||[], started_at: rec.startedAt, mastered_at: rec.masteredAt||null, updated_at: new Date().toISOString()
+      }, { onConflict: "user_id,module_id" });
+    }
+  }
   if(mode === "missed"){
     const { data: attempts } = await supabase.from("quiz_attempts").select("*").eq("user_id", session.user.id).eq("module_id", m.id).order("created_at", { ascending:false }).limit(1);
     const lastAttempt = attempts && attempts[0];
@@ -1611,15 +1637,19 @@ async function finishQuiz(){
   await supabase.from("quiz_in_progress").delete().eq("user_id", session.user.id).eq("module_id", m.id);
 
   const prior = progressMap[m.id];
-  const record = { best: Math.max(correctCount, prior?prior.best:0), total: m.quiz.length, lastScore: correctCount, attempts: (prior?prior.attempts:0)+1, lessonsViewed: prior&&prior.lessonsViewed ? prior.lessonsViewed : [] };
+  const best = Math.max(correctCount, prior?prior.best:0);
+  const startedAt = (prior && prior.startedAt) || quizAttemptStartedAt || new Date().toISOString();
+  const masteredAt = (prior && prior.masteredAt) || (best === m.quiz.length ? new Date().toISOString() : null);
+  const record = { best, total: m.quiz.length, lastScore: correctCount, attempts: (prior?prior.attempts:0)+1, lessonsViewed: prior&&prior.lessonsViewed ? prior.lessonsViewed : [], startedAt, masteredAt };
   progressMap[m.id] = record;
   await supabase.from("progress").upsert({
-    user_id: session.user.id, module_id: m.id, best_score: record.best, total: record.total, last_score: record.lastScore, attempts: record.attempts, lessons_viewed: record.lessonsViewed, updated_at: new Date().toISOString()
+    user_id: session.user.id, module_id: m.id, best_score: record.best, total: record.total, last_score: record.lastScore, attempts: record.attempts, lessons_viewed: record.lessonsViewed, started_at: record.startedAt, mastered_at: record.masteredAt, updated_at: new Date().toISOString()
   }, { onConflict: "user_id,module_id" });
 
   await supabase.from("quiz_attempts").insert({
-    user_id: session.user.id, module_id: m.id, score: correctCount, total: m.quiz.length, answers: answerDetail
+    user_id: session.user.id, module_id: m.id, score: correctCount, total: m.quiz.length, answers: answerDetail, started_at: quizAttemptStartedAt
   });
+  quizAttemptStartedAt = null;
   quizJustFinished = true; view = "results"; render(); window.scrollTo(0,0);
 }
 
@@ -2419,7 +2449,9 @@ function renderTeam(){
   }));
   root.querySelectorAll("[data-open-tracker]").forEach(el=> el.addEventListener("click", (e)=>{
     e.stopPropagation();
-    openTrackerModal(el.getAttribute("data-open-tracker"));
+    const pid = el.getAttribute("data-open-tracker");
+    const person = teamRows.find(r=>r.id===pid);
+    downloadPersonTracker(pid, person ? person.name : "trainee");
   }));
   root.querySelectorAll("[data-reset-attempts]").forEach(el=> el.addEventListener("click", async (e)=>{
     e.stopPropagation();
@@ -2431,7 +2463,7 @@ function renderTeam(){
     el.disabled = true; el.textContent = "Resetting…";
     const { error: delErr } = await supabase.from("quiz_attempts").delete().eq("user_id", userId).eq("module_id", moduleId);
     if(delErr){ alert("Couldn't reset: " + delErr.message); el.disabled = false; el.textContent = "🔄 Reset Attempts"; return; }
-    const { error: updErr } = await supabase.from("progress").update({ best_score:0, last_score:0, attempts:0, updated_at: new Date().toISOString() }).eq("user_id", userId).eq("module_id", moduleId);
+    const { error: updErr } = await supabase.from("progress").update({ best_score:0, last_score:0, attempts:0, mastered_at:null, updated_at: new Date().toISOString() }).eq("user_id", userId).eq("module_id", moduleId);
     if(updErr){ alert("Couldn't reset: " + updErr.message); el.disabled = false; el.textContent = "🔄 Reset Attempts"; return; }
     // Reflect the reset locally rather than re-fetching everything — these
     // are exactly the fields that drive both the module pill's percentage
@@ -2756,7 +2788,7 @@ function renderQuizzesList(){
     }
     currentQuizId = id;
     if(q.myAttempt){ await loadStandaloneQuizzes(); view = "quiz-result-standalone"; render(); }
-    else { quizTakeAnswers = {}; view = "quiz-take"; render(); }
+    else { quizTakeAnswers = {}; standaloneQuizStartedAt[id] = new Date().toISOString(); view = "quiz-take"; render(); }
   }));
   const addBtn2 = document.getElementById("add-quiz");
   if(addBtn2) addBtn2.addEventListener("click", createNewStandaloneQuiz);
@@ -2912,12 +2944,13 @@ async function submitStandaloneQuiz(){
   });
   const submitBtn = document.getElementById("submit-standalone-quiz");
   if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = "Submitting…"; }
-  const { error } = await supabase.from("standalone_quiz_attempts").insert({ quiz_id:q.id, user_id:session.user.id, user_name:profile.name, answers, mc_score:mcScore, mc_total:mcTotal, graded: !hasLongAnswer });
+  const { error } = await supabase.from("standalone_quiz_attempts").insert({ quiz_id:q.id, user_id:session.user.id, user_name:profile.name, answers, mc_score:mcScore, mc_total:mcTotal, graded: !hasLongAnswer, started_at: standaloneQuizStartedAt[q.id] || null });
   if(error){
     alert("Couldn't submit: " + error.message);
     if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = "Submit Quiz"; }
     return;
   }
+  delete standaloneQuizStartedAt[q.id];
   if(hasLongAnswer && q.createdBy){
     await Promise.resolve(supabase.from("messages").insert({ sender_id:session.user.id, sender_name:profile.name, recipient_id:q.createdBy, audience:"user", type:"reply", claimed_by:q.createdBy, related_quiz_id:q.id, related_quiz_user_id:session.user.id, body:`<p>📝 ${escapeHtml(profile.name)} submitted long-answer responses for the quiz "${escapeHtml(q.title)}" — grade it below, then reply to send them feedback.</p>${longAnswerHtml}` })).catch(()=>{});
   }
@@ -3204,6 +3237,7 @@ let quizAlertActive = false; // drives the red/green dot on the Home "Quizzes" c
 let quizListSectionOpen = { pending:true, completed:false, sent:false, sentCompleted:false };
 let quizPageMode = "mine"; // "mine" = quizzes assigned to me, "manage" = quizzes I've created/sent to others
 let currentQuizId = null;
+let standaloneQuizStartedAt = {}; // quizId -> ISO timestamp captured when the trainee opens a standalone quiz, for the Tracker export
 let quizTakeAnswers = {};
 let quizBuilderDraft = null;
 let expandedQuizQuestionIdx = null;
@@ -5494,225 +5528,204 @@ function openHotspotEditModal(ip, hi, onSaved){
 }
 
 /* ============================================================
-   MASTER TRACKER — a single shared grid template (rows x cols).
-   Each cell is either a locked label (same for everyone, edited
-   only here) or a fillable box (blank on the template, filled in
-   individually per person on their own Tracker). Every person's
-   Tracker modal renders this same shape with their own saved
-   values dropped into the fillable cells, and can export the
-   result — labels plus their values — to an .xlsx file.
+   TRACKER — standardized .xlsx export of a trainee's tracked
+   progress (module progress, module quiz attempts, standalone
+   quizzes). This is a straight report of what's in the database
+   — no editable/custom fields — built client-side with SheetJS
+   (already loaded in <head>), so no server round-trip is needed.
+   Dates that weren't tracked before this feature existed show as
+   "N/A"; start/finish dates are recorded going forward from here.
    ============================================================ */
-let TRACKER_TEMPLATE = null;
-let TRACKER_TEMPLATE_LOADED = false;
-function trackerCellKey(r,c){ return r+"-"+c; }
-
-async function loadTrackerTemplate(force){
-  if(TRACKER_TEMPLATE_LOADED && !force) return;
-  const { data } = await supabase.from("tracker_template").select("*").eq("id",1).maybeSingle();
-  TRACKER_TEMPLATE = data ? { rows:data.rows, cols:data.cols, cells:data.cells||{} } : { rows:6, cols:4, cells:{} };
-  TRACKER_TEMPLATE_LOADED = true;
+function fmtTrackerDate(iso){
+  if(!iso) return "N/A";
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return "N/A";
+  return d.toLocaleString(undefined, { year:"numeric", month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
 }
-async function saveTrackerTemplate(){
-  await silentSave(()=> supabase.from("tracker_template").upsert({
-    id:1, rows:TRACKER_TEMPLATE.rows, cols:TRACKER_TEMPLATE.cols, cells:TRACKER_TEMPLATE.cells, updated_at:new Date().toISOString()
-  }));
-}
-async function exportTrackerToExcel(personId){
-  const { data:{ session:activeSession } } = await supabase.auth.getSession();
-  if(!activeSession){ alert("Your session has expired — please log in again."); return; }
-  // A real top-level navigation (not fetch/XHR) is required here — this is what
-  // makes the browser treat the response's Content-Disposition header as an actual
-  // file download, the same way clicking a normal download link on any website
-  // works. That native handling is respected far more reliably across browsers
-  // and mobile/in-app WebViews than a JS-triggered blob/data URI + <a download>,
-  // which several real-world browsers were confirmed to ignore entirely.
-  const url = `${SUPABASE_URL}/functions/v1/export-tracker?user_id=${encodeURIComponent(personId)}&token=${encodeURIComponent(activeSession.access_token)}`;
-  window.location.href = url;
-}
-async function openMasterTrackerEditor(){
-  await loadTrackerTemplate(true);
-  const overlay = document.createElement("div");
-  overlay.id = "master-tracker-overlay";
-  overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f0;display:flex;flex-direction:column;align-items:center;padding:24px;overflow-y:auto;";
-  document.body.appendChild(overlay);
-  window.activeFullscreenCleanups.push(()=> overlay.remove());
-
-  let saveTimer = null;
-  function scheduleSave(){
-    const status = document.getElementById("mt-save-status");
-    if(status){ status.textContent="Saving…"; status.style.color="var(--text-faint)"; }
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(async ()=>{
-      await saveTrackerTemplate();
-      const s = document.getElementById("mt-save-status");
-      if(s){ s.textContent="Saved"; s.style.color="var(--green)"; }
-    }, 500);
+function sanitizeTrackerSheetName(name, used){
+  let base = (name||"Trainee").replace(/[\\\/\?\*\[\]:]/g, " ").trim().slice(0,31) || "Trainee";
+  let candidate = base, n = 2;
+  while(used.has(candidate.toLowerCase())){
+    const suffix = " ("+n+")";
+    candidate = base.slice(0, 31-suffix.length) + suffix;
+    n++;
   }
-
-  function draw(){
-    const t = TRACKER_TEMPLATE;
-    let gridHtml = `<div style="display:inline-block;">`;
-    gridHtml += `<div style="display:flex;">`;
-    for(let c=0;c<t.cols;c++){
-      gridHtml += `<div style="width:150px;flex:none;display:flex;justify-content:center;padding:4px;">
-        <button class="mini-btn danger" data-mt-del-col="${c}" ${t.cols<=1?'disabled':''} title="Delete column">✕ Col</button>
-      </div>`;
-    }
-    gridHtml += `</div>`;
-    for(let r=0;r<t.rows;r++){
-      gridHtml += `<div style="display:flex;align-items:center;">`;
-      for(let c=0;c<t.cols;c++){
-        const key = trackerCellKey(r,c);
-        const cell = t.cells[key] || { value:"", locked:false };
-        if(cell.locked){
-          gridHtml += `<div style="width:150px;height:44px;flex:none;padding:3px;position:relative;">
-            <input type="text" data-mt-cell="${key}" value="${escapeHtml(cell.value)}" placeholder="Label" style="width:100%;height:100%;box-sizing:border-box;background:var(--input-bg);border:1px solid var(--cyan-dim);border-radius:6px;color:var(--text);font-size:12px;padding:4px 22px 4px 6px;font-weight:600;">
-            <button data-mt-unlock="${key}" title="Make fillable" style="position:absolute;top:6px;right:6px;width:16px;height:16px;border:none;border-radius:50%;background:transparent;color:var(--text-faint);font-size:11px;cursor:pointer;">🔓</button>
-          </div>`;
-        } else {
-          gridHtml += `<div data-mt-lock="${key}" style="width:150px;height:44px;flex:none;padding:3px;cursor:pointer;">
-            <div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;border:1px dashed var(--stroke);border-radius:6px;color:var(--text-faint);font-size:11px;font-style:italic;">+ Fillable box</div>
-          </div>`;
-        }
-      }
-      gridHtml += `<button class="mini-btn danger" data-mt-del-row="${r}" ${t.rows<=1?'disabled':''} title="Delete row" style="margin-left:6px;">✕ Row</button>`;
-      gridHtml += `</div>`;
-    }
-    gridHtml += `</div>`;
-
-    overlay.innerHTML = `
-      <div style="width:100%;max-width:1100px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-          <span style="color:var(--text-dim);font-family:var(--mono);font-size:12px;">MASTER TRACKER TEMPLATE</span>
-          <div style="display:flex;align-items:center;gap:12px;">
-            <span id="mt-save-status" style="font-size:11px;color:var(--text-faint);font-family:var(--mono);"></span>
-            <button class="btn primary" id="mt-done">Done</button>
-          </div>
-        </div>
-        <div style="overflow-x:auto;padding-bottom:10px;">${gridHtml}</div>
-        <div style="display:flex;gap:10px;margin-top:14px;">
-          <button class="btn" id="mt-add-row">+ Add row</button>
-          <button class="btn" id="mt-add-col">+ Add column</button>
-        </div>
-        <p class="hint" style="margin-top:14px;">Text-box cells are shared labels everyone sees. Dashed "Fillable" cells are where each person's own Tracker gets filled in individually. Click a dashed box to turn it into a label; click 🔓 on a label to turn it back.</p>
-      </div>`;
-
-    document.getElementById("mt-done").addEventListener("click", ()=>{ overlay.remove(); if(view==="team") render(); });
-    document.getElementById("mt-add-row").addEventListener("click", ()=>{ t.rows+=1; scheduleSave(); draw(); });
-    document.getElementById("mt-add-col").addEventListener("click", ()=>{ t.cols+=1; scheduleSave(); draw(); });
-
-    overlay.querySelectorAll("[data-mt-lock]").forEach(el=> el.addEventListener("click", ()=>{
-      const key = el.getAttribute("data-mt-lock");
-      t.cells[key] = { value:"", locked:true };
-      scheduleSave(); draw();
-      document.querySelector(`[data-mt-cell="${key}"]`)?.focus();
-    }));
-    overlay.querySelectorAll("[data-mt-unlock]").forEach(el=> el.addEventListener("click", (e)=>{
-      e.stopPropagation();
-      delete t.cells[el.getAttribute("data-mt-unlock")];
-      scheduleSave(); draw();
-    }));
-    overlay.querySelectorAll("[data-mt-cell]").forEach(el=> el.addEventListener("input", (e)=>{
-      const key = el.getAttribute("data-mt-cell");
-      if(!t.cells[key]) t.cells[key] = { value:"", locked:true };
-      t.cells[key].value = e.target.value;
-      scheduleSave();
-    }));
-    overlay.querySelectorAll("[data-mt-del-row]").forEach(el=> el.addEventListener("click", ()=>{
-      const r = +el.getAttribute("data-mt-del-row");
-      if(t.rows<=1) return;
-      const newCells = {};
-      Object.keys(t.cells).forEach(k=>{
-        const [rr,cc] = k.split("-").map(Number);
-        if(rr===r) return;
-        newCells[(rr>r?rr-1:rr)+"-"+cc] = t.cells[k];
-      });
-      t.cells = newCells; t.rows -= 1;
-      scheduleSave(); draw();
-    }));
-    overlay.querySelectorAll("[data-mt-del-col]").forEach(el=> el.addEventListener("click", ()=>{
-      const c = +el.getAttribute("data-mt-del-col");
-      if(t.cols<=1) return;
-      const newCells = {};
-      Object.keys(t.cells).forEach(k=>{
-        const [rr,cc] = k.split("-").map(Number);
-        if(cc===c) return;
-        newCells[rr+"-"+(cc>c?cc-1:cc)] = t.cells[k];
-      });
-      t.cells = newCells; t.cols -= 1;
-      scheduleSave(); draw();
-    }));
-  }
-  draw();
+  used.add(candidate.toLowerCase());
+  return candidate;
 }
 
-async function openTrackerModal(personId){
-  const person = teamRows.find(r=>r.id===personId);
-  if(!person) return;
-  await loadTrackerTemplate();
-  const { data: existing } = await supabase.from("person_trackers").select("*").eq("user_id", personId).maybeSingle();
-  let personCells = (existing && existing.cells) || {};
+// Pulls everything the tracker needs for one or more people in a handful of
+// bulk queries (not one round-trip per person), then shapes it per-person.
+async function fetchTrackerData(personIds){
+  const [profRes, progRes, quizAttRes, standaloneQRes, standaloneAttRes, recipRes, teamMemRes] = await Promise.all([
+    supabase.from("profiles").select("*").in("id", personIds),
+    supabase.from("progress").select("*").in("user_id", personIds),
+    supabase.from("quiz_attempts").select("*").in("user_id", personIds).order("created_at", { ascending:true }),
+    supabase.from("standalone_quizzes").select("*").eq("sent", true),
+    supabase.from("standalone_quiz_attempts").select("*").in("user_id", personIds),
+    supabase.from("standalone_quiz_recipients").select("*"),
+    supabase.from("team_members").select("*")
+  ]);
+  const profiles = profRes.data || [];
+  const progressRows = progRes.data || [];
+  const quizAttempts = quizAttRes.data || [];
+  const standaloneQuizzes = standaloneQRes.data || [];
+  const standaloneAttempts = standaloneAttRes.data || [];
+  const recipients = recipRes.data || [];
+  const teamMembers = teamMemRes.data || [];
 
-  const overlay = document.createElement("div");
-  overlay.id = "tracker-overlay";
-  overlay.style.cssText = "position:fixed;inset:0;z-index:700;background:#000000f0;display:flex;flex-direction:column;align-items:center;padding:24px;overflow-y:auto;";
-  document.body.appendChild(overlay);
-  window.activeFullscreenCleanups.push(()=> overlay.remove());
+  const result = {};
+  personIds.forEach(pid=>{
+    const profile = profiles.find(p=>p.id===pid);
+    if(!profile) return;
 
-  let saveTimer = null;
-  function scheduleSave(){
-    const status = document.getElementById("tracker-save-status");
-    if(status){ status.textContent="Saving…"; status.style.color="var(--text-faint)"; }
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(async ()=>{
-      await silentSave(()=> supabase.from("person_trackers").upsert({ user_id:personId, cells:personCells, updated_at:new Date().toISOString() }));
-      const s = document.getElementById("tracker-save-status");
-      if(s){ s.textContent="Saved"; s.style.color="var(--green)"; }
-    }, 500);
-  }
-
-  const t = TRACKER_TEMPLATE;
-  let gridHtml = `<div style="display:inline-block;">`;
-  for(let r=0;r<t.rows;r++){
-    gridHtml += `<div style="display:flex;">`;
-    for(let c=0;c<t.cols;c++){
-      const key = trackerCellKey(r,c);
-      const tcell = t.cells[key] || { value:"", locked:false };
-      if(tcell.locked){
-        gridHtml += `<div style="width:150px;height:44px;flex:none;padding:3px;display:flex;align-items:center;padding-left:9px;background:var(--input-bg);border:1px solid var(--stroke);border-radius:6px;margin:3px;color:var(--text);font-size:12.5px;font-weight:600;">${escapeHtml(tcell.value)||'&nbsp;'}</div>`;
+    const moduleRows = MODULES.map(m=>{
+      const pr = progressRows.find(r=>r.user_id===pid && r.module_id===m.id);
+      const totalLessons = m.lessons.length;
+      const viewedCount = pr && pr.lessons_viewed ? pr.lessons_viewed.length : 0;
+      const hasQuiz = !!m.quiz.length;
+      let status;
+      if(hasQuiz){
+        if(!pr) status = "Not started";
+        else if(pr.best_score === m.quiz.length) status = "Mastered";
+        else if(pr.attempts) status = "Attempted";
+        else status = "In progress";
       } else {
-        const val = personCells[key] || "";
-        gridHtml += `<div style="width:150px;height:44px;flex:none;padding:3px;">
-          <input type="text" data-tracker-cell="${key}" value="${escapeHtml(val)}" style="width:100%;height:100%;box-sizing:border-box;background:var(--panel);border:1px solid var(--stroke);border-radius:6px;color:var(--text);font-size:12.5px;padding:4px 8px;">
-        </div>`;
+        if(totalLessons && viewedCount >= totalLessons) status = "Mastered";
+        else if(viewedCount > 0) status = "In progress";
+        else status = "Not started";
       }
-    }
-    gridHtml += `</div>`;
-  }
-  gridHtml += `</div>`;
+      const lessonFraction = totalLessons ? Math.min(viewedCount/totalLessons, 1) : 0;
+      const quizFraction = hasQuiz ? (pr ? (pr.best_score||0)/m.quiz.length : 0) : 0;
+      const overallPct = hasQuiz ? Math.round((lessonFraction*0.5 + quizFraction*0.5) * 100) : Math.round(lessonFraction*100);
+      return {
+        title: m.title, status, overallPct,
+        lessonsViewed: viewedCount, totalLessons,
+        quizBest: hasQuiz ? (pr ? (pr.best_score||0) : 0) : "N/A",
+        quizTotal: hasQuiz ? m.quiz.length : "N/A",
+        quizAttempts: pr ? (pr.attempts||0) : 0,
+        started: fmtTrackerDate(pr && pr.started_at),
+        finished: fmtTrackerDate(pr && pr.mastered_at)
+      };
+    });
 
-  overlay.innerHTML = `
-    <div style="width:100%;max-width:900px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <span style="color:var(--text-dim);font-family:var(--mono);font-size:12px;">TRACKER · ${escapeHtml(person.name)}</span>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span id="tracker-save-status" style="font-size:11px;color:var(--text-faint);font-family:var(--mono);"></span>
-          <button class="btn" id="tracker-close-x" style="font-size:16px;padding:4px 12px;">✕</button>
-        </div>
-      </div>
-      <div style="overflow-x:auto;padding-bottom:6px;">${gridHtml}</div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:24px;padding-top:16px;border-top:1px solid var(--stroke);">
-        <button class="btn" id="tracker-export-btn">⬇ Export</button>
-        <button class="btn primary" id="tracker-done-btn">Done</button>
-      </div>
-    </div>`;
-  document.getElementById("tracker-close-x").addEventListener("click", ()=> overlay.remove());
-  document.getElementById("tracker-done-btn").addEventListener("click", ()=> overlay.remove());
-  overlay.querySelectorAll("[data-tracker-cell]").forEach(el=> el.addEventListener("input", (e)=>{
-    personCells[el.getAttribute("data-tracker-cell")] = e.target.value;
-    scheduleSave();
-  }));
-  document.getElementById("tracker-export-btn").addEventListener("click", ()=> exportTrackerToExcel(personId));
+    const attemptCounter = {};
+    const quizAttemptRows = quizAttempts.filter(a=>a.user_id===pid).map(a=>{
+      attemptCounter[a.module_id] = (attemptCounter[a.module_id]||0) + 1;
+      const m = modById(a.module_id);
+      return {
+        module: m ? m.title : "(deleted module)",
+        attemptNum: attemptCounter[a.module_id],
+        score: a.score, total: a.total,
+        pct: a.total ? Math.round((a.score/a.total)*100) : 0,
+        started: fmtTrackerDate(a.started_at),
+        submitted: fmtTrackerDate(a.created_at)
+      };
+    });
+
+    const eligible = standaloneQuizzes.filter(q=>{
+      if(q.audience_type==="everyone") return true;
+      if(q.audience_type==="team") return teamMembers.some(tm=>tm.team_id===q.team_id && tm.user_id===pid);
+      if(q.audience_type==="specific") return recipients.some(r=>r.quiz_id===q.id && r.user_id===pid);
+      return false;
+    });
+    const standaloneRows = eligible.map(q=>{
+      const att = standaloneAttempts.find(a=>a.quiz_id===q.id && a.user_id===pid);
+      const status = !att ? "Not started" : (att.graded ? "Completed" : "Needs grading");
+      return {
+        title: q.title, status,
+        score: att ? (att.mc_score||0) : "N/A",
+        total: att ? (att.mc_total||0) : "N/A",
+        started: fmtTrackerDate(att && att.started_at),
+        submitted: fmtTrackerDate(att && att.created_at)
+      };
+    });
+
+    const mastered = moduleRows.filter(r=>r.status==="Mastered").length;
+    result[pid] = { profile, moduleRows, quizAttemptRows, standaloneRows, mastered };
+  });
+  return result;
+}
+
+function trackerPersonAOA(data){
+  const rows = [];
+  rows.push(["MODULE PROGRESS"]);
+  rows.push(["Module","Status","Overall %","Lessons Viewed","Total Lessons","Quiz Best Score","Quiz Total Questions","Quiz Attempts Used","Module Started","Module Finished"]);
+  data.moduleRows.forEach(r=> rows.push([r.title, r.status, r.overallPct, r.lessonsViewed, r.totalLessons, r.quizBest, r.quizTotal, r.quizAttempts, r.started, r.finished]));
+  rows.push([]);
+  rows.push(["MODULE QUIZ ATTEMPTS"]);
+  rows.push(["Module","Attempt #","Score","Total","Percent","Started","Submitted"]);
+  if(data.quizAttemptRows.length) data.quizAttemptRows.forEach(r=> rows.push([r.module, r.attemptNum, r.score, r.total, r.pct+"%", r.started, r.submitted]));
+  else rows.push(["No quiz attempts recorded."]);
+  rows.push([]);
+  rows.push(["STANDALONE QUIZZES"]);
+  rows.push(["Quiz","Status","Score","Total","Started","Submitted"]);
+  if(data.standaloneRows.length) data.standaloneRows.forEach(r=> rows.push([r.title, r.status, r.score, r.total, r.started, r.submitted]));
+  else rows.push(["No standalone quizzes assigned."]);
+  return rows;
+}
+function styleTrackerSheet(ws){
+  ws['!cols'] = [{wch:32},{wch:16},{wch:14},{wch:16},{wch:14},{wch:16},{wch:18},{wch:16},{wch:22},{wch:22}];
+}
+
+async function downloadPersonTracker(personId, personName){
+  const btns = document.querySelectorAll(`[data-open-tracker="${personId}"]`);
+  btns.forEach(b=>{ b.disabled = true; b.textContent = "Building…"; });
+  try{
+    const data = (await fetchTrackerData([personId]))[personId];
+    if(!data){ alert("Couldn't find that person."); return; }
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(trackerPersonAOA(data));
+    styleTrackerSheet(ws);
+    XLSX.utils.book_append_sheet(wb, ws, "Tracker");
+    const safeName = (data.profile.name||personName||"trainee").replace(/[^a-z0-9]+/gi,"_");
+    XLSX.writeFile(wb, `Tracker_${safeName}.xlsx`, { bookSST:true });
+  } catch(err){
+    alert("Couldn't build the tracker: " + err.message);
+  } finally {
+    btns.forEach(b=>{ b.disabled = false; b.textContent = "📊 Tracker"; });
+  }
+}
+
+async function downloadFullTeamTracker(){
+  const btn = document.getElementById("open-master-tracker");
+  if(btn){ btn.disabled = true; btn.textContent = "⏳ Building…"; }
+  try{
+    const { data: people } = await supabase.from("profiles").select("*").order("name");
+    const personIds = (people||[]).map(p=>p.id);
+    if(!personIds.length){ alert("No trainees found."); return; }
+    const allData = await fetchTrackerData(personIds);
+
+    const wb = XLSX.utils.book_new();
+    const summaryAoa = [["Name","Role","Modules Mastered","Total Modules","Overall Module %","Module Quiz Attempts","Standalone Quizzes Completed","Standalone Quizzes Assigned"]];
+    personIds.forEach(pid=>{
+      const d = allData[pid];
+      if(!d) return;
+      const totalModules = d.moduleRows.length;
+      const overallAvg = totalModules ? Math.round(d.moduleRows.reduce((a,r)=>a+r.overallPct,0)/totalModules) : 0;
+      const standaloneCompleted = d.standaloneRows.filter(r=>r.status==="Completed").length;
+      summaryAoa.push([d.profile.name, d.profile.role||"", d.mastered, totalModules, overallAvg+"%", d.quizAttemptRows.length, standaloneCompleted, d.standaloneRows.length]);
+    });
+    const summaryWs = XLSX.utils.aoa_to_sheet(summaryAoa);
+    summaryWs['!cols'] = [{wch:26},{wch:14},{wch:16},{wch:14},{wch:16},{wch:18},{wch:22},{wch:20}];
+    XLSX.utils.book_append_sheet(wb, summaryWs, "Summary");
+
+    const usedNames = new Set();
+    personIds.forEach(pid=>{
+      const d = allData[pid];
+      if(!d) return;
+      const ws = XLSX.utils.aoa_to_sheet(trackerPersonAOA(d));
+      styleTrackerSheet(ws);
+      XLSX.utils.book_append_sheet(wb, ws, sanitizeTrackerSheetName(d.profile.name, usedNames));
+    });
+
+    const stamp = new Date().toISOString().slice(0,10);
+    XLSX.writeFile(wb, `Team_Tracker_${stamp}.xlsx`, { bookSST:true });
+  } catch(err){
+    alert("Couldn't build the team tracker: " + err.message);
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = "⬇ Download Team Tracker"; }
+  }
 }
 
 function openSlideshowConfigFullscreen(ipId){
@@ -6454,7 +6467,6 @@ function runContentSearch(query){
 function openContentSearchModal(){
   openModal(`
     <h3>Search All Modules</h3>
-    <p class="sub">Finds matches in lesson titles, lesson content, and quiz questions across every module — handy for a bulk rename like "Click" → your new platform's name.</p>
     <div class="field"><input type="text" id="content-search-input" placeholder="Search text…"></div>
     <div id="content-search-results" style="max-height:400px;overflow-y:auto;margin-top:10px;"></div>
     <div class="modal-actions"><button class="btn" id="content-search-close">Close</button></div>
