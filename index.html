@@ -397,7 +397,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-02T03:00Z-r160";
+const BUILD_VERSION = "2026-09-02T03:45Z-r161";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -691,11 +691,16 @@ async function markLessonViewed(m, lessonId){
   if(existing.lessonsViewed.includes(lessonId)) return; // already recorded, skip the write
   existing.lessonsViewed = [...existing.lessonsViewed, lessonId];
   if(!existing.startedAt) existing.startedAt = new Date().toISOString();
-  // No-quiz modules are "mastered" purely by lesson completion — record the
-  // finish date the moment the last lesson gets viewed. Modules with a quiz
-  // get their mastered_at set in finishQuiz() instead, once it's earned.
-  if(!m.quiz.length && !existing.masteredAt && m.lessons.length && viewedLessonCount(existing.lessonsViewed, m) >= m.lessons.length){
-    existing.masteredAt = new Date().toISOString();
+  // Mastered now requires both a perfect quiz score (if the module has one)
+  // and every lesson viewed — so this can be the moment mastery is earned
+  // if the quiz was already aced and this was the last lesson left. (The
+  // other order — acing the quiz after already viewing every lesson — is
+  // handled in finishQuiz() instead.)
+  if(!existing.masteredAt){
+    const allLessonsViewed = !m.lessons.length || viewedLessonCount(existing.lessonsViewed, m) >= m.lessons.length;
+    if(allLessonsViewed && (!m.quiz.length || existing.best === m.quiz.length)){
+      existing.masteredAt = new Date().toISOString();
+    }
   }
   progressMap[m.id] = existing;
   await supabase.from("progress").upsert({
@@ -1069,7 +1074,7 @@ function renderShell(inner){
               <button id="open-announce">📣 Make Announcement</button>
               <button id="open-edit-log">📋 Edit Log</button>
               <button id="open-view-feedback">🗣 View Feedback</button>
-              <button id="open-master-tracker">⬇ Download Team Tracker</button>
+              <button id="open-master-tracker">📑 Pull Progress Report</button>
             </div>
           </div>` : hasElevatedPerms() ? `
           <div class="admin-menu">
@@ -1125,7 +1130,7 @@ function renderShell(inner){
   const openViewFeedbackBtn = document.getElementById("open-view-feedback");
   if(openViewFeedbackBtn) openViewFeedbackBtn.addEventListener("click", openViewFeedbackModal);
   const openMasterTrackerBtn = document.getElementById("open-master-tracker");
-  if(openMasterTrackerBtn) openMasterTrackerBtn.addEventListener("click", downloadFullTeamTracker);
+  if(openMasterTrackerBtn) openMasterTrackerBtn.addEventListener("click", openPullProgressReportModal);
   const goTeamBtn = document.getElementById("go-team-btn");
   if(goTeamBtn) goTeamBtn.addEventListener("click", openTeamProgress);
   // Every single page render — however it was reached, including internal calls
@@ -1155,7 +1160,11 @@ function moduleStatus(id){
     return "new";
   }
   if(!s) return "new";
-  if(m && m.quiz.length && s.best === m.quiz.length) return "mastered";
+  if(m && m.quiz.length && s.best === m.quiz.length){
+    const viewedCount = viewedLessonCount(s.lessonsViewed, m);
+    const allLessonsViewed = !m.lessons.length || viewedCount >= m.lessons.length;
+    if(allLessonsViewed) return "mastered";
+  }
   if(!s.attempts) return "reading";
   return "attempted";
 }
@@ -1659,8 +1668,10 @@ async function finishQuiz(){
   const prior = progressMap[m.id];
   const best = Math.max(correctCount, prior?prior.best:0);
   const startedAt = (prior && prior.startedAt) || quizAttemptStartedAt || new Date().toISOString();
-  const masteredAt = (prior && prior.masteredAt) || (best === m.quiz.length ? new Date().toISOString() : null);
-  const record = { best, total: m.quiz.length, lastScore: correctCount, attempts: (prior?prior.attempts:0)+1, lessonsViewed: prior&&prior.lessonsViewed ? prior.lessonsViewed : [], startedAt, masteredAt };
+  const priorLessonsViewed = prior&&prior.lessonsViewed ? prior.lessonsViewed : [];
+  const allLessonsViewed = !m.lessons.length || viewedLessonCount(priorLessonsViewed, m) >= m.lessons.length;
+  const masteredAt = (prior && prior.masteredAt) || (best === m.quiz.length && allLessonsViewed ? new Date().toISOString() : null);
+  const record = { best, total: m.quiz.length, lastScore: correctCount, attempts: (prior?prior.attempts:0)+1, lessonsViewed: priorLessonsViewed, startedAt, masteredAt };
   progressMap[m.id] = record;
   await supabase.from("progress").upsert({
     user_id: session.user.id, module_id: m.id, best_score: record.best, total: record.total, last_score: record.lastScore, attempts: record.attempts, lessons_viewed: record.lessonsViewed, started_at: record.startedAt, mastered_at: record.masteredAt, updated_at: new Date().toISOString()
@@ -2155,10 +2166,7 @@ function renderTeam(){
       </tr>`;
     const detailRow = expanded ? `
       <tr class="team-row-detail"><td colspan="4">
-        <div style="display:flex;justify-content:flex-end;padding:6px 4px 0;">
-          <button class="btn" data-open-tracker="${r.id}" style="font-size:12.5px;padding:7px 12px;">📊 Tracker</button>
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;padding:6px 4px 14px;">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;padding:14px 4px 14px;">
           ${moduleGrid || `<span style="color:var(--text-faint);font-size:12.5px;">No modules yet.</span>`}
         </div>
         ${(attemptDetailFor && attemptDetailFor.userId===r.id) ? renderInlineAttemptDetailHtml(r) : ""}
@@ -2474,12 +2482,6 @@ function renderTeam(){
     const q = missed[+el.getAttribute("data-coach")];
     if(!q) return;
     openCoachingModal(attemptDetailFor.userId, person ? person.name : "this person", `${m ? m.title : ''} — ${q.question}`);
-  }));
-  root.querySelectorAll("[data-open-tracker]").forEach(el=> el.addEventListener("click", (e)=>{
-    e.stopPropagation();
-    const pid = el.getAttribute("data-open-tracker");
-    const person = teamRows.find(r=>r.id===pid);
-    downloadPersonTracker(pid, person ? person.name : "trainee");
   }));
   root.querySelectorAll("[data-reset-attempts]").forEach(el=> el.addEventListener("click", async (e)=>{
     e.stopPropagation();
@@ -5584,7 +5586,7 @@ function sanitizeTrackerSheetName(name, used){
 
 // Pulls everything the tracker needs for one or more people in a handful of
 // bulk queries (not one round-trip per person), then shapes it per-person.
-async function fetchTrackerData(personIds){
+async function fetchTrackerData(personIds, deptFilter){
   const [profRes, progRes, quizAttRes, standaloneQRes, standaloneAttRes, recipRes, teamMemRes] = await Promise.all([
     supabase.from("profiles").select("*").in("id", personIds),
     supabase.from("progress").select("*").in("user_id", personIds),
@@ -5609,8 +5611,9 @@ async function fetchTrackerData(personIds){
     const hasQuiz = !!m.quiz.length;
     let status;
     if(hasQuiz){
+      const allLessonsViewed = !totalLessons || viewedCount >= totalLessons;
       if(!pr) status = "Not started";
-      else if(pr.best_score === m.quiz.length) status = "Mastered";
+      else if(pr.best_score === m.quiz.length && allLessonsViewed) status = "Mastered";
       else if(pr.attempts) status = "Attempted";
       else status = "In progress";
     } else {
@@ -5640,8 +5643,10 @@ async function fetchTrackerData(personIds){
 
     // Only the department(s) this person actually has access to — a
     // module or standalone quiz belonging to a department they don't have
-    // shouldn't show up in their tracker at all.
-    const deptIds = DEPARTMENTS.filter(d=> !!profile[d.profileField]).map(d=>d.id);
+    // shouldn't show up in their tracker at all. If the admin picked a
+    // narrower department filter for this report, intersect with that too.
+    let deptIds = DEPARTMENTS.filter(d=> !!profile[d.profileField]).map(d=>d.id);
+    if(deptFilter) deptIds = deptIds.filter(dId=> deptFilter.includes(dId));
     const accessibleModules = MODULES.filter(m=> deptIds.some(dId=> teamHasDeptAccess(m, dId)));
     const accessibleModuleIds = new Set(accessibleModules.map(m=>m.id));
 
@@ -5840,28 +5845,13 @@ async function triggerXlsxDownload(wb, filename){
   setTimeout(()=> form.remove(), 3000);
 }
 
-async function downloadPersonTracker(personId, personName){
-  const btns = document.querySelectorAll(`[data-open-tracker="${personId}"]`);
-  btns.forEach(b=>{ b.disabled = true; b.textContent = "Building…"; });
-  try{
-    const data = (await fetchTrackerData([personId]))[personId];
-    if(!data){ alert("Couldn't find that person."); return; }
-    const wb = XLSX.utils.book_new();
-    appendPersonTrackerSheets(wb, data, new Set(), false);
-    const safeName = (data.profile.name||personName||"trainee").replace(/[^a-z0-9]+/gi,"_");
-    await triggerXlsxDownload(wb, `Tracker_${safeName}.xlsx`);
-  } catch(err){
-    alert("Couldn't build the tracker: " + err.message);
-  } finally {
-    btns.forEach(b=>{ b.disabled = false; b.textContent = "📊 Tracker"; });
-  }
-}
-
-// Shared by the "everyone" and "single team" downloads — builds a workbook
-// with a Summary sheet plus one detail sheet per person in personIds (or
-// one per department, for anyone with access to more than one).
-async function buildTrackerWorkbook(personIds){
-  const allData = await fetchTrackerData(personIds);
+// Shared by every report path (everyone / a team / specific people) — builds
+// a workbook with a Summary sheet plus one detail sheet per person (or one
+// per department, for anyone with access to more than one). deptFilter is
+// an optional array of department ids to restrict the report to; omit it
+// (or pass null) to include everything each person already has access to.
+async function buildTrackerWorkbook(personIds, deptFilter){
+  const allData = await fetchTrackerData(personIds, deptFilter);
   const wb = XLSX.utils.book_new();
   const summaryAoa = [["Name","Role","Department(s)","Modules Mastered","Total Modules","Overall Module %","Module Quiz Attempts","Standalone Quizzes Completed","Standalone Quizzes Assigned"]];
   personIds.forEach(pid=>{
@@ -5886,21 +5876,107 @@ async function buildTrackerWorkbook(personIds){
   return wb;
 }
 
-async function downloadFullTeamTracker(){
-  const btn = document.getElementById("open-master-tracker");
-  if(btn){ btn.disabled = true; btn.textContent = "⏳ Building…"; }
-  try{
-    const { data: people } = await supabase.from("profiles").select("*").order("name");
-    const personIds = (people||[]).map(p=>p.id);
-    if(!personIds.length){ alert("No trainees found."); return; }
-    const wb = await buildTrackerWorkbook(personIds);
-    const stamp = new Date().toISOString().slice(0,10);
-    await triggerXlsxDownload(wb, `Team_Tracker_Everyone_${stamp}.xlsx`);
-  } catch(err){
-    alert("Couldn't build the team tracker: " + err.message);
-  } finally {
-    if(btn){ btn.disabled = false; btn.textContent = "⬇ Download Team Tracker"; }
-  }
+// The customization modal behind the admin dropdown's "Pull Progress
+// Report" button — lets an admin choose who the report covers (everyone,
+// one or more teams, or specific people) and which department(s) to
+// include, then builds and downloads the workbook.
+async function openPullProgressReportModal(){
+  const [{ data: people }, { data: teamsData }, { data: memberships }] = await Promise.all([
+    supabase.from("profiles").select("id,name,role").order("name"),
+    supabase.from("teams").select("*").order("name"),
+    supabase.from("team_members").select("*")
+  ]);
+  const allPeople = people || [];
+  const teams = (teamsData||[]).map(t=> ({ id:t.id, name:t.name, memberIds:(memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id) }));
+
+  openModal(`
+    <h3>Pull Progress Report</h3>
+    <p class="sub">Builds a .xlsx tracker workbook for whoever and whichever departments you pick below.</p>
+    <div class="field"><label>Who</label>
+      <select id="report-scope">
+        <option value="everyone">Everybody</option>
+        <option value="team">Specific team(s)</option>
+        <option value="people">Specific people</option>
+      </select>
+    </div>
+    <div class="field" id="report-team-field" style="display:none;">
+      <label>Team(s)</label>
+      <div style="max-height:160px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:8px;">
+        ${teams.length ? teams.map(t=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-report-team="${t.id}"> ${escapeHtml(t.name)} · ${t.memberIds.length}</label>`).join("") : `<p class="hint">No teams created yet.</p>`}
+      </div>
+    </div>
+    <div class="field" id="report-people-field" style="display:none;">
+      <label>People</label>
+      <input type="text" id="report-people-search" placeholder="Search people…" style="margin-bottom:8px;">
+      <div id="report-people-list" style="max-height:200px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:8px;">
+        ${allPeople.map(p=>`<label class="report-person-row" data-name="${escapeHtml((p.name||"").toLowerCase())}" style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-report-person="${p.id}"> ${escapeHtml(p.name)}</label>`).join("")}
+      </div>
+    </div>
+    <div class="field">
+      <label>Departments to include</label>
+      ${DEPARTMENTS.map(d=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-report-dept="${d.id}" checked> ${escapeHtml(d.label)}</label>`).join("")}
+      <p class="hint">Uncheck a department to leave it out of the report entirely, even for people who have access to it.</p>
+    </div>
+    <div class="modal-error" id="report-error" style="display:none;"></div>
+    <div class="modal-actions"><button class="btn" id="report-cancel">Cancel</button><button class="btn primary" id="report-generate">Generate Report</button></div>
+  `, true);
+
+  document.getElementById("report-cancel").addEventListener("click", closeModal);
+
+  const scopeSel = document.getElementById("report-scope");
+  const teamField = document.getElementById("report-team-field");
+  const peopleField = document.getElementById("report-people-field");
+  scopeSel.addEventListener("change", ()=>{
+    teamField.style.display = scopeSel.value==="team" ? "block" : "none";
+    peopleField.style.display = scopeSel.value==="people" ? "block" : "none";
+  });
+
+  document.getElementById("report-people-search")?.addEventListener("input", (e)=>{
+    const q = e.target.value.trim().toLowerCase();
+    document.querySelectorAll(".report-person-row").forEach(row=>{
+      row.style.display = row.getAttribute("data-name").includes(q) ? "flex" : "none";
+    });
+  });
+
+  document.getElementById("report-generate").addEventListener("click", async ()=>{
+    const errEl = document.getElementById("report-error");
+    errEl.style.display = "none";
+    const scope = scopeSel.value;
+    const deptFilter = DEPARTMENTS.map(d=>d.id).filter(dId=> document.querySelector(`[data-report-dept="${dId}"]`)?.checked);
+    if(!deptFilter.length){ errEl.textContent = "Check at least one department."; errEl.style.display = "block"; return; }
+
+    let personIds = [];
+    let scopeLabel = "Everyone";
+    if(scope === "everyone"){
+      personIds = allPeople.map(p=>p.id);
+    } else if(scope === "team"){
+      const chosenTeams = teams.filter(t=> document.querySelector(`[data-report-team="${t.id}"]`)?.checked);
+      if(!chosenTeams.length){ errEl.textContent = "Check at least one team."; errEl.style.display = "block"; return; }
+      personIds = [...new Set(chosenTeams.flatMap(t=>t.memberIds))];
+      scopeLabel = chosenTeams.map(t=>t.name).join("_");
+    } else {
+      personIds = allPeople.filter(p=> document.querySelector(`[data-report-person="${p.id}"]`)?.checked).map(p=>p.id);
+      if(!personIds.length){ errEl.textContent = "Check at least one person."; errEl.style.display = "block"; return; }
+      scopeLabel = personIds.length===1 ? ((allPeople.find(p=>p.id===personIds[0])||{}).name||"Person") : `${personIds.length}_People`;
+    }
+    if(!personIds.length){ errEl.textContent = "No one matches that selection — check they have team members or exist."; errEl.style.display = "block"; return; }
+
+    const btn = document.getElementById("report-generate");
+    btn.disabled = true; btn.textContent = "Building…";
+    try{
+      const wb = await buildTrackerWorkbook(personIds, deptFilter);
+      const safeScope = (scopeLabel||"Report").replace(/[^a-z0-9]+/gi,"_").slice(0,60);
+      const allDepts = deptFilter.length === DEPARTMENTS.length;
+      const deptTag = allDepts ? "" : `_${deptFilter.join("-")}`;
+      const stamp = new Date().toISOString().slice(0,10);
+      await triggerXlsxDownload(wb, `Progress_Report_${safeScope}${deptTag}_${stamp}.xlsx`);
+      closeModal();
+    } catch(err){
+      errEl.textContent = "Couldn't build the report: " + err.message;
+      errEl.style.display = "block";
+      btn.disabled = false; btn.textContent = "Generate Report";
+    }
+  });
 }
 
 async function downloadTeamTracker(team){
