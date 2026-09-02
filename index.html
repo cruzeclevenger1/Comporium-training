@@ -397,7 +397,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-02T01:40Z-r158";
+const BUILD_VERSION = "2026-09-02T02:10Z-r159";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -711,6 +711,11 @@ function canCreateQuizzes(){ return isAdmin() || (profile && profile.perm_create
 function canManagePeople(){ return isAdmin() || (profile && profile.perm_manage_people); }
 function canCreateAccounts(){ return isAdmin() || (profile && profile.perm_create_accounts); }
 function canEdit(){ return canEditContent() && editMode; }
+// True for someone with at least one elevated permission who isn't already
+// an admin/supervisor (isAdmin() covers those) — used to give them a
+// discoverable way to reach the tools their permission actually unlocks,
+// instead of those tools being invisible because they're not an admin.
+function hasElevatedPerms(){ return !isAdmin() && (canManagePeople() || canCreateQuizzes() || canCreateAccounts() || canEditContent()); }
 
 /* ============================================================
    DATA LOADING
@@ -1049,14 +1054,12 @@ function renderShell(inner){
         <div class="brand-text"><div class="name">${T('brand.name','COMPORIUM TRAINING MODULES')}</div></div>
       </div>
       <div class="top-right">
-        ${(!isAdmin() && (canManagePeople() || canCreateQuizzes() || canCreateAccounts())) ? `<button class="pill-btn" id="go-team-btn">People</button>` : ""}
         <div class="bell-wrap">
           <button class="gear-btn" id="notif-bell" title="Notifications">🔔${notifBadgeCount()>0?`<span class="notif-dot"></span>`:''}</button>
         </div>
         <div class="bell-wrap">
           <button class="gear-btn" id="chat-bubble" title="Conversations">💬${chatBadgeCount()>0?`<span class="notif-dot"></span>`:''}</button>
         </div>
-        <span class="pill-btn" style="cursor:default;">${escapeHtml(profile ? profile.name : "")}</span>
         ${isAdmin() ? `
           <div class="admin-menu">
             <span class="admin-badge">ADMIN ▾</span>
@@ -1068,7 +1071,14 @@ function renderShell(inner){
               <button id="open-view-feedback">🗣 View Feedback</button>
               <button id="open-master-tracker">⬇ Download Team Tracker</button>
             </div>
-          </div>` : (canEditContent() && !isAdmin()) ? `<button class="pill-btn" id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>` : ""}
+          </div>` : hasElevatedPerms() ? `
+          <div class="admin-menu">
+            <span class="pill-btn" style="cursor:pointer;">${escapeHtml(profile ? profile.name : "")} ▾</span>
+            <div class="admin-menu-panel">
+              ${(canManagePeople() || canCreateQuizzes() || canCreateAccounts()) ? `<button id="go-team-btn">👥 People</button>` : ""}
+              ${canEditContent() ? `<button id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>` : ""}
+            </div>
+          </div>` : `<span class="pill-btn" style="cursor:default;">${escapeHtml(profile ? profile.name : "")}</span>`}
         <button class="pill-btn" id="logout-btn">Log out</button>
       </div>
     </header>
