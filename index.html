@@ -397,7 +397,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-02T00:20Z-r155";
+const BUILD_VERSION = "2026-09-02T01:40Z-r158";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -666,10 +666,20 @@ document.addEventListener("keydown", (e)=>{
 });
 function modById(id){ return MODULES.find(m=>m.id===id); }
 function pct(s){ return s && s.total ? Math.round((s.best/s.total)*100) : 0; }
+// lessons_viewed accumulates lesson IDs forever and is never pruned — if a
+// module's lessons get deleted/recreated during a content edit, the old IDs
+// stick around in that array even though they no longer correspond to any
+// current lesson. Raw .length can then exceed the module's real lesson
+// count. This filters to only IDs that still exist in the module.
+function viewedLessonCount(lessonsViewedArr, m){
+  if(!lessonsViewedArr || !lessonsViewedArr.length || !m) return 0;
+  const validIds = new Set(m.lessons.map(l=>l.id));
+  return lessonsViewedArr.filter(id=>validIds.has(id)).length;
+}
 function overallPct(m){
   const s = progressMap[m.id];
   const totalLessons = m.lessons.length || 1;
-  const viewedCount = s && s.lessonsViewed ? s.lessonsViewed.length : 0;
+  const viewedCount = viewedLessonCount(s && s.lessonsViewed, m);
   const lessonFraction = Math.min(viewedCount / totalLessons, 1);
   if(!m.quiz.length) return Math.round(lessonFraction * 100);
   const quizFraction = s ? (s.best||0) / m.quiz.length : 0;
@@ -684,7 +694,7 @@ async function markLessonViewed(m, lessonId){
   // No-quiz modules are "mastered" purely by lesson completion — record the
   // finish date the moment the last lesson gets viewed. Modules with a quiz
   // get their mastered_at set in finishQuiz() instead, once it's earned.
-  if(!m.quiz.length && !existing.masteredAt && m.lessons.length && existing.lessonsViewed.length >= m.lessons.length){
+  if(!m.quiz.length && !existing.masteredAt && m.lessons.length && viewedLessonCount(existing.lessonsViewed, m) >= m.lessons.length){
     existing.masteredAt = new Date().toISOString();
   }
   progressMap[m.id] = existing;
@@ -1129,7 +1139,7 @@ function moduleStatus(id){
   const s = progressMap[id];
   const m = modById(id);
   if(m && !m.quiz.length){
-    const viewedCount = s && s.lessonsViewed ? s.lessonsViewed.length : 0;
+    const viewedCount = viewedLessonCount(s && s.lessonsViewed, m);
     if(m.lessons.length && viewedCount >= m.lessons.length) return "mastered";
     if(viewedCount > 0) return "reading";
     return "new";
@@ -1796,7 +1806,7 @@ async function openTeamProgress(){
     MODULES.forEach(m=>{
       const r = rows.find(rr=>rr.module_id===m.id);
       const totalLessons = m.lessons.length || 1;
-      const viewedCount = r && r.lessons_viewed ? r.lessons_viewed.length : 0;
+      const viewedCount = viewedLessonCount(r && r.lessons_viewed, m);
       const lessonFraction = Math.min(viewedCount/totalLessons, 1);
       if(!m.quiz.length){
         perModule[m.id] = Math.round(lessonFraction * 100);
@@ -1993,7 +2003,10 @@ function renderTeam(){
   const dept = currentActiveDepartment();
   const deptTeams = TEAMS_LIST.filter(t=> teamHasDeptAccess(t, dept));
   const teamsHtml = deptTeams.length ? deptTeams.map(t=>`
-    <button class="mini-btn" data-manage-team="${t.id}" style="margin:0 6px 6px 0;">${escapeHtml(t.name)} · ${t.memberIds.length}</button>
+    <span style="display:inline-flex;align-items:center;gap:2px;margin:0 6px 6px 0;">
+      <button class="mini-btn" data-manage-team="${t.id}" style="border-top-right-radius:0;border-bottom-right-radius:0;">${escapeHtml(t.name)} · ${t.memberIds.length}</button>
+      <button class="mini-btn" data-download-team-tracker="${t.id}" title="Download tracker for ${escapeHtml(t.name)}" style="border-top-left-radius:0;border-bottom-left-radius:0;border-left:1px solid var(--stroke);">⬇</button>
+    </span>
   `).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No teams yet.</p>`;
 
   // Scoped to people the viewing admin's own department access covers,
@@ -2321,6 +2334,11 @@ function renderTeam(){
   document.getElementById("new-team-btn")?.addEventListener("click", ()=> openTeamManageModal(null));
   document.getElementById("add-new-user-btn")?.addEventListener("click", openAddNewUserModal);
   root.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
+  root.querySelectorAll("[data-download-team-tracker]").forEach(el=> el.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    const team = TEAMS_LIST.find(t=>t.id===el.getAttribute("data-download-team-tracker"));
+    if(team) downloadTeamTracker(team);
+  }));
   document.getElementById("module-filter")?.addEventListener("change", (e)=>{ teamModuleFilter = e.target.value; render(); });
   document.getElementById("quiz-filter")?.addEventListener("change", (e)=>{ teamQuizFilter = e.target.value; render(); });
   document.getElementById("module-sort")?.addEventListener("change", (e)=>{ teamModuleSort = e.target.value; render(); });
@@ -2469,7 +2487,7 @@ function renderTeam(){
     // are exactly the fields that drive both the module pill's percentage
     // and this panel's own "is there anything to reset" check.
     const totalLessons = m.lessons.length || 1;
-    const viewedCount = (person.perModuleRaw[m.id].lessonsViewed || []).length;
+    const viewedCount = viewedLessonCount(person.perModuleRaw[m.id].lessonsViewed, m);
     const lessonFraction = Math.min(viewedCount/totalLessons, 1);
     person.perModuleRaw[m.id] = { ...person.perModuleRaw[m.id], best:0, attempts:0 };
     person.perModule[m.id] = Math.round(lessonFraction*50);
@@ -5574,46 +5592,57 @@ async function fetchTrackerData(personIds){
   const recipients = recipRes.data || [];
   const teamMembers = teamMemRes.data || [];
 
+  function buildModuleRow(m, pid){
+    const pr = progressRows.find(r=>r.user_id===pid && r.module_id===m.id);
+    const totalLessons = m.lessons.length;
+    const viewedCount = viewedLessonCount(pr && pr.lessons_viewed, m);
+    const hasQuiz = !!m.quiz.length;
+    let status;
+    if(hasQuiz){
+      if(!pr) status = "Not started";
+      else if(pr.best_score === m.quiz.length) status = "Mastered";
+      else if(pr.attempts) status = "Attempted";
+      else status = "In progress";
+    } else {
+      if(totalLessons && viewedCount >= totalLessons) status = "Mastered";
+      else if(viewedCount > 0) status = "In progress";
+      else status = "Not started";
+    }
+    const lessonFraction = totalLessons ? Math.min(viewedCount/totalLessons, 1) : 0;
+    const quizFraction = hasQuiz ? (pr ? (pr.best_score||0)/m.quiz.length : 0) : 0;
+    const overallPct = hasQuiz ? Math.round((lessonFraction*0.5 + quizFraction*0.5) * 100) : Math.round(lessonFraction*100);
+    return {
+      moduleId: m.id,
+      title: m.title, status, overallPct,
+      lessonsViewed: viewedCount, totalLessons,
+      quizBest: hasQuiz ? (pr ? (pr.best_score||0) : 0) : "N/A",
+      quizTotal: hasQuiz ? m.quiz.length : "N/A",
+      quizAttempts: pr ? (pr.attempts||0) : 0,
+      started: fmtTrackerDate(pr && pr.started_at),
+      finished: fmtTrackerDate(pr && pr.mastered_at)
+    };
+  }
+
   const result = {};
   personIds.forEach(pid=>{
     const profile = profiles.find(p=>p.id===pid);
     if(!profile) return;
 
-    const moduleRows = MODULES.map(m=>{
-      const pr = progressRows.find(r=>r.user_id===pid && r.module_id===m.id);
-      const totalLessons = m.lessons.length;
-      const viewedCount = pr && pr.lessons_viewed ? pr.lessons_viewed.length : 0;
-      const hasQuiz = !!m.quiz.length;
-      let status;
-      if(hasQuiz){
-        if(!pr) status = "Not started";
-        else if(pr.best_score === m.quiz.length) status = "Mastered";
-        else if(pr.attempts) status = "Attempted";
-        else status = "In progress";
-      } else {
-        if(totalLessons && viewedCount >= totalLessons) status = "Mastered";
-        else if(viewedCount > 0) status = "In progress";
-        else status = "Not started";
-      }
-      const lessonFraction = totalLessons ? Math.min(viewedCount/totalLessons, 1) : 0;
-      const quizFraction = hasQuiz ? (pr ? (pr.best_score||0)/m.quiz.length : 0) : 0;
-      const overallPct = hasQuiz ? Math.round((lessonFraction*0.5 + quizFraction*0.5) * 100) : Math.round(lessonFraction*100);
-      return {
-        title: m.title, status, overallPct,
-        lessonsViewed: viewedCount, totalLessons,
-        quizBest: hasQuiz ? (pr ? (pr.best_score||0) : 0) : "N/A",
-        quizTotal: hasQuiz ? m.quiz.length : "N/A",
-        quizAttempts: pr ? (pr.attempts||0) : 0,
-        started: fmtTrackerDate(pr && pr.started_at),
-        finished: fmtTrackerDate(pr && pr.mastered_at)
-      };
-    });
+    // Only the department(s) this person actually has access to — a
+    // module or standalone quiz belonging to a department they don't have
+    // shouldn't show up in their tracker at all.
+    const deptIds = DEPARTMENTS.filter(d=> !!profile[d.profileField]).map(d=>d.id);
+    const accessibleModules = MODULES.filter(m=> deptIds.some(dId=> teamHasDeptAccess(m, dId)));
+    const accessibleModuleIds = new Set(accessibleModules.map(m=>m.id));
+
+    const allModuleRows = accessibleModules.map(m=> buildModuleRow(m, pid));
 
     const attemptCounter = {};
-    const quizAttemptRows = quizAttempts.filter(a=>a.user_id===pid).map(a=>{
+    const allQuizAttemptRows = quizAttempts.filter(a=> a.user_id===pid && accessibleModuleIds.has(a.module_id)).map(a=>{
       attemptCounter[a.module_id] = (attemptCounter[a.module_id]||0) + 1;
       const m = modById(a.module_id);
       return {
+        moduleId: a.module_id,
         module: m ? m.title : "(deleted module)",
         attemptNum: attemptCounter[a.module_id],
         score: a.score, total: a.total,
@@ -5624,15 +5653,17 @@ async function fetchTrackerData(personIds){
     });
 
     const eligible = standaloneQuizzes.filter(q=>{
+      if(!deptIds.some(dId=> rawRowHasDeptAccess(q, dId))) return false;
       if(q.audience_type==="everyone") return true;
       if(q.audience_type==="team") return teamMembers.some(tm=>tm.team_id===q.team_id && tm.user_id===pid);
       if(q.audience_type==="specific") return recipients.some(r=>r.quiz_id===q.id && r.user_id===pid);
       return false;
     });
-    const standaloneRows = eligible.map(q=>{
+    const allStandaloneRows = eligible.map(q=>{
       const att = standaloneAttempts.find(a=>a.quiz_id===q.id && a.user_id===pid);
       const status = !att ? "Not started" : (att.graded ? "Completed" : "Needs grading");
       return {
+        quizObj: q,
         title: q.title, status,
         score: att ? (att.mc_score||0) : "N/A",
         total: att ? (att.mc_total||0) : "N/A",
@@ -5641,8 +5672,26 @@ async function fetchTrackerData(personIds){
       };
     });
 
-    const mastered = moduleRows.filter(r=>r.status==="Mastered").length;
-    result[pid] = { profile, moduleRows, quizAttemptRows, standaloneRows, mastered };
+    const mastered = allModuleRows.filter(r=>r.status==="Mastered").length;
+
+    // Someone with just one department gets a single combined view (as
+    // before). Someone with more than one gets a breakdown per department,
+    // so their tracker never mixes progress across departments they may
+    // have started at different times or with very different content.
+    let perDept = null;
+    if(deptIds.length > 1){
+      perDept = deptIds.map(dId=>{
+        const deptModuleIds = new Set(accessibleModules.filter(m=> teamHasDeptAccess(m, dId)).map(m=>m.id));
+        return {
+          deptId: dId, deptLabel: deptLabel(dId),
+          moduleRows: allModuleRows.filter(r=> deptModuleIds.has(r.moduleId)),
+          quizAttemptRows: allQuizAttemptRows.filter(r=> deptModuleIds.has(r.moduleId)),
+          standaloneRows: allStandaloneRows.filter(r=> rawRowHasDeptAccess(r.quizObj, dId))
+        };
+      });
+    }
+
+    result[pid] = { profile, deptIds, moduleRows: allModuleRows, quizAttemptRows: allQuizAttemptRows, standaloneRows: allStandaloneRows, mastered, perDept };
   });
   return result;
 }
@@ -5667,22 +5716,54 @@ function trackerPersonAOA(data){
 function styleTrackerSheet(ws){
   ws['!cols'] = [{wch:32},{wch:16},{wch:14},{wch:16},{wch:14},{wch:16},{wch:18},{wch:16},{wch:22},{wch:22}];
 }
-// XLSX.writeFile()'s built-in download can lose the filename/extension in
-// some browsers and in-app webviews (the same "download attribute ignored
-// on blob: URIs" issue seen elsewhere in this app) — building the Blob and
-// triggering the download manually is more reliable.
-function triggerXlsxDownload(wb, filename){
-  const wbout = XLSX.write(wb, { bookType:"xlsx", type:"array", bookSST:true });
-  const blob = new Blob([wbout], { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(()=> URL.revokeObjectURL(url), 2000);
+// Writes one person's data into wb — a single sheet if they only have one
+// department, or one sheet per department if they have several, so
+// progress from different departments never gets mixed together.
+function appendPersonTrackerSheets(wb, d, usedNames, includeNameInSheet){
+  if(d.perDept && d.perDept.length > 1){
+    d.perDept.forEach(dep=>{
+      const ws = XLSX.utils.aoa_to_sheet(trackerPersonAOA(dep));
+      styleTrackerSheet(ws);
+      const label = includeNameInSheet ? `${d.profile.name} (${dep.deptId})` : dep.deptLabel;
+      XLSX.utils.book_append_sheet(wb, ws, sanitizeTrackerSheetName(label, usedNames));
+    });
+  } else {
+    const ws = XLSX.utils.aoa_to_sheet(trackerPersonAOA(d));
+    styleTrackerSheet(ws);
+    const label = includeNameInSheet ? d.profile.name : "Tracker";
+    XLSX.utils.book_append_sheet(wb, ws, sanitizeTrackerSheetName(label, usedNames));
+  }
+}
+// A blob: URI + <a download> works in most desktop browsers, but Safari/
+// WebKit (iOS, iPadOS, and some in-app webviews) is known to ignore the
+// download attribute on blob: URIs entirely and hand back a generic
+// filename with no extension — the same issue this app hit with the old
+// tracker export. The only reliable fix across all browsers is a real
+// top-level navigation to a server response carrying a genuine
+// Content-Disposition header, so this posts the generated file to a small
+// edge function (deliver-xlsx) that just relays the bytes back with that
+// header — see edge-function/deliver-xlsx.ts.
+async function triggerXlsxDownload(wb, filename){
+  const wbout = XLSX.write(wb, { bookType:"xlsx", type:"base64", bookSST:true });
+  const { data:{ session:activeSession } } = await supabase.auth.getSession();
+  if(!activeSession){ alert("Your session has expired — please log in again, then try the download again."); return; }
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = `${SUPABASE_URL}/functions/v1/deliver-xlsx`;
+  form.target = "_self";
+  form.style.display = "none";
+  const addField = (name, value)=>{
+    const el = document.createElement("textarea");
+    el.name = name; el.value = value;
+    form.appendChild(el);
+  };
+  addField("file", wbout);
+  addField("filename", filename);
+  addField("user_id", activeSession.user.id);
+  addField("token", activeSession.access_token);
+  document.body.appendChild(form);
+  form.submit();
+  setTimeout(()=> form.remove(), 3000);
 }
 
 async function downloadPersonTracker(personId, personName){
@@ -5692,16 +5773,43 @@ async function downloadPersonTracker(personId, personName){
     const data = (await fetchTrackerData([personId]))[personId];
     if(!data){ alert("Couldn't find that person."); return; }
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet(trackerPersonAOA(data));
-    styleTrackerSheet(ws);
-    XLSX.utils.book_append_sheet(wb, ws, "Tracker");
+    appendPersonTrackerSheets(wb, data, new Set(), false);
     const safeName = (data.profile.name||personName||"trainee").replace(/[^a-z0-9]+/gi,"_");
-    triggerXlsxDownload(wb, `Tracker_${safeName}.xlsx`);
+    await triggerXlsxDownload(wb, `Tracker_${safeName}.xlsx`);
   } catch(err){
     alert("Couldn't build the tracker: " + err.message);
   } finally {
     btns.forEach(b=>{ b.disabled = false; b.textContent = "📊 Tracker"; });
   }
+}
+
+// Shared by the "everyone" and "single team" downloads — builds a workbook
+// with a Summary sheet plus one detail sheet per person in personIds (or
+// one per department, for anyone with access to more than one).
+async function buildTrackerWorkbook(personIds){
+  const allData = await fetchTrackerData(personIds);
+  const wb = XLSX.utils.book_new();
+  const summaryAoa = [["Name","Role","Department(s)","Modules Mastered","Total Modules","Overall Module %","Module Quiz Attempts","Standalone Quizzes Completed","Standalone Quizzes Assigned"]];
+  personIds.forEach(pid=>{
+    const d = allData[pid];
+    if(!d) return;
+    const totalModules = d.moduleRows.length;
+    const overallAvg = totalModules ? Math.round(d.moduleRows.reduce((a,r)=>a+r.overallPct,0)/totalModules) : 0;
+    const standaloneCompleted = d.standaloneRows.filter(r=>r.status==="Completed").length;
+    const deptLabels = d.deptIds.map(deptLabel).join(" + ") || "None";
+    summaryAoa.push([d.profile.name, d.profile.role||"", deptLabels, d.mastered, totalModules, overallAvg+"%", d.quizAttemptRows.length, standaloneCompleted, d.standaloneRows.length]);
+  });
+  const summaryWs = XLSX.utils.aoa_to_sheet(summaryAoa);
+  summaryWs['!cols'] = [{wch:26},{wch:14},{wch:22},{wch:16},{wch:14},{wch:16},{wch:18},{wch:22},{wch:20}];
+  XLSX.utils.book_append_sheet(wb, summaryWs, "Summary");
+
+  const usedNames = new Set(["Summary"]);
+  personIds.forEach(pid=>{
+    const d = allData[pid];
+    if(!d) return;
+    appendPersonTrackerSheets(wb, d, usedNames, true);
+  });
+  return wb;
 }
 
 async function downloadFullTeamTracker(){
@@ -5711,39 +5819,32 @@ async function downloadFullTeamTracker(){
     const { data: people } = await supabase.from("profiles").select("*").order("name");
     const personIds = (people||[]).map(p=>p.id);
     if(!personIds.length){ alert("No trainees found."); return; }
-    const allData = await fetchTrackerData(personIds);
-
-    const wb = XLSX.utils.book_new();
-    const summaryAoa = [["Name","Role","Modules Mastered","Total Modules","Overall Module %","Module Quiz Attempts","Standalone Quizzes Completed","Standalone Quizzes Assigned"]];
-    personIds.forEach(pid=>{
-      const d = allData[pid];
-      if(!d) return;
-      const totalModules = d.moduleRows.length;
-      const overallAvg = totalModules ? Math.round(d.moduleRows.reduce((a,r)=>a+r.overallPct,0)/totalModules) : 0;
-      const standaloneCompleted = d.standaloneRows.filter(r=>r.status==="Completed").length;
-      summaryAoa.push([d.profile.name, d.profile.role||"", d.mastered, totalModules, overallAvg+"%", d.quizAttemptRows.length, standaloneCompleted, d.standaloneRows.length]);
-    });
-    const summaryWs = XLSX.utils.aoa_to_sheet(summaryAoa);
-    summaryWs['!cols'] = [{wch:26},{wch:14},{wch:16},{wch:14},{wch:16},{wch:18},{wch:22},{wch:20}];
-    XLSX.utils.book_append_sheet(wb, summaryWs, "Summary");
-
-    const usedNames = new Set();
-    personIds.forEach(pid=>{
-      const d = allData[pid];
-      if(!d) return;
-      const ws = XLSX.utils.aoa_to_sheet(trackerPersonAOA(d));
-      styleTrackerSheet(ws);
-      XLSX.utils.book_append_sheet(wb, ws, sanitizeTrackerSheetName(d.profile.name, usedNames));
-    });
-
+    const wb = await buildTrackerWorkbook(personIds);
     const stamp = new Date().toISOString().slice(0,10);
-    triggerXlsxDownload(wb, `Team_Tracker_${stamp}.xlsx`);
+    await triggerXlsxDownload(wb, `Team_Tracker_Everyone_${stamp}.xlsx`);
   } catch(err){
     alert("Couldn't build the team tracker: " + err.message);
   } finally {
     if(btn){ btn.disabled = false; btn.textContent = "⬇ Download Team Tracker"; }
   }
 }
+
+async function downloadTeamTracker(team){
+  const btn = document.querySelector(`[data-download-team-tracker="${team.id}"]`);
+  if(btn){ btn.disabled = true; btn.textContent = "⏳"; }
+  try{
+    if(!team.memberIds.length){ alert(`"${team.name}" has no members yet.`); return; }
+    const wb = await buildTrackerWorkbook(team.memberIds);
+    const safeTeamName = (team.name||"team").replace(/[^a-z0-9]+/gi,"_");
+    const stamp = new Date().toISOString().slice(0,10);
+    await triggerXlsxDownload(wb, `Team_Tracker_${safeTeamName}_${stamp}.xlsx`);
+  } catch(err){
+    alert("Couldn't build the tracker: " + err.message);
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = "⬇"; }
+  }
+}
+
 
 function openSlideshowConfigFullscreen(ipId){
   const ip = INTERACTIVE_PICTURES[ipId];
