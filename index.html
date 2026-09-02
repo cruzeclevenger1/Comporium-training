@@ -257,6 +257,8 @@
   .admin-menu-panel button{ text-align:left; background:none; border:none; color:var(--text-dim); font-family:var(--mono); font-size:12px; padding:9px 10px; border-radius:6px; cursor:pointer; }
   .admin-menu-panel button:hover{ background:#1c2740; color:var(--text); }
   html.theme-light .admin-menu-panel button:hover{ background:var(--input-bg); }
+  .search-jump-highlight{ background:var(--amber); color:#1a1200; border-radius:3px; padding:0 2px; transition: background-color .7s ease, color .7s ease; }
+  .search-jump-highlight.fade-out{ background:transparent; color:inherit; }
 
   .overlay{ position:fixed; inset:0; background:#050810cc; backdrop-filter:blur(3px); display:flex; align-items:center; justify-content:center; z-index:900; padding:20px; }
   .modal{ background:var(--panel); border:1px solid var(--stroke); border-radius:14px; padding:26px; width:100%; max-width:440px; max-height:85vh; overflow-y:auto; }
@@ -397,7 +399,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-02T04:30Z-r162";
+const BUILD_VERSION = "2026-09-02T05:00Z-r163";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1190,6 +1192,7 @@ async function reorderModuleDrop(draggedId, targetId, pos){
 let dashboardShowCompleted = false; // hidden by default; loaded from profile.dashboard_show_completed at login
 let showSearchPreview = true; // shown by default; loaded from profile.show_search_preview at login
 let lastContentSearchQuery = ""; // lets "back to results" in the instances drill-down re-run the same search
+let pendingSearchHighlight = null; // { query, source } — consumed once by renderLesson() right after navigating to a search result
 let activeDepartment = null; // 'TS' or 'CS' — only meaningful for people with access to both; set on first render
 // Fullscreen overlays (Simulated Navigation player/editor, Interactive
 // Picture config/viewer) are appended directly to document.body, outside
@@ -1423,7 +1426,7 @@ function renderLesson(){
     : `<button class="btn primary" id="next-lesson" ${nextDisabled?'disabled':''}>Next lesson →</button>`;
   renderShell(`
     <div class="lesson-nav">${tabs}${editBtn}${quizTab}</div>
-    <div class="card"><div class="k-label">${escapeHtml(lesson.label)}</div><h2>${escapeHtml(lesson.title)}</h2><div class="body">${sanitizeHtml(lesson.body)}</div>
+    <div class="card"><div class="k-label">${escapeHtml(lesson.label)}</div><h2 id="lesson-title-content">${escapeHtml(lesson.title)}</h2><div class="body" id="lesson-body-content">${sanitizeHtml(lesson.body)}</div>
       ${nextDisabled ? `<p style="color:var(--amber);font-size:13px;margin-top:14px;">⚠ Finish exploring the interactive content above before you can continue.</p>` : ''}
       <div class="nav-buttons"><button class="btn" id="prev-lesson" ${currentLessonIdx===0?'disabled':''}>← Previous</button>
       ${nextBtnHtml}</div>
@@ -1437,6 +1440,12 @@ function renderLesson(){
   const backToModules=document.getElementById("back-to-modules-btn"); if(backToModules) backToModules.addEventListener("click", ()=>{ view="dashboard"; render(); window.scrollTo(0,0); });
   const editMod=document.getElementById("edit-mod"); if(editMod) editMod.addEventListener("click", ()=>openEditor(m.id, currentLessonIdx));
   document.getElementById("comment-lesson").addEventListener("click", ()=> openFeedbackModal("comment", `${m.title} — ${lesson.title}`));
+  if(pendingSearchHighlight){
+    const hl = pendingSearchHighlight;
+    pendingSearchHighlight = null;
+    const targetSelector = hl.source === "title" ? "#lesson-title-content" : "#lesson-body-content";
+    requestAnimationFrame(()=> scrollToAndHighlightText(targetSelector, hl.query));
+  }
 }
 
 async function startQuiz(mode){
@@ -6707,6 +6716,38 @@ function snippetAt(text, query, idx){
   const after = escapeHtml(text.slice(idx+query.length, end));
   return `${start>0?'…':''}${before}<mark style="background:var(--amber-dim);color:var(--amber);">${match}</mark>${after}${end<text.length?'…':''}`;
 }
+// Finds the first occurrence of query inside containerSelector, scrolls it
+// into view, and briefly highlights it — the highlight fades out on its
+// own rather than needing to be dismissed.
+function scrollToAndHighlightText(containerSelector, query){
+  const container = document.querySelector(containerSelector);
+  if(!container || !query) return;
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  const needle = query.toLowerCase();
+  let node;
+  while((node = walker.nextNode())){
+    const idx = node.nodeValue.toLowerCase().indexOf(needle);
+    if(idx === -1) continue;
+    const range = document.createRange();
+    range.setStart(node, idx);
+    range.setEnd(node, idx + query.length);
+    const mark = document.createElement("mark");
+    mark.className = "search-jump-highlight";
+    try{ range.surroundContents(mark); } catch(e){ return; } // extremely unlikely for a plain text-node slice, but don't break the page if it happens
+    mark.scrollIntoView({ behavior:"smooth", block:"center" });
+    setTimeout(()=>{
+      mark.classList.add("fade-out");
+      setTimeout(()=>{
+        const parent = mark.parentNode;
+        if(!parent) return;
+        while(mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+        parent.removeChild(mark);
+        parent.normalize();
+      }, 700); // matches the CSS transition duration below
+    }, 2000);
+    return;
+  }
+}
 // Editors actively editing can search everything, including drafts and
 // other departments' content — everyone else only searches what they'd
 // actually be able to see on their own dashboard.
@@ -6763,13 +6804,15 @@ function runContentSearch(query){
   resultsEl.querySelectorAll("[data-search-group]").forEach(el=> el.addEventListener("click", ()=>{
     const g = groups[+el.getAttribute("data-search-group")];
     if(g.instances.length > 1) openSearchInstancesModal(g);
-    else { closeModal(); navigateToSearchResult(g); }
+    else { closeModal(); navigateToSearchResult(g, g.instances[0]); }
   }));
 }
 
 // Takes someone to the match itself — the editor if they're actively
-// editing content, or the normal lesson/module view otherwise.
-function navigateToSearchResult(g){
+// editing content, or the normal lesson/module view otherwise, scrolling
+// to and briefly highlighting the exact matched text when it's on a page
+// that can show it directly (a lesson title or body).
+function navigateToSearchResult(g, instance){
   if(canEditContent() && editMode){
     openEditor(g.modId, g.lessonIdx, g.questionIdx);
     return;
@@ -6778,7 +6821,11 @@ function navigateToSearchResult(g){
   if(!m) return;
   currentModId = g.modId;
   currentLessonIdx = (typeof g.lessonIdx === "number") ? g.lessonIdx : resumeLessonIdx(m);
-  view = "lesson"; render(); window.scrollTo(0,0);
+  pendingSearchHighlight = (typeof g.lessonIdx === "number" && lastContentSearchQuery)
+    ? { query: lastContentSearchQuery, source: (instance && instance.source) || "body" }
+    : null;
+  view = "lesson"; render();
+  if(!pendingSearchHighlight) window.scrollTo(0,0); // quiz matches land on the module page with nothing specific to scroll to yet
 }
 
 const SEARCH_SOURCE_LABEL = { title:"Lesson title", body:"Lesson text", quiz:"Quiz text" };
@@ -6803,9 +6850,10 @@ function openSearchInstancesModal(g){
     const input = document.getElementById("content-search-input");
     if(input){ input.value = lastContentSearchQuery; runContentSearch(lastContentSearchQuery); }
   });
-  document.querySelectorAll("[data-search-instance]").forEach(el=> el.addEventListener("click", ()=>{
+  document.querySelectorAll("[data-search-instance]").forEach(el=> el.addEventListener("click", (e)=>{
+    const inst = g.instances[+e.currentTarget.getAttribute("data-search-instance")];
     closeModal();
-    navigateToSearchResult(g);
+    navigateToSearchResult(g, inst);
   }));
 }
 
@@ -8013,13 +8061,18 @@ function render(){
   else if(view==="quiz-sent-detail") renderQuizSentDetail();
 }
 
-
+/* ============================================================
+   INIT
+   ============================================================ */
 (async function init(){
   window.loadingBarSuppressed = true;
   applyTheme(currentTheme());
   view="loading"; render();
 
-
+  // The query-param/token_hash link format doesn't establish a session on
+  // its own the way the hash-fragment format does — it has to be explicitly
+  // exchanged first. Tried before the normal getSession() check below,
+  // since without this exchange there'd be no session yet to find.
   let landedSession = null;
   if(TOKEN_HASH && (AUTH_LINK_TYPE === "invite" || AUTH_LINK_TYPE === "recovery")){
     const { data: verifyData } = await supabase.auth.verifyOtp({ token_hash: TOKEN_HASH, type: AUTH_LINK_TYPE });
@@ -8042,7 +8095,9 @@ function render(){
   } else {
     window.loadingBarSuppressed = false;
     if(AUTH_LINK_TYPE === "invite" || AUTH_LINK_TYPE === "recovery"){
-
+      // This was an invite/recovery link, but no session came of it — the
+      // link had already been used or expired. Land on the normal login
+      // screen with an explanation rather than a dead end.
       authError = "This link has expired or already been used. Ask an admin to resend it.";
     }
     view="auth"; render();
