@@ -399,7 +399,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-02T05:00Z-r163";
+const BUILD_VERSION = "2026-09-02T05:20Z-r164";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -6471,8 +6471,11 @@ document.addEventListener("click", (e)=>{
   if(internalLink){
     // Only intercept outside the editor itself — inside a contenteditable
     // .rte-body, a click should just place the cursor for editing, not
-    // navigate away and lose whatever they were working on.
-    if(!internalLink.closest(".rte-body")){
+    // navigate away and lose whatever they were working on. My Notes is
+    // the one exception: it has no separate "view" mode from its editor,
+    // so a link there has to navigate directly or it would never work.
+    const rte = internalLink.closest(".rte-body");
+    if(!rte || rte.id === "note-body-rte"){
       e.preventDefault();
       navigateToSiteLink(internalLink);
     }
