@@ -399,7 +399,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-02T05:50Z-r165";
+const BUILD_VERSION = "2026-09-02T06:05Z-r166";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -5903,7 +5903,6 @@ async function openPullProgressReportModal(){
 
   openModal(`
     <h3>Pull Progress Report</h3>
-    <p class="sub">Builds a .xlsx tracker workbook for whoever and whichever departments you pick below.</p>
     <div class="field"><label>Who</label>
       <select id="report-scope">
         <option value="everyone">Everybody</option>
@@ -5927,7 +5926,6 @@ async function openPullProgressReportModal(){
     <div class="field">
       <label>Departments to include</label>
       ${DEPARTMENTS.map(d=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-report-dept="${d.id}" checked> ${escapeHtml(d.label)}</label>`).join("")}
-      <p class="hint">Uncheck a department to leave it out of the report entirely, even for people who have access to it.</p>
     </div>
     <div class="modal-error" id="report-error" style="display:none;"></div>
     <div class="modal-actions"><button class="btn" id="report-cancel">Cancel</button><button class="btn primary" id="report-generate">Generate Report</button></div>
