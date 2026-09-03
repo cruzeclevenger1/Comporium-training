@@ -399,7 +399,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-02T05:20Z-r164";
+const BUILD_VERSION = "2026-09-02T05:50Z-r165";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -6760,22 +6760,19 @@ function searchableModules(){
   return MODULES.filter(m=> m.isPublished && mine.some(d=> teamHasDeptAccess(m, d)));
 }
 
-function runContentSearch(query){
-  const resultsEl = document.getElementById("content-search-results");
-  if(!resultsEl) return;
-  const q = query.trim();
-  lastContentSearchQuery = query;
-  if(!q){ resultsEl.innerHTML = ""; return; }
+let searchDrillModId = null; // null = showing the top-level module list
+let searchDrillKey = null;   // null = showing the lesson/quiz list within searchDrillModId; set = showing instances within that lesson/quiz
 
-  // Groups every occurrence within the same module+lesson (or module+quiz
-  // question) into one entry, so repeated hits in one spot show as a
-  // single result instead of a wall of near-duplicate rows.
+// Every occurrence of the query, one entry per module+lesson (or
+// module+quiz-question) so repeated hits in the same spot count as one
+// group rather than a wall of near-duplicate rows.
+function buildSearchGroups(q){
   const groups = [];
   function addOccurrences(modId, modTitle, label, text, source, lessonIdx, questionIdx){
     const positions = findAllOccurrences(text, q);
     if(!positions.length) return;
-    const key = `${modId}:${lessonIdx!==undefined?'L'+lessonIdx:'Q'+questionIdx}`;
-    let group = groups.find(g=>g.key===key);
+    const key = `${lessonIdx!==undefined?'L'+lessonIdx:'Q'+questionIdx}`;
+    let group = groups.find(g=>g.modId===modId && g.key===key);
     if(!group){ group = { key, modId, modTitle, label, lessonIdx, questionIdx, instances: [] }; groups.push(group); }
     positions.forEach(pos=> group.instances.push({ source, snippet: snippetAt(text, q, pos) }));
   }
@@ -6792,22 +6789,79 @@ function runContentSearch(query){
       addOccurrences(m.id, m.title, `Quiz Q${qi+1}`, hay, "quiz", undefined, qi);
     });
   });
+  return groups;
+}
 
-  resultsEl.innerHTML = groups.length ? groups.map((g,i)=>{
-    const count = g.instances.length;
-    const countBadge = count>1 ? ` <span style="color:var(--text-faint);font-size:12px;">(${count} matches)</span>` : "";
-    const showPreview = showSearchPreview && count===1;
-    return `
-    <div class="sub-card" data-search-group="${i}" style="cursor:pointer;">
-      <div class="sub-card-head"><span class="tag">${escapeHtml(g.modTitle)} — ${escapeHtml(g.label)}</span>${countBadge}</div>
-      ${showPreview ? `<div style="font-size:13px;color:var(--text-dim);margin-top:4px;">${g.instances[0].snippet}</div>` : ""}
-    </div>`;
-  }).join("") : `<p style="color:var(--text-faint);font-size:13px;padding:10px 0;">No matches.</p>`;
+function runContentSearch(query){
+  const resultsEl = document.getElementById("content-search-results");
+  if(!resultsEl) return;
+  const q = query.trim();
+  const queryChanged = lastContentSearchQuery !== query;
+  lastContentSearchQuery = query;
+  if(queryChanged){ searchDrillModId = null; searchDrillKey = null; } // typing a new query starts back at the top
+  if(!q){ resultsEl.innerHTML = ""; return; }
 
-  resultsEl.querySelectorAll("[data-search-group]").forEach(el=> el.addEventListener("click", ()=>{
-    const g = groups[+el.getAttribute("data-search-group")];
-    if(g.instances.length > 1) openSearchInstancesModal(g);
-    else { closeModal(); navigateToSearchResult(g, g.instances[0]); }
+  const groups = buildSearchGroups(q);
+
+  // Level 3: instances within one specific lesson/quiz question.
+  if(searchDrillModId && searchDrillKey){
+    const g = groups.find(g=> g.modId===searchDrillModId && g.key===searchDrillKey);
+    if(!g){ searchDrillKey = null; runContentSearch(query); return; }
+    resultsEl.innerHTML = `
+      <button class="mini-btn" data-search-back-lessons style="margin-bottom:10px;">← ${escapeHtml(g.modTitle)}</button>
+      <div class="sub-card-head" style="margin-bottom:8px;"><span class="tag">${escapeHtml(g.label)}</span> <span style="color:var(--text-faint);font-size:12px;">${g.instances.length} match${g.instances.length===1?'':'es'}</span></div>
+      ${g.instances.map((inst,i)=>`
+        <div class="sub-card" data-search-instance="${i}" style="cursor:pointer;margin-bottom:8px;">
+          <div class="sub-card-head"><span class="tag">${SEARCH_SOURCE_LABEL[inst.source]||""}</span></div>
+          <div style="font-size:13px;color:var(--text-dim);">${inst.snippet}</div>
+        </div>`).join("")}`;
+    resultsEl.querySelector("[data-search-back-lessons]").addEventListener("click", ()=>{ searchDrillKey = null; runContentSearch(query); });
+    resultsEl.querySelectorAll("[data-search-instance]").forEach(el=> el.addEventListener("click", (e)=>{
+      const inst = g.instances[+e.currentTarget.getAttribute("data-search-instance")];
+      closeModal();
+      navigateToSearchResult(g, inst);
+    }));
+    return;
+  }
+
+  // Level 2: lessons/quiz questions with a match, within one module.
+  if(searchDrillModId){
+    const modGroups = groups.filter(g=> g.modId===searchDrillModId);
+    const modTitle = modGroups[0] ? modGroups[0].modTitle : (modById(searchDrillModId)||{}).title || "";
+    resultsEl.innerHTML = `
+      <button class="mini-btn" data-search-back-modules style="margin-bottom:10px;">← All modules</button>
+      ${modGroups.length ? modGroups.map((g,i)=>{
+        const count = g.instances.length;
+        const countBadge = count>1 ? ` <span style="color:var(--text-faint);font-size:12px;">(${count} matches)</span>` : "";
+        const showPreview = showSearchPreview && count===1;
+        return `
+        <div class="sub-card" data-search-lesson="${i}" style="cursor:pointer;margin-bottom:8px;">
+          <div class="sub-card-head"><span class="tag">${escapeHtml(g.label)}</span>${countBadge}</div>
+          ${showPreview ? `<div style="font-size:13px;color:var(--text-dim);margin-top:4px;">${g.instances[0].snippet}</div>` : ""}
+        </div>`;
+      }).join("") : `<p style="color:var(--text-faint);font-size:13px;padding:10px 0;">No matches in "${escapeHtml(modTitle)}" anymore.</p>`}`;
+    resultsEl.querySelector("[data-search-back-modules]").addEventListener("click", ()=>{ searchDrillModId = null; runContentSearch(query); });
+    resultsEl.querySelectorAll("[data-search-lesson]").forEach(el=> el.addEventListener("click", (e)=>{
+      searchDrillKey = modGroups[+e.currentTarget.getAttribute("data-search-lesson")].key;
+      runContentSearch(query);
+    }));
+    return;
+  }
+
+  // Level 1: modules with any match at all.
+  const byModule = [];
+  groups.forEach(g=>{
+    let entry = byModule.find(e=> e.modId===g.modId);
+    if(!entry){ entry = { modId:g.modId, modTitle:g.modTitle, count:0 }; byModule.push(entry); }
+    entry.count += g.instances.length;
+  });
+  resultsEl.innerHTML = byModule.length ? byModule.map((e,i)=>`
+    <div class="sub-card" data-search-module="${i}" style="cursor:pointer;margin-bottom:8px;">
+      <div class="sub-card-head"><span class="tag">${escapeHtml(e.modTitle)}</span> <span style="color:var(--text-faint);font-size:12px;">${e.count} match${e.count===1?'':'es'}</span></div>
+    </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;padding:10px 0;">No matches.</p>`;
+  resultsEl.querySelectorAll("[data-search-module]").forEach(el=> el.addEventListener("click", (e)=>{
+    searchDrillModId = byModule[+e.currentTarget.getAttribute("data-search-module")].modId;
+    runContentSearch(query);
   }));
 }
 
@@ -6832,35 +6886,11 @@ function navigateToSearchResult(g, instance){
 }
 
 const SEARCH_SOURCE_LABEL = { title:"Lesson title", body:"Lesson text", quiz:"Quiz text" };
-// The drill-down screen for a group with more than one match — this is
-// where previews always show, even with "Show search preview" off, since
-// this is an explicit request to see them.
-function openSearchInstancesModal(g){
-  openModal(`
-    <h3>${escapeHtml(g.modTitle)}</h3>
-    <p class="sub">${escapeHtml(g.label)} — ${g.instances.length} matches</p>
-    <div style="max-height:400px;overflow-y:auto;">
-      ${g.instances.map((inst,i)=>`
-        <div class="sub-card" data-search-instance="${i}" style="cursor:pointer;margin-bottom:8px;">
-          <div class="sub-card-head"><span class="tag">${SEARCH_SOURCE_LABEL[inst.source]||""}</span></div>
-          <div style="font-size:13px;color:var(--text-dim);">${inst.snippet}</div>
-        </div>`).join("")}
-    </div>
-    <div class="modal-actions"><button class="btn" id="search-instances-back">← Back to results</button></div>
-  `, true);
-  document.getElementById("search-instances-back").addEventListener("click", ()=>{
-    openContentSearchModal();
-    const input = document.getElementById("content-search-input");
-    if(input){ input.value = lastContentSearchQuery; runContentSearch(lastContentSearchQuery); }
-  });
-  document.querySelectorAll("[data-search-instance]").forEach(el=> el.addEventListener("click", (e)=>{
-    const inst = g.instances[+e.currentTarget.getAttribute("data-search-instance")];
-    closeModal();
-    navigateToSearchResult(g, inst);
-  }));
-}
 
 function openContentSearchModal(){
+  searchDrillModId = null;
+  searchDrillKey = null;
+  lastContentSearchQuery = "";
   openModal(`
     <h3>Search All Modules</h3>
     <div class="field"><input type="text" id="content-search-input" placeholder="Search text…"></div>
@@ -7383,7 +7413,6 @@ function renderSettings(){
           <input type="checkbox" id="set-search-preview" ${showSearchPreview ? "checked" : ""}>
           Show search preview
         </label>
-        <p class="hint" style="margin:6px 0 0;">When on, search results show a preview of the matching text. When off, results just show the module and lesson — open a result to see the previews if there's more than one match in the same spot.</p>
       </div>
 
       ${!isAdmin() ? `
