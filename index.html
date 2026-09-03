@@ -399,7 +399,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-02T07:00Z-r168";
+const BUILD_VERSION = "2026-09-02T07:15Z-r169";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -7706,7 +7706,7 @@ function renderHome(){
 /* ============================================================
    REFERENCE GUIDE (OneNote-style, admin editable)
    ============================================================ */
-let refCollapsed = new Set();
+let refExpanded = new Set(); // top-level page ids the user has clicked open — empty by default, so sub-pages start hidden
 let refSearchQuery = "";
 let dragRefId = null;
 let refActiveDepartment = null;
@@ -7742,7 +7742,7 @@ function renderReference(){
   function sidebarRow(p, isChild){
     const active = p.id===currentRefId;
     const kids = isChild ? [] : childPages(p.id);
-    const collapsed = refCollapsed.has(p.id);
+    const collapsed = !refExpanded.has(p.id);
     const chevron = (!isChild && kids.length) ? `<button class="mini-btn" data-ref-toggle="${p.id}" style="padding:2px 5px;">${collapsed?'▸':'▾'}</button>` : `<span style="width:20px;display:inline-block;"></span>`;
     const tools = editOn ? `
       <span class="ref-row-tools">
@@ -7760,7 +7760,7 @@ function renderReference(){
 
   const sidebarHtml = tops.filter(p=> !searchActive || titleMatches(p) || childPages(p.id).some(titleMatches)).map(p=>{
     const kids = childPages(p.id).filter(k=> !searchActive || titleMatches(p) || titleMatches(k));
-    const collapsed = searchActive ? false : refCollapsed.has(p.id);
+    const collapsed = searchActive ? false : !refExpanded.has(p.id);
     return sidebarRow(p,false) + (!collapsed ? kids.map(k=>sidebarRow(k,true)).join("") : "");
   }).join("") || (searchActive ? `<p style="color:var(--text-faint);font-size:12.5px;padding:10px;">No matches.</p>` : `<p style="color:var(--text-faint);font-size:12.5px;padding:10px;">No pages yet.</p>`);
 
@@ -7849,7 +7849,7 @@ function renderReference(){
   root.querySelectorAll("[data-ref-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
     e.stopPropagation();
     const id = el.getAttribute("data-ref-toggle");
-    if(refCollapsed.has(id)) refCollapsed.delete(id); else refCollapsed.add(id);
+    if(refExpanded.has(id)) refExpanded.delete(id); else refExpanded.add(id);
     render();
   }));
 
@@ -7863,7 +7863,7 @@ function renderReference(){
     const parentId = el.getAttribute("data-ref-addsub");
     const kids = childPages(parentId);
     const parentPage = REFERENCE_PAGES.find(p=>p.id===parentId);
-    refCollapsed.delete(parentId);
+    refExpanded.add(parentId);
     const { data, error } = await supabase.from("reference_pages").insert({ title:"New subsection", body:"<p>Write here.</p>", parent_id:parentId, department: parentPage ? parentPage.department : currentActiveRefDepartment(), sort_order: kids.length }).select().single();
     if(!error){ logEdit("created", "reference_page", data.title, null, data.department); await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
   }));
