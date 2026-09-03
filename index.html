@@ -399,7 +399,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-02T06:20Z-r167";
+const BUILD_VERSION = "2026-09-02T07:00Z-r168";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1873,8 +1873,10 @@ function generateTempPassword(){
 function openAddNewUserModal(){
   const mine = myDepartments();
   openModal(`
-    <h3>Add New User</h3>
-    <p class="sub">Set a temporary password — they'll be required to choose their own the first time they log in.</p>
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <h3 style="margin:0;">Add New User</h3>
+      <button class="mini-btn" id="newuser-bulk-btn" type="button">Add in Bulk</button>
+    </div>
     <div class="field"><label>Name</label><input type="text" id="newuser-name" placeholder="Jordan Smith"></div>
     <div class="field"><label>Email</label><input type="email" id="newuser-email" placeholder="jordan@company.com"></div>
     <div class="field"><label>Temporary password</label>
@@ -1899,6 +1901,7 @@ function openAddNewUserModal(){
     <div class="modal-actions"><button class="btn" id="newuser-cancel">Cancel</button><button class="btn primary" id="newuser-submit">Create Account</button></div>
   `, true);
   document.getElementById("newuser-cancel").addEventListener("click", closeModal);
+  document.getElementById("newuser-bulk-btn").addEventListener("click", ()=>{ closeModal(); openBulkAddUsersModal(); });
   document.getElementById("newuser-generate-pw").addEventListener("click", ()=>{
     document.getElementById("newuser-password").value = generateTempPassword();
   });
@@ -1934,6 +1937,170 @@ function openAddNewUserModal(){
     logEdit("created", "user_account", `${nameRaw} (${emailRaw}) created as ${role}`);
     await openTeamProgress(); // refresh the roster so the new account shows up — do this before swapping the modal content below, not after, so it can't be forgotten if something later fails
     showNewUserCreatedModal(nameRaw, emailRaw, passwordRaw);
+  });
+}
+
+let bulkRowIds = [];
+let bulkRowIdCounter = 0;
+
+function closeAllBulkDeptPanels(){
+  document.querySelectorAll(".bulk-dept-panel").forEach(p=> p.style.display = "none");
+}
+function syncBulkPasswordVisibility(){
+  const sameEl = document.getElementById("bulk-same-password");
+  if(!sameEl) return;
+  const same = sameEl.checked;
+  const sharedField = document.getElementById("bulk-shared-password-field");
+  if(sharedField) sharedField.style.display = same ? "block" : "none";
+  document.querySelectorAll(".bulk-row-password").forEach(inp=>{ inp.style.display = same ? "none" : ""; });
+}
+function addBulkRow(mine){
+  const id = bulkRowIdCounter++;
+  bulkRowIds.push(id);
+  const container = document.getElementById("bulk-add-rows");
+  if(!container) return;
+  const row = document.createElement("div");
+  row.className = "bulk-add-row";
+  row.style.cssText = "display:flex;gap:8px;align-items:flex-start;margin-bottom:8px;position:relative;";
+  row.innerHTML = `
+    <input type="text" data-row-name="${id}" placeholder="Name" style="flex:1.3;min-width:0;">
+    <input type="email" data-row-email="${id}" placeholder="Email" style="flex:1.6;min-width:0;">
+    <div class="bulk-dept-dropdown" style="position:relative;flex:none;">
+      <button type="button" class="mini-btn" data-dept-toggle="${id}">Dept ▾</button>
+      <div class="bulk-dept-panel" data-dept-panel="${id}" style="display:none;position:absolute;top:calc(100% + 4px);left:0;background:var(--panel);border:1px solid var(--stroke);border-radius:8px;padding:8px;z-index:50;min-width:150px;">
+        ${DEPARTMENTS.map(d=>`<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;white-space:nowrap;color:var(--text);margin-bottom:4px;"><input type="checkbox" data-row-dept="${id}:${d.id}" ${mine.includes(d.id)?'checked':''}> ${escapeHtml(d.label)}</label>`).join("")}
+      </div>
+    </div>
+    <input type="text" data-row-password="${id}" placeholder="Password" class="bulk-row-password" style="flex:1;min-width:0;display:none;">
+    <button type="button" class="mini-btn danger" data-row-remove="${id}" style="flex:none;" title="Remove row">✕</button>
+  `;
+  container.appendChild(row);
+  row.querySelector(`[data-dept-toggle="${id}"]`).addEventListener("click", (e)=>{
+    e.stopPropagation();
+    const panel = row.querySelector(`[data-dept-panel="${id}"]`);
+    const willOpen = panel.style.display !== "block";
+    closeAllBulkDeptPanels();
+    panel.style.display = willOpen ? "block" : "none";
+  });
+  row.querySelector(`[data-row-remove="${id}"]`).addEventListener("click", ()=>{
+    row.remove();
+    bulkRowIds = bulkRowIds.filter(x=>x!==id);
+  });
+  syncBulkPasswordVisibility();
+}
+
+function openBulkAddUsersModal(){
+  const mine = myDepartments();
+  bulkRowIds = [];
+  bulkRowIdCounter = 0;
+  openModal(`
+    <h3>Add Users in Bulk</h3>
+    <div id="bulk-add-rows"></div>
+    <button class="dashed-btn" id="bulk-add-row-btn" type="button" style="margin:6px 0 14px;">+ Add row</button>
+    <div class="field">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;">
+        <input type="checkbox" id="bulk-same-password" checked> Same default password for all new users
+      </label>
+    </div>
+    <div class="field" id="bulk-shared-password-field">
+      <label>Default password</label>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="bulk-shared-password" placeholder="At least 6 characters" style="flex:1;">
+        <button class="btn" id="bulk-generate-shared-pw" type="button" style="flex:none;">Generate</button>
+      </div>
+    </div>
+    <div class="modal-error" id="bulk-add-error" style="display:none;"></div>
+    <div id="bulk-add-progress" style="display:none;font-family:var(--mono);font-size:12.5px;color:var(--text-dim);margin-top:10px;max-height:180px;overflow-y:auto;"></div>
+    <div class="modal-actions"><button class="btn" id="bulk-add-cancel">Cancel</button><button class="btn primary" id="bulk-add-submit">Create Accounts</button></div>
+  `, true);
+
+  for(let i=0;i<5;i++) addBulkRow(mine);
+
+  document.getElementById("bulk-add-cancel").addEventListener("click", closeModal);
+  document.getElementById("bulk-add-row-btn").addEventListener("click", ()=> addBulkRow(mine));
+  document.getElementById("bulk-same-password").addEventListener("change", syncBulkPasswordVisibility);
+  document.getElementById("bulk-generate-shared-pw").addEventListener("click", ()=>{
+    document.getElementById("bulk-shared-password").value = generateTempPassword();
+  });
+
+  document.getElementById("bulk-add-submit").addEventListener("click", async ()=>{
+    const errEl = document.getElementById("bulk-add-error");
+    errEl.style.display = "none";
+    const sameDefault = document.getElementById("bulk-same-password").checked;
+    const sharedPw = document.getElementById("bulk-shared-password").value;
+    if(sameDefault && (!sharedPw || sharedPw.length<6)){
+      errEl.textContent = "Default password must be at least 6 characters.";
+      errEl.style.display = "block";
+      return;
+    }
+
+    const rows = [];
+    bulkRowIds.forEach(id=>{
+      const nameEl = document.querySelector(`[data-row-name="${id}"]`);
+      const emailEl = document.querySelector(`[data-row-email="${id}"]`);
+      if(!nameEl || !emailEl) return;
+      const name = nameEl.value.trim();
+      const email = emailEl.value.trim();
+      if(!name && !email) return; // skip a fully blank row rather than erroring on it
+      const pwEl = document.querySelector(`[data-row-password="${id}"]`);
+      const password = sameDefault ? sharedPw : (pwEl ? pwEl.value : "");
+      const departments = {};
+      let anyDept = false;
+      DEPARTMENTS.forEach(d=>{
+        const checked = !!document.querySelector(`[data-row-dept="${id}:${d.id}"]`)?.checked;
+        departments[d.id] = checked;
+        if(checked) anyDept = true;
+      });
+      rows.push({ id, name, email, password, departments, anyDept });
+    });
+    if(!rows.length){ errEl.textContent = "Add at least one person."; errEl.style.display = "block"; return; }
+
+    const problems = [];
+    rows.forEach((r,idx)=>{
+      if(!r.name) problems.push(`Row ${idx+1}: missing name.`);
+      else if(!r.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email)) problems.push(`Row ${idx+1}: invalid email.`);
+      else if(!r.password || r.password.length<6) problems.push(`Row ${idx+1}: password must be at least 6 characters.`);
+      else if(!r.anyDept) problems.push(`Row ${idx+1}: check at least one department.`);
+    });
+    const emailsSeen = new Set();
+    rows.forEach((r,idx)=>{
+      const key = r.email.toLowerCase();
+      if(key && emailsSeen.has(key)) problems.push(`Row ${idx+1}: duplicate email in this batch.`);
+      emailsSeen.add(key);
+    });
+    if(problems.length){
+      errEl.innerHTML = problems.map(p=>escapeHtml(p)).join("<br>");
+      errEl.style.display = "block";
+      return;
+    }
+
+    const submitBtn = document.getElementById("bulk-add-submit");
+    submitBtn.disabled = true; submitBtn.textContent = "Creating…";
+    document.getElementById("bulk-add-row-btn").style.display = "none";
+    const progressEl = document.getElementById("bulk-add-progress");
+    progressEl.style.display = "block";
+    progressEl.innerHTML = rows.map(r=>`<div data-progress-row="${r.id}">⏳ ${escapeHtml(r.name)} (${escapeHtml(r.email)})</div>`).join("");
+
+    let successCount = 0, failCount = 0;
+    for(const r of rows){
+      const { data, error } = await supabase.functions.invoke("admin-create-user", {
+        body: { name: r.name, email: r.email, password: r.password, role: "agent", departments: r.departments }
+      });
+      const rowEl = progressEl.querySelector(`[data-progress-row="${r.id}"]`);
+      if(error || (data && data.error)){
+        failCount++;
+        const msg = (data && data.error) || await extractFunctionError(error);
+        if(rowEl) rowEl.innerHTML = `❌ ${escapeHtml(r.name)} (${escapeHtml(r.email)}) — ${escapeHtml(msg)}`;
+      } else {
+        successCount++;
+        logEdit("created", "user_account", `${r.name} (${r.email}) created as agent`);
+        if(rowEl) rowEl.innerHTML = `✅ ${escapeHtml(r.name)} (${escapeHtml(r.email)})`;
+      }
+    }
+    submitBtn.textContent = `Done — ${successCount} created${failCount?`, ${failCount} failed`:''}`;
+    await openTeamProgress(); // refresh the roster so the new accounts show up
+    const cancelBtn = document.getElementById("bulk-add-cancel");
+    if(cancelBtn) cancelBtn.textContent = "Close";
   });
 }
 
@@ -6482,6 +6649,10 @@ document.addEventListener("click", (e)=>{
   if(e.target.closest(".theme-dropdown")) return;
   themeDropdownOpen = false;
   if(view==="settings") renderSettings();
+});
+document.addEventListener("click", (e)=>{
+  if(e.target.closest(".bulk-dept-dropdown")) return;
+  closeAllBulkDeptPanels();
 });
 
 
