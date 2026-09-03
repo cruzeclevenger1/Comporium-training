@@ -399,7 +399,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-02T06:05Z-r166";
+const BUILD_VERSION = "2026-09-02T06:20Z-r167";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -3416,7 +3416,6 @@ function renderEditLog(){
     <div class="card">
       <div class="k-label">ADMIN</div>
       <h2 style="margin-bottom:4px;">Edit Log</h2>
-      <p style="color:var(--text-dim);font-size:13.5px;margin:0 0 20px;">Every change to modules, lessons, module quizzes, the reference guide, and standalone quizzes — including who made it and when.</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
         <input type="text" id="edit-log-search" data-no-enter-submit placeholder="Search by name or person…" value="${escapeHtml(editLogSearchQuery)}" class="search-input" style="width:220px;">
         <select id="edit-log-filter" style="width:auto;">
@@ -3986,7 +3985,6 @@ async function openAnnouncementModal(prefillBody){
   const teamOptions = (teamsForModal||[]).map(t=>`<option value="${t.id}">${escapeHtml(t.name)}</option>`).join("");
   openModal(`
     <h3>Announcement</h3>
-    <p class="sub">Choose who should see this.</p>
     <div class="field">
       <label>Send to</label>
       <select id="ann-scope">
@@ -4805,7 +4803,6 @@ async function openViewFeedbackModal(){
     </div>`).join("");
   openModal(`
     <h3>Feedback</h3>
-    <p class="sub">Submitted anonymously — there's no way to trace any of these back to a person.</p>
     <div id="feedback-list" style="max-height:420px;overflow-y:auto;">${rows || '<p style="color:var(--text-faint);font-size:13px;">No feedback yet.</p>'}</div>
     <div class="modal-actions"><button class="btn primary" id="feedback-view-close">Close</button></div>
   `, true);
@@ -6990,12 +6987,10 @@ function renderEditor(){
       <div class="field"><label>Department</label>
         ${myDepartments().length>1 ? `
         ${DEPARTMENTS.filter(dep=>myDepartments().includes(dep.id)).map(dep=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-mod-dept-check="${dep.id}" ${d[dep.teamField]?'checked':''}> ${escapeHtml(dep.label)}</label>`).join("")}
-        <p class="hint">Visible to anyone with access to any checked department.</p>
         ` : `<p style="color:var(--text-dim);font-size:13px;margin:0;">${deptLabel(myDepartments()[0])} — you only have access to one department, so this can't be changed here.</p>`}
       </div>
       <div class="field">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;"><input type="checkbox" id="mod-published" ${d.isPublished?'checked':''}> Published — visible to everyone with department access</label>
-        <p class="hint">Unchecked, this module is only visible to editors, admins, and supervisors — trainees won't see it at all until you check this.</p>
       </div>
       <div class="field"><label>Short description</label><textarea id="mod-short" style="min-height:55px;">${escapeHtml(d.short)}</textarea></div>
       <div class="field">
@@ -7009,7 +7004,6 @@ function renderEditor(){
       <div class="editor-section"><div class="editor-section-head"><h3>Quiz questions</h3></div>${quizHtml||'<p style="color:var(--text-faint);font-size:13px;">No questions yet.</p>'}<button class="dashed-btn" id="add-question">+ Add question</button></div>
       <div class="nav-buttons"><div style="display:flex;gap:10px;"><button class="btn danger" id="editor-delete">Delete module</button></div>
       <button class="btn primary" id="editor-done">Done</button></div>
-      <p style="color:var(--text-faint);font-size:11.5px;font-family:var(--mono);margin-top:10px;">Changes save automatically as you type.</p>
     </div>`);
   wireEditorEvents();
 }
@@ -7890,7 +7884,6 @@ function renderNotes(){
         </div>
         <input type="text" id="note-title" class="onenote-title-input" placeholder="Note title" value="${escapeHtml(note.title)}" style="margin-top:10px;">
         ${richEditorHtml("note-body-rte", note.body)}
-        <div class="hint" style="margin-top:8px;">Saved automatically as you type. Paste an image directly, or use the 🖼 button.</div>
         <div class="nav-buttons"><button class="btn danger" id="note-delete">Delete note</button><div></div></div>
       </div>`;
   }
