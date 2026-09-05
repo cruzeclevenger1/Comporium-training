@@ -245,6 +245,9 @@
   .onenote-title-input{ width:100%; background:none; border:none; border-bottom:1px solid var(--stroke); font-size:26px; font-weight:700; color:var(--text); font-family:var(--sans); padding:4px 2px 14px; outline:none; margin-bottom:14px; }
   .onenote-title-input::placeholder{ color:var(--text-faint); font-weight:400; }
   .onenote-title-input:focus{ border-bottom-color:var(--cyan); }
+  .ref-section-title-input{ display:block; width:100%; box-sizing:border-box; background:none; border:none; border-bottom:1px dashed transparent; font-family:var(--mono); font-size:11px; letter-spacing:.03em; text-transform:uppercase; color:var(--text-faint); padding:2px 0; margin-bottom:4px; outline:none; }
+  .ref-section-title-input:hover{ border-bottom-color:var(--stroke); }
+  .ref-section-title-input:focus{ border-bottom-color:var(--cyan); color:var(--text-dim); }
   @media (max-width:768px){ .ref-layout{ flex-direction:column; } .ref-sidebar{ width:100%; } }
 
   .bell-wrap{ position:relative; }
@@ -399,7 +402,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-02T07:15Z-r169";
+const BUILD_VERSION = "2026-09-02T08:00Z-r171";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -7095,7 +7098,6 @@ async function openEditor(id, openToLessonIdx, openToQuestionIdx){
   draftModule = JSON.parse(JSON.stringify(modById(newId)));
   expandedLessonIdx = null; expandedQuestionIdx = null;
   view = "editor"; render();
-  if(isAdmin()) openNewModuleNotifyModal(title.trim());
 }
 
 function renderEditor(){
@@ -7492,22 +7494,6 @@ function wireEditorEvents(){
   });
 }
 
-function openNewModuleNotifyModal(title){
-  openModal(`
-    <h3>Module created</h3>
-    <p class="sub">Want to let everyone know "${escapeHtml(title)}" is now available?</p>
-    <div class="modal-actions">
-      <button class="btn" id="notify-skip">Not now</button>
-      <button class="btn primary" id="notify-users-btn">Notify Users</button>
-    </div>
-  `);
-  document.getElementById("notify-skip").addEventListener("click", closeModal);
-  document.getElementById("notify-users-btn").addEventListener("click", ()=>{
-    closeModal();
-    openAnnouncementModal(`<p>📘 New training module available: <strong>${escapeHtml(title)}</strong></p>`);
-  });
-}
-
 /* ============================================================
    SETTINGS (name, own password, theme)
    ============================================================ */
@@ -7758,6 +7744,17 @@ function renderReference(){
   const searchLower = refSearchQuery.trim().toLowerCase();
   const titleMatches = (p)=> p.title.toLowerCase().includes(searchLower);
 
+  // A top-level page with sub-pages is a folder, not content of its own —
+  // if it's still selected from before it had children, land on its first
+  // child instead of showing a page with nothing in it. Done before the
+  // sidebar renders so the "active" highlight matches what's shown.
+  if(currentRefId){
+    const selected = REFERENCE_PAGES.find(p=>p.id===currentRefId);
+    if(selected && !selected.parent_id && childPages(selected.id).length){
+      currentRefId = childPages(selected.id)[0].id;
+    }
+  }
+
   const sidebarHtml = tops.filter(p=> !searchActive || titleMatches(p) || childPages(p.id).some(titleMatches)).map(p=>{
     const kids = childPages(p.id).filter(k=> !searchActive || titleMatches(p) || titleMatches(k));
     const collapsed = searchActive ? false : !refExpanded.has(p.id);
@@ -7767,6 +7764,11 @@ function renderReference(){
   const addTopBtn = editOn ? `<button class="dashed-btn" id="add-ref-page" style="margin-top:10px;">+ Add page</button>` : "";
 
   const page = REFERENCE_PAGES.find(p=>p.id===currentRefId);
+  const parentPage = page && page.parent_id ? REFERENCE_PAGES.find(p=>p.id===page.parent_id) : null;
+  const sectionTitleHtml = parentPage ? (editOn
+    ? `<input type="text" id="ref-section-title" data-parent-id="${parentPage.id}" value="${escapeHtml(parentPage.title)}" class="ref-section-title-input">`
+    : `<div class="k-label" style="margin-bottom:4px;">${escapeHtml(parentPage.title)}</div>`) : "";
+
   let contentHtml;
   if(!REFERENCE_PAGES.length){
     contentHtml = `<div class="card"><p style="color:var(--text-dim);font-size:14px;">Nothing here yet.${editOn ? ' Click "+ Add page" to start building it out.' : ' Check back once an admin has added content.'}</p></div>`;
@@ -7775,6 +7777,7 @@ function renderReference(){
   } else if(refEditing){
     contentHtml = `
       <div class="card">
+        ${sectionTitleHtml}
         <input type="text" id="ref-title" class="onenote-title-input" placeholder="Page title" value="${escapeHtml(refDraft.title)}">
         ${richEditorHtml("ref-body-rte", refDraft.body)}
         <div class="hint" style="margin-top:8px;">Paste an image directly, or use the 🖼 button. Drag an image's corner to resize it.</div>
@@ -7788,6 +7791,7 @@ function renderReference(){
     contentHtml = `
       <div class="card">
         <div class="k-label">REFERENCE GUIDE</div>
+        ${sectionTitleHtml}
         <h2>${escapeHtml(page.title)}</h2>
         <div class="body">${sanitizeHtml(page.body)}</div>
         <div class="nav-buttons"><div></div>${editBtn}</div>
@@ -7841,10 +7845,25 @@ function renderReference(){
       refBodyRte.addEventListener("input", trigger);
     }
   }
+  const sectionTitleInput = document.getElementById("ref-section-title");
+  if(sectionTitleInput){
+    const parentId = sectionTitleInput.getAttribute("data-parent-id");
+    sectionTitleInput.addEventListener("input", ()=> scheduleRefSectionTitleSave(parentId, sectionTitleInput));
+    sectionTitleInput.addEventListener("blur", ()=> flushRefSectionTitleSave(parentId, sectionTitleInput));
+  }
 
   root.querySelectorAll("[data-ref-select]").forEach(el=> el.addEventListener("click", (e)=>{
     if(e.target.closest("[data-ref-toggle]")||e.target.closest("[data-ref-addsub]")||e.target.closest("[data-ref-del]")) return;
-    currentRefId = el.getAttribute("data-ref-select"); refEditing=false; render();
+    const id = el.getAttribute("data-ref-select");
+    const isTop = !el.getAttribute("data-ref-parent");
+    if(isTop && childPages(id).length){
+      // A top-level page with sub-pages is a folder now, not a page of its
+      // own — clicking it just opens/closes the section, same as the chevron.
+      if(refExpanded.has(id)) refExpanded.delete(id); else refExpanded.add(id);
+      render();
+      return;
+    }
+    currentRefId = id; refEditing=false; render();
   }));
   root.querySelectorAll("[data-ref-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
     e.stopPropagation();
@@ -7956,6 +7975,24 @@ function scheduleRefAutosave(pageId, titleInput, bodyRte){
   clearTimeout(refSaveTimer);
   window.pendingAutosaveKeys.add("ref:"+pageId);
   refSaveTimer = setTimeout(()=>{ flushRefSave(pageId, titleInput, bodyRte); }, 700);
+}
+
+let refSectionTitleSaveTimer = null;
+async function flushRefSectionTitleSave(parentId, inputEl){
+  clearTimeout(refSectionTitleSaveTimer);
+  window.pendingAutosaveKeys.delete("ref-section:"+parentId);
+  const title = inputEl.value.trim() || "Untitled section";
+  const { error } = await silentSave(()=> supabase.from("reference_pages").update({ title }).eq("id", parentId));
+  if(error) return;
+  const p = REFERENCE_PAGES.find(x=>x.id===parentId);
+  if(p) p.title = title;
+  const sidebarTitleEl = document.querySelector(`[data-ref-select="${parentId}"] .ref-row-title`);
+  if(sidebarTitleEl) sidebarTitleEl.textContent = title;
+}
+function scheduleRefSectionTitleSave(parentId, inputEl){
+  clearTimeout(refSectionTitleSaveTimer);
+  window.pendingAutosaveKeys.add("ref-section:"+parentId);
+  refSectionTitleSaveTimer = setTimeout(()=> flushRefSectionTitleSave(parentId, inputEl), 700);
 }
 
 async function reorderRefDrop(draggedId, targetId, pos){
