@@ -402,7 +402,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-02T08:00Z-r171";
+const BUILD_VERSION = "2026-09-09T00:00Z-r172";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -7883,8 +7883,22 @@ function renderReference(){
     const kids = childPages(parentId);
     const parentPage = REFERENCE_PAGES.find(p=>p.id===parentId);
     refExpanded.add(parentId);
-    const { data, error } = await supabase.from("reference_pages").insert({ title:"New subsection", body:"<p>Write here.</p>", parent_id:parentId, department: parentPage ? parentPage.department : currentActiveRefDepartment(), sort_order: kids.length }).select().single();
-    if(!error){ logEdit("created", "reference_page", data.title, null, data.department); await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
+    // Once a page has any sub-pages it becomes a folder header and its own body
+    // is never shown again — so on the FIRST sub-page, carry the parent's
+    // existing content into the new sub-page instead of losing it behind a
+    // placeholder. Later sub-pages just get a fresh placeholder as before.
+    const isFirstSub = kids.length===0;
+    const newTitle = isFirstSub ? "Overview" : "New subsection";
+    const newBody = isFirstSub && parentPage ? parentPage.body : "<p>Write here.</p>";
+    const { data, error } = await supabase.from("reference_pages").insert({ title:newTitle, body:newBody, parent_id:parentId, department: parentPage ? parentPage.department : currentActiveRefDepartment(), sort_order: kids.length }).select().single();
+    if(!error){
+      if(isFirstSub && parentPage){
+        await supabase.from("reference_pages").update({ body:"" }).eq("id", parentId);
+        parentPage.body = "";
+      }
+      logEdit("created", "reference_page", data.title, null, data.department);
+      await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render();
+    }
   }));
   root.querySelectorAll("[data-ref-del]").forEach(el=> el.addEventListener("click", async (e)=>{
     e.stopPropagation();
