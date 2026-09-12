@@ -402,7 +402,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r174";
+const BUILD_VERSION = "2026-09-12T00:00Z-r175";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -2247,8 +2247,8 @@ function openManageTeamsModal(){
   `, true);
   document.getElementById("manage-teams-close").addEventListener("click", closeModal);
   document.getElementById("manage-teams-new").addEventListener("click", ()=> openTeamManageModal(null));
-  root.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
-  document.querySelectorAll("#manage-teams-list [data-download-team-tracker]").forEach(el=> el.addEventListener("click", (e)=>{
+  document.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
+  document.querySelectorAll("[data-download-team-tracker]").forEach(el=> el.addEventListener("click", (e)=>{
     e.stopPropagation();
     const team = TEAMS_LIST.find(t=>t.id===el.getAttribute("data-download-team-tracker"));
     if(team) downloadTeamTracker(team);
@@ -2257,10 +2257,12 @@ function openManageTeamsModal(){
 
 // ------------------------------------------------------------
 // Manage Departments — admin-only (matches the departments table's
-// own RLS). Renaming and reordering take effect immediately;
-// deleting only succeeds if nothing still references that
-// department (enforced by a DB trigger — the alert below surfaces
-// that error rather than guessing which references exist).
+// own RLS). Renaming and reordering take effect immediately.
+// Deleting always succeeds — it permanently removes everything that
+// only belongs to that department (modules, teams, quizzes,
+// reference pages, notes); anything that also belongs to another
+// department just loses that one tag. Gated by a type-the-name
+// confirmation given how destructive it is.
 // ------------------------------------------------------------
 function openManageDepartmentsModal(){
   const sorted = DEPARTMENTS.slice().sort((a,b)=>a.sortOrder-b.sortOrder);
@@ -2315,15 +2317,11 @@ function openManageDepartmentsModal(){
   document.querySelectorAll("[data-dept-up]").forEach(el=> el.addEventListener("click", ()=> moveDept(el.getAttribute("data-dept-up"), -1)));
   document.querySelectorAll("[data-dept-down]").forEach(el=> el.addEventListener("click", ()=> moveDept(el.getAttribute("data-dept-down"), 1)));
 
-  document.querySelectorAll("[data-dept-delete]").forEach(el=> el.addEventListener("click", async ()=>{
+  document.querySelectorAll("[data-dept-delete]").forEach(el=> el.addEventListener("click", ()=>{
     const id = el.getAttribute("data-dept-delete");
     const dep = DEPARTMENTS.find(d=>d.id===id);
     if(!dep) return;
-    if(!confirm(`Delete "${dep.label}"? This only succeeds if nothing — no people, modules, teams, quizzes, reference pages, or notes — still uses it.`)) return;
-    const { error } = await supabase.from("departments").delete().eq("id", id);
-    if(error){ alert("Couldn't delete: " + error.message); return; }
-    await loadDepartments();
-    openManageDepartmentsModal();
+    openDeleteDepartmentConfirmModal(dep);
   }));
 
   document.getElementById("add-dept-btn").addEventListener("click", async ()=>{
@@ -2334,6 +2332,42 @@ function openManageDepartmentsModal(){
     const { error } = await supabase.from("departments").insert({ label, sort_order: maxSort+1 });
     if(error){ alert("Couldn't create department: " + error.message); return; }
     await loadDepartments();
+    openManageDepartmentsModal();
+  });
+}
+
+// Deleting a department is unconditional but destructive (see the
+// admin_delete_department RPC — it permanently removes any module,
+// team, or quiz that only belongs to this department, plus every
+// reference page and note filed under it), so it's gated by typing
+// the exact department name rather than a plain confirm().
+function openDeleteDepartmentConfirmModal(dep){
+  openModal(`
+    <h3>Delete "${escapeHtml(dep.label)}"?</h3>
+    <p class="sub">This permanently deletes every module, team, and standalone quiz that only belongs to this department, along with all of its Reference Guide pages and personal notes. Anything that also belongs to another department just loses this one. This can't be undone.</p>
+    <div class="field"><label>Type "${escapeHtml(dep.label)}" to confirm</label><input type="text" id="dept-delete-confirm-input" autocomplete="off"></div>
+    <div class="modal-error" id="dept-delete-confirm-error" style="display:none;"></div>
+    <div class="modal-actions"><button class="btn" id="dept-delete-cancel">Cancel</button><button class="btn danger" id="dept-delete-confirm-btn" disabled>Delete department</button></div>
+  `, true);
+  const input = document.getElementById("dept-delete-confirm-input");
+  const confirmBtn = document.getElementById("dept-delete-confirm-btn");
+  input.addEventListener("input", ()=>{ confirmBtn.disabled = input.value !== dep.label; });
+  input.focus();
+  document.getElementById("dept-delete-cancel").addEventListener("click", closeModal);
+  confirmBtn.addEventListener("click", async ()=>{
+    const errEl = document.getElementById("dept-delete-confirm-error");
+    errEl.style.display = "none";
+    confirmBtn.disabled = true; confirmBtn.textContent = "Deleting…";
+    const { error } = await supabase.rpc("admin_delete_department", { p_department_id: dep.id });
+    if(error){
+      errEl.textContent = "Couldn't delete: " + error.message;
+      errEl.style.display = "block";
+      confirmBtn.disabled = false; confirmBtn.textContent = "Delete department";
+      return;
+    }
+    await loadDepartments();
+    await loadEverything();
+    closeModal();
     openManageDepartmentsModal();
   });
 }
@@ -2660,12 +2694,6 @@ function renderTeam(){
   document.getElementById("manage-teams-btn")?.addEventListener("click", openManageTeamsModal);
   document.getElementById("manage-departments-btn")?.addEventListener("click", openManageDepartmentsModal);
   document.getElementById("add-new-user-btn")?.addEventListener("click", openAddNewUserModal);
-  root.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
-  root.querySelectorAll("[data-download-team-tracker]").forEach(el=> el.addEventListener("click", (e)=>{
-    e.stopPropagation();
-    const team = TEAMS_LIST.find(t=>t.id===el.getAttribute("data-download-team-tracker"));
-    if(team) downloadTeamTracker(team);
-  }));
   document.getElementById("module-filter")?.addEventListener("change", (e)=>{ teamModuleFilter = e.target.value; render(); });
   document.getElementById("quiz-filter")?.addEventListener("change", (e)=>{ teamQuizFilter = e.target.value; render(); });
   document.getElementById("module-sort")?.addEventListener("change", (e)=>{ teamModuleSort = e.target.value; render(); });
@@ -6323,6 +6351,7 @@ async function openPullProgressReportModal(){
 
 async function downloadTeamTracker(team){
   const btn = document.querySelector(`[data-download-team-tracker="${team.id}"]`);
+  const originalLabel = btn ? btn.textContent : null; // restore whatever the button actually said — icon-only in some places, "⬇ Tracker" in others
   if(btn){ btn.disabled = true; btn.textContent = "⏳"; }
   try{
     if(!team.memberIds.length){ alert(`"${team.name}" has no members yet.`); return; }
@@ -6333,7 +6362,7 @@ async function downloadTeamTracker(team){
   } catch(err){
     alert("Couldn't build the tracker: " + err.message);
   } finally {
-    if(btn){ btn.disabled = false; btn.textContent = "⬇"; }
+    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
   }
 }
 
