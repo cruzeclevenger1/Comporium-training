@@ -402,7 +402,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-09T00:00Z-r172";
+const BUILD_VERSION = "2026-09-12T00:00Z-r174";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -734,7 +734,7 @@ async function loadEverything(){
   // All independent of each other and of only session.user.id — combined
   // into one Promise.all so the wait is the single slowest query, not the
   // sum of separate sequential batches.
-  const [modsRes, lessonsRes, quizRes, progRes, dismissalsRes, ipicsRes, ipProgressRes, quizInProgressRes] = await Promise.all([
+  const [modsRes, lessonsRes, quizRes, progRes, dismissalsRes, ipicsRes, ipProgressRes, quizInProgressRes, modDeptRes] = await Promise.all([
     supabase.from("modules").select("*").order("sort_order"),
     supabase.from("lessons").select("*").order("sort_order"),
     supabase.from("quiz_questions").select("id,module_id,sort_order,question,options,correct_index,explanation,question_type,end_goal,final_screen_id").order("sort_order"),
@@ -742,11 +742,14 @@ async function loadEverything(){
     supabase.from("module_popup_dismissals").select("module_id").eq("user_id", session.user.id),
     supabase.from("interactive_pictures").select("id,lesson_id,hotspots,content_type"),
     supabase.from("interactive_picture_progress").select("*").eq("user_id", session.user.id),
-    supabase.from("quiz_in_progress").select("module_id").eq("user_id", session.user.id)
+    supabase.from("quiz_in_progress").select("module_id").eq("user_id", session.user.id),
+    supabase.from("module_department_access").select("module_id,department_id")
   ]);
   const mods = modsRes.data, lessons = lessonsRes.data, quiz = quizRes.data;
+  const modDeptMap = {};
+  (modDeptRes.data||[]).forEach(r=>{ (modDeptMap[r.module_id] = modDeptMap[r.module_id] || new Set()).add(r.department_id); });
   MODULES = (mods||[]).map(m=>({
-    id:m.id, title:m.title, short:m.short, ledColor:m.led_color, accessTs: !!m.access_ts, accessCs: !!m.access_cs, accessTestboard: !!m.access_testboard, isPublished: !!m.is_published,
+    id:m.id, title:m.title, short:m.short, ledColor:m.led_color, departmentIds: modDeptMap[m.id] || new Set(), isPublished: !!m.is_published,
     popupEnabled: !!m.popup_enabled, popupTitle: m.popup_title||"", popupBody: m.popup_body||"",
     lessons:(lessons||[]).filter(l=>l.module_id===m.id).map(l=>({id:l.id,label:l.label,title:l.title,body:l.body})),
     // sim_screens excluded here — full-resolution screenshots were the
@@ -797,6 +800,11 @@ async function ensureInteractivePicSlides(ipId){
 async function loadProfile(){
   const { data } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
   profile = data;
+  if(profile){
+    await loadDepartments();
+    const { data: myDeptRows } = await supabase.from("user_department_access").select("department_id").eq("user_id", profile.id);
+    profile.departmentIds = new Set((myDeptRows||[]).map(r=>r.department_id));
+  }
   simWarningDismissed = !!(profile && profile.sim_warning_dismissed);
   dashboardShowCompleted = !!(profile && profile.dashboard_show_completed);
   showSearchPreview = !(profile && profile.show_search_preview === false);
@@ -1196,7 +1204,7 @@ let dashboardShowCompleted = false; // hidden by default; loaded from profile.da
 let showSearchPreview = true; // shown by default; loaded from profile.show_search_preview at login
 let lastContentSearchQuery = ""; // lets "back to results" in the instances drill-down re-run the same search
 let pendingSearchHighlight = null; // { query, source } — consumed once by renderLesson() right after navigating to a search result
-let activeDepartment = null; // 'TS' or 'CS' — only meaningful for people with access to both; set on first render
+let activeDepartment = null; // a department id — only meaningful for people with access to more than one; set on first render
 // Fullscreen overlays (Simulated Navigation player/editor, Interactive
 // Picture config/viewer) are appended directly to document.body, outside
 // #root, so render() never touches them. Each pushes its own removal here,
@@ -1207,48 +1215,48 @@ function closeAllFullscreenOverlays(){
   window.activeFullscreenCleanups = [];
 }
 
-// Single source of truth for which departments exist. Adding one here
-// isn't sufficient alone — code using the helpers below picks it up
-// automatically, but any hardcoded two-way check elsewhere needs its own update.
-const DEPARTMENTS = [
-  { id:'TS', label:'Tech Support', profileField:'can_access_ts', rowField:'canAccessTs', teamField:'accessTs', teamDbField:'access_ts' },
-  { id:'CS', label:'Customer Service', profileField:'can_access_cs', rowField:'canAccessCs', teamField:'accessCs', teamDbField:'access_cs' },
-  { id:'TESTBOARD', label:'Testboard', profileField:'can_access_testboard', rowField:'canAccessTestboard', teamField:'accessTestboard', teamDbField:'access_testboard' }
-];
+// Single source of truth for which departments exist — loaded from the
+// `departments` table (see loadDepartments()) rather than hardcoded, so
+// creating/renaming/deleting a department in Manage Departments takes
+// effect everywhere immediately with no code change. Every entity that
+// carries department access (profiles, teams, modules, standalone quizzes)
+// now stores it the same way: a `departmentIds` Set of department ids,
+// populated from the matching junction table when that entity loads.
+let DEPARTMENTS = [];
+async function loadDepartments(){
+  const { data, error } = await supabase.from("departments").select("*").order("sort_order");
+  if(!error) DEPARTMENTS = (data||[]).map(d=>({ id:d.id, label:d.label, sortOrder:d.sort_order }));
+}
 function deptLabel(id){ const d = DEPARTMENTS.find(x=>x.id===id); return d ? d.label : id; }
 function renderDeptTabsHtml(activeDept, dataAttr){
   return myDepartments().map(id=> `<button class="dept-tab ${activeDept===id?'active':''}" data-${dataAttr}="${id}">${escapeHtml(deptLabel(id))}</button>`).join("");
 }
 function teamHasDeptAccess(team, deptId){
-  const d = DEPARTMENTS.find(x=>x.id===deptId);
-  return d ? !!team[d.teamField] : false;
+  return !!(team && team.departmentIds && team.departmentIds.has(deptId));
 }
 // For edit-log labeling only, where a single representative department is
 // enough — the log's own department field is just for filtering by tab,
 // not an authoritative record of everywhere a shared module is visible.
 function primaryDeptOf(obj){
-  const dep = DEPARTMENTS.find(dep=> obj[dep.teamField]);
+  if(!obj || !obj.departmentIds || !obj.departmentIds.size) return null;
+  const dep = DEPARTMENTS.find(dep=> obj.departmentIds.has(dep.id));
   return dep ? dep.id : null;
 }
 function canAccessDeptForRow(row, deptId){
-  const d = DEPARTMENTS.find(x=>x.id===deptId);
-  return d ? !!row[d.rowField] : false;
+  return !!(row && row.departmentIds && row.departmentIds.has(deptId));
 }
 function rawRowHasDeptAccess(row, deptId){
-  const d = DEPARTMENTS.find(x=>x.id===deptId);
-  return d ? !!row[d.teamDbField] : false;
+  return !!(row && row.departmentIds && row.departmentIds.has(deptId));
 }
 function canAccessDepartment(dept){
-  if(!profile) return false;
-  const d = DEPARTMENTS.find(x=>x.id===dept);
-  return d ? !!profile[d.profileField] : false;
+  return !!(profile && profile.departmentIds && profile.departmentIds.has(dept));
 }
 function myDepartments(){
   return DEPARTMENTS.filter(d=> canAccessDepartment(d.id)).map(d=>d.id);
 }
 function currentActiveDepartment(){
   const mine = myDepartments();
-  if(mine.length===0) return 'TS';
+  if(mine.length===0) return null;
   if(activeDepartment && mine.includes(activeDepartment)) return activeDepartment;
   activeDepartment = mine[0];
   return activeDepartment;
@@ -1820,7 +1828,7 @@ async function loadQuizProgressData(){
     });
     const completedCount = perQuiz.filter(x=>x.completed).length;
     const pct = perQuiz.length ? Math.round((completedCount/perQuiz.length)*100) : 0;
-    return { id:person.id, name:person.name, role:person.role, teamIds:person.teamIds, canAccessTs:person.canAccessTs, canAccessCs:person.canAccessCs, canAccessTestboard:person.canAccessTestboard, perQuiz, completedCount, totalCount:perQuiz.length, pct };
+    return { id:person.id, name:person.name, role:person.role, teamIds:person.teamIds, departmentIds:person.departmentIds, perQuiz, completedCount, totalCount:perQuiz.length, pct };
   });
 }
 
@@ -1829,9 +1837,16 @@ async function openTeamProgress(){
   const { data: allProgress } = await supabase.from("progress").select("*");
   const { data: teamsData } = await supabase.from("teams").select("*").order("name");
   const { data: memberships } = await supabase.from("team_members").select("*");
+  const { data: teamDeptRows } = await supabase.from("team_department_access").select("team_id,department_id");
+  const { data: userDeptRows } = await supabase.from("user_department_access").select("user_id,department_id");
+
+  const teamDeptMap = {};
+  (teamDeptRows||[]).forEach(r=>{ (teamDeptMap[r.team_id] = teamDeptMap[r.team_id] || new Set()).add(r.department_id); });
+  const userDeptMap = {};
+  (userDeptRows||[]).forEach(r=>{ (userDeptMap[r.user_id] = userDeptMap[r.user_id] || new Set()).add(r.department_id); });
 
   TEAMS_LIST = (teamsData||[]).map(t=>({
-    id: t.id, name: t.name, accessTs: !!t.access_ts, accessCs: !!t.access_cs, accessTestboard: !!t.access_testboard,
+    id: t.id, name: t.name, departmentIds: teamDeptMap[t.id] || new Set(),
     memberIds: (memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id)
   }));
 
@@ -1858,7 +1873,7 @@ async function openTeamProgress(){
     const teamIds = (memberships||[]).filter(m=>m.user_id===p.id).map(m=>m.team_id);
     return { id:p.id, name:p.name, role:p.role, perModule, perModuleRaw, overall, mastered, teamIds,
       permEditContent: !!p.perm_edit_content, permCreateQuizzes: !!p.perm_create_quizzes, permManagePeople: !!p.perm_manage_people, permCreateAccounts: !!p.perm_create_accounts,
-      canAccessTs: !!p.can_access_ts, canAccessCs: !!p.can_access_cs, canAccessTestboard: !!p.can_access_testboard };
+      departmentIds: userDeptMap[p.id] || new Set() };
   });
   view = "team"; render();
 }
@@ -2129,17 +2144,17 @@ function openTeamManageModal(teamId){
   const memberIds = new Set(team ? team.memberIds : []);
   const mine = myDepartments();
   const initial = {};
-  DEPARTMENTS.forEach(d=>{ initial[d.id] = team ? !!team[d.teamField] : mine.includes(d.id); });
+  DEPARTMENTS.forEach(d=>{ initial[d.id] = team ? team.departmentIds.has(d.id) : mine.includes(d.id); });
 
   function memberListHtml(includeMap){
-    return teamRows.filter(r=> DEPARTMENTS.some(d=> includeMap[d.id] && r[d.rowField])).map(r=>`
+    return teamRows.filter(r=> DEPARTMENTS.some(d=> includeMap[d.id] && canAccessDeptForRow(r, d.id))).map(r=>`
       <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);">
         <input type="checkbox" value="${r.id}" class="team-member-check" ${memberIds.has(r.id)?'checked':''}> ${escapeHtml(r.name)}${r.role==='admin'?' <span class="role-tag admin">ADMIN</span>':r.role==='supervisor'?' <span class="role-tag supervisor">SUPERVISOR</span>':''}
       </label>`).join("") || `<p style="color:var(--text-faint);font-size:12.5px;">Nobody has access to the selected department(s) yet.</p>`;
   }
 
   const deptFieldHtml = team
-    ? `<div class="field"><label>Department access</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${DEPARTMENTS.filter(d=>team[d.teamField]).map(d=>d.label).join(' + ')} — set when the team was created, can't be changed after.</p></div>`
+    ? `<div class="field"><label>Department access</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${DEPARTMENTS.filter(d=>team.departmentIds.has(d.id)).map(d=>d.label).join(' + ')} — set when the team was created, can't be changed after.</p></div>`
     : `<div class="field"><label>Department access</label>
         ${DEPARTMENTS.map(d=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-team-dept-check="${d.id}" ${initial[d.id]?'checked':''}> ${escapeHtml(d.label)}</label>`).join("")}
         <p class="hint">Check one or more — only people with access to a checked department will be selectable below.</p>
@@ -2171,7 +2186,7 @@ function openTeamManageModal(teamId){
       await supabase.from("teams").delete().eq("id", team.id);
       if(teamRosterFilter === team.id) teamRosterFilter = ""; // don't leave the roster filtered on a team that no longer exists
       QUIZ_PROGRESS_ROWS = null; // team membership changed, force a fresh load next time it's viewed
-      closeModal(); await openTeamProgress();
+      closeModal(); await openTeamProgress(); openManageTeamsModal();
     }
   });
   document.getElementById("team-save-btn").addEventListener("click", async ()=>{
@@ -2181,12 +2196,13 @@ function openTeamManageModal(teamId){
     let tid = team ? team.id : null;
     if(!tid){
       const map = currentMap();
-      if(!DEPARTMENTS.some(d=>map[d.id])){ alert("Check at least one department."); return; }
-      const insertObj = { name };
-      DEPARTMENTS.forEach(d=>{ insertObj[d.teamDbField] = map[d.id]; });
-      const { data, error } = await supabase.from("teams").insert(insertObj).select().single();
+      const deptIds = DEPARTMENTS.filter(d=>map[d.id]).map(d=>d.id);
+      if(!deptIds.length){ alert("Check at least one department."); return; }
+      const { data, error } = await supabase.from("teams").insert({ name }).select().single();
       if(error){ alert("Couldn't create team: " + error.message); return; }
       tid = data.id;
+      const { error: deptErr } = await supabase.rpc("set_team_departments", { p_team_id: tid, p_department_ids: deptIds });
+      if(deptErr){ alert("Team created, but couldn't set its department: " + deptErr.message); }
     } else {
       await supabase.from("teams").update({ name }).eq("id", tid);
     }
@@ -2196,6 +2212,129 @@ function openTeamManageModal(teamId){
     }
     closeModal();
     await openTeamProgress();
+    openManageTeamsModal();
+  });
+}
+
+// ------------------------------------------------------------
+// Manage Teams — a single popup listing every team the viewer's
+// department access covers, with create/edit/delete all reached
+// from here instead of a permanent section on the People page.
+// ------------------------------------------------------------
+function openManageTeamsModal(){
+  const dept = currentActiveDepartment();
+  const deptTeams = TEAMS_LIST.filter(t=> teamHasDeptAccess(t, dept));
+  const listHtml = deptTeams.length ? deptTeams.map(t=>`
+    <div class="sub-card" style="display:flex;align-items:center;justify-content:space-between;">
+      <div>
+        <div style="font-weight:600;">${escapeHtml(t.name)}</div>
+        <div style="color:var(--text-faint);font-size:12.5px;">${t.memberIds.length} member${t.memberIds.length===1?'':'s'} · ${DEPARTMENTS.filter(d=>t.departmentIds.has(d.id)).map(d=>d.label).join(' + ')}</div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="mini-btn" data-download-team-tracker="${t.id}">⬇ Tracker</button>
+        <button class="mini-btn" data-manage-team="${t.id}">Manage</button>
+      </div>
+    </div>
+  `).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No teams yet.</p>`;
+
+  openModal(`
+    <h3>Manage Teams</h3>
+    <div id="manage-teams-list" style="max-height:340px;overflow-y:auto;">${listHtml}</div>
+    <div class="modal-actions" style="justify-content:space-between;">
+      <button class="btn primary" id="manage-teams-new">+ New team</button>
+      <button class="btn" id="manage-teams-close">Close</button>
+    </div>
+  `, true);
+  document.getElementById("manage-teams-close").addEventListener("click", closeModal);
+  document.getElementById("manage-teams-new").addEventListener("click", ()=> openTeamManageModal(null));
+  root.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
+  document.querySelectorAll("#manage-teams-list [data-download-team-tracker]").forEach(el=> el.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    const team = TEAMS_LIST.find(t=>t.id===el.getAttribute("data-download-team-tracker"));
+    if(team) downloadTeamTracker(team);
+  }));
+}
+
+// ------------------------------------------------------------
+// Manage Departments — admin-only (matches the departments table's
+// own RLS). Renaming and reordering take effect immediately;
+// deleting only succeeds if nothing still references that
+// department (enforced by a DB trigger — the alert below surfaces
+// that error rather than guessing which references exist).
+// ------------------------------------------------------------
+function openManageDepartmentsModal(){
+  const sorted = DEPARTMENTS.slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+  const listHtml = sorted.length ? sorted.map((d,i)=>`
+    <div class="sub-card" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+      <input type="text" class="dept-name-input" data-dept-id="${d.id}" value="${escapeHtml(d.label)}" style="flex:1;">
+      <div style="display:flex;gap:6px;">
+        <button class="mini-btn" data-dept-up="${d.id}" ${i===0?'disabled':''} title="Move up">↑</button>
+        <button class="mini-btn" data-dept-down="${d.id}" ${i===sorted.length-1?'disabled':''} title="Move down">↓</button>
+        <button class="mini-btn danger" data-dept-delete="${d.id}">Delete</button>
+      </div>
+    </div>
+  `).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No departments yet.</p>`;
+
+  openModal(`
+    <h3>Manage Departments</h3>
+    <div id="manage-departments-list" style="max-height:340px;overflow-y:auto;">${listHtml}</div>
+    <div class="field" style="margin-top:14px;"><label>New department</label>
+      <div style="display:flex;gap:8px;"><input type="text" id="new-dept-name" placeholder="e.g. Billing" style="flex:1;"><button class="btn primary" id="add-dept-btn">Add</button></div>
+    </div>
+    <div class="modal-actions"><button class="btn" id="manage-departments-close">Close</button></div>
+  `, true);
+
+  document.getElementById("manage-departments-close").addEventListener("click", closeModal);
+
+  document.querySelectorAll(".dept-name-input").forEach(el=>{
+    let renameTimer = null;
+    el.addEventListener("input", ()=>{
+      clearTimeout(renameTimer);
+      renameTimer = setTimeout(async ()=>{
+        const id = el.getAttribute("data-dept-id");
+        const label = el.value.trim();
+        if(!label) return;
+        const { error } = await supabase.from("departments").update({ label }).eq("id", id);
+        if(error){ alert("Couldn't rename: " + error.message); return; }
+        await loadDepartments();
+      }, 500);
+    });
+  });
+
+  async function moveDept(id, dir){
+    const cur = DEPARTMENTS.slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+    const idx = cur.findIndex(d=>d.id===id);
+    const swapIdx = idx + dir;
+    if(idx<0 || swapIdx<0 || swapIdx>=cur.length) return;
+    const a = cur[idx], b = cur[swapIdx];
+    const { error } = await supabase.from("departments").update({ sort_order: b.sortOrder }).eq("id", a.id);
+    if(!error) await supabase.from("departments").update({ sort_order: a.sortOrder }).eq("id", b.id);
+    await loadDepartments();
+    openManageDepartmentsModal();
+  }
+  document.querySelectorAll("[data-dept-up]").forEach(el=> el.addEventListener("click", ()=> moveDept(el.getAttribute("data-dept-up"), -1)));
+  document.querySelectorAll("[data-dept-down]").forEach(el=> el.addEventListener("click", ()=> moveDept(el.getAttribute("data-dept-down"), 1)));
+
+  document.querySelectorAll("[data-dept-delete]").forEach(el=> el.addEventListener("click", async ()=>{
+    const id = el.getAttribute("data-dept-delete");
+    const dep = DEPARTMENTS.find(d=>d.id===id);
+    if(!dep) return;
+    if(!confirm(`Delete "${dep.label}"? This only succeeds if nothing — no people, modules, teams, quizzes, reference pages, or notes — still uses it.`)) return;
+    const { error } = await supabase.from("departments").delete().eq("id", id);
+    if(error){ alert("Couldn't delete: " + error.message); return; }
+    await loadDepartments();
+    openManageDepartmentsModal();
+  }));
+
+  document.getElementById("add-dept-btn").addEventListener("click", async ()=>{
+    const input = document.getElementById("new-dept-name");
+    const label = input.value.trim();
+    if(!label) return;
+    const maxSort = DEPARTMENTS.reduce((m,d)=>Math.max(m, d.sortOrder||0), 0);
+    const { error } = await supabase.from("departments").insert({ label, sort_order: maxSort+1 });
+    if(error){ alert("Couldn't create department: " + error.message); return; }
+    await loadDepartments();
+    openManageDepartmentsModal();
   });
 }
 
@@ -2204,13 +2343,6 @@ function renderTeam(){
     loadQuizProgressData().then(()=> render());
   }
   const dept = currentActiveDepartment();
-  const deptTeams = TEAMS_LIST.filter(t=> teamHasDeptAccess(t, dept));
-  const teamsHtml = deptTeams.length ? deptTeams.map(t=>`
-    <span style="display:inline-flex;align-items:center;gap:2px;margin:0 6px 6px 0;">
-      <button class="mini-btn" data-manage-team="${t.id}" style="border-top-right-radius:0;border-bottom-right-radius:0;">${escapeHtml(t.name)} · ${t.memberIds.length}</button>
-      <button class="mini-btn" data-download-team-tracker="${t.id}" title="Download tracker for ${escapeHtml(t.name)}" style="border-top-left-radius:0;border-bottom-left-radius:0;border-left:1px solid var(--stroke);">⬇</button>
-    </span>
-  `).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No teams yet.</p>`;
 
   // Scoped to people the viewing admin's own department access covers,
   // before role/team/search filters apply on top — otherwise a CS-only
@@ -2269,7 +2401,7 @@ function renderTeam(){
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:managePeople" ${currentPerms.managePeople?'checked':''}> Can edit users and teams</label>
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:createAccounts" ${currentPerms.createAccounts?'checked':''}> Can add new user accounts</label>
           <div style="border-top:1px solid var(--stroke);margin-top:6px;padding-top:10px;">` : ""}
-            ${DEPARTMENTS.map(d=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-top:4px;"><input type="checkbox" data-dept-check="${r.id}:${d.id}" ${r[d.rowField]?'checked':''}> Can access ${escapeHtml(d.label)}</label>`).join("")}
+            ${DEPARTMENTS.map(d=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-top:4px;"><input type="checkbox" data-dept-check="${r.id}:${d.id}" ${canAccessDeptForRow(r, d.id)?'checked':''}> Can access ${escapeHtml(d.label)}</label>`).join("")}
           ${!isSelf ? `</div>` : ""}
         </div>
       </td></tr>` : "";
@@ -2424,16 +2556,10 @@ function renderTeam(){
 
   renderShell(`
     ${teamPageDeptTabsHtml}
-    ${canManagePeople() ? `
-    <div class="card">
-      ${sectionHeader('teams', 'Teams', deptTeams.length)}
-      ${teamsSectionOpen.teams ? `
-        <div style="margin-top:14px;">
-          <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:10px;">
-            <button class="btn primary" id="new-team-btn">+ New team</button>
-          </div>
-          <div>${teamsHtml}</div>
-        </div>` : ""}
+    ${(canManagePeople() || isAdmin()) ? `
+    <div style="display:flex;gap:10px;margin-bottom:16px;">
+      ${canManagePeople() ? `<button class="btn" id="manage-teams-btn">Manage Teams</button>` : ""}
+      ${isAdmin() ? `<button class="btn" id="manage-departments-btn">Manage Departments</button>` : ""}
     </div>` : ""}
 
     ${(canManagePeople() || canCreateAccounts()) ? `
@@ -2531,7 +2657,8 @@ function renderTeam(){
     render();
   }));
 
-  document.getElementById("new-team-btn")?.addEventListener("click", ()=> openTeamManageModal(null));
+  document.getElementById("manage-teams-btn")?.addEventListener("click", openManageTeamsModal);
+  document.getElementById("manage-departments-btn")?.addEventListener("click", openManageDepartmentsModal);
   document.getElementById("add-new-user-btn")?.addEventListener("click", openAddNewUserModal);
   root.querySelectorAll("[data-manage-team]").forEach(el=> el.addEventListener("click", ()=> openTeamManageModal(el.getAttribute("data-manage-team"))));
   root.querySelectorAll("[data-download-team-tracker]").forEach(el=> el.addEventListener("click", (e)=>{
@@ -2610,11 +2737,13 @@ function renderTeam(){
     if(!dep) return;
     const row = teamRows.find(r=>r.id===id);
     const checked = e.target.checked;
+    const newSet = new Set(row ? row.departmentIds : []);
+    if(checked) newSet.add(depId); else newSet.delete(depId);
     el.disabled = true;
-    const { error } = await supabase.from("profiles").update({ [dep.profileField]: checked }).eq("id", id);
+    const { error } = await supabase.rpc("set_user_departments", { p_user_id: id, p_department_ids: Array.from(newSet) });
     el.disabled = false;
     if(error){ alert("Couldn't save: " + error.message); e.target.checked = !checked; return; }
-    if(row) row[dep.rowField] = checked;
+    if(row) row.departmentIds = newSet;
     logEdit("updated", "department_access", `${row?row.name:id} — ${dep.label} ${checked?'granted':'removed'}`);
     showToast("Access updated.");
   }));
@@ -3095,10 +3224,13 @@ async function createNewStandaloneQuiz(){
   const title = await promptModal("New quiz", "Quiz title");
   if(!title) return;
   const insertObj = { title:title.trim(), created_by:session.user.id, created_by_name:profile.name, audience_type:"everyone", sent:false };
-  const activeDept = DEPARTMENTS.find(d=>d.id===currentActiveDepartment());
-  if(activeDept) insertObj[activeDept.teamDbField] = true;
   const { data, error } = await supabase.from("standalone_quizzes").insert(insertObj).select().single();
   if(error){ alert("Couldn't create quiz: " + error.message); return; }
+  const activeDeptId = currentActiveDepartment();
+  if(activeDeptId){
+    const { error: deptErr } = await supabase.rpc("set_quiz_departments", { p_quiz_id: data.id, p_department_ids: [activeDeptId] });
+    if(deptErr){ alert("Quiz created, but couldn't set its department: " + deptErr.message); }
+  }
   logEdit("created", "standalone_quiz", title.trim());
   await loadStandaloneQuizzes();
   await openQuizBuilder(data.id);
@@ -3217,18 +3349,25 @@ async function openQuizBuilder(id){
   if(!TEAMS_LIST.length){
     const { data: teamsData } = await supabase.from("teams").select("*").order("name");
     const { data: memberships } = await supabase.from("team_members").select("*");
-    TEAMS_LIST = (teamsData||[]).map(t=>({ id:t.id, name:t.name, accessTs:!!t.access_ts, accessCs:!!t.access_cs, accessTestboard:!!t.access_testboard, memberIds:(memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id) }));
+    const { data: teamDeptRows } = await supabase.from("team_department_access").select("team_id,department_id");
+    const teamDeptMap = {};
+    (teamDeptRows||[]).forEach(r=>{ (teamDeptMap[r.team_id] = teamDeptMap[r.team_id] || new Set()).add(r.department_id); });
+    TEAMS_LIST = (teamsData||[]).map(t=>({ id:t.id, name:t.name, departmentIds: teamDeptMap[t.id] || new Set(), memberIds:(memberships||[]).filter(m=>m.team_id===t.id).map(m=>m.user_id) }));
   }
   if(!teamRows.length){
     const { data: people } = await supabase.from("profiles").select("*").order("name");
-    teamRows = (people||[]).map(p=>({ id:p.id, name:p.name, role:p.role, perModule:{}, perModuleRaw:{}, overall:0, mastered:0, teamIds:[], canAccessTs:!!p.can_access_ts, canAccessCs:!!p.can_access_cs, canAccessTestboard:!!p.can_access_testboard }));
+    const { data: userDeptRows } = await supabase.from("user_department_access").select("user_id,department_id");
+    const userDeptMap = {};
+    (userDeptRows||[]).forEach(r=>{ (userDeptMap[r.user_id] = userDeptMap[r.user_id] || new Set()).add(r.department_id); });
+    teamRows = (people||[]).map(p=>({ id:p.id, name:p.name, role:p.role, perModule:{}, perModuleRaw:{}, overall:0, mastered:0, teamIds:[], departmentIds: userDeptMap[p.id] || new Set() }));
   }
   const { data: qRow } = await supabase.from("standalone_quizzes").select("*").eq("id", id).single();
   const { data: questions } = await supabase.from("standalone_quiz_questions").select("*").eq("quiz_id", id).order("sort_order");
   const { data: recipients } = await supabase.from("standalone_quiz_recipients").select("user_id").eq("quiz_id", id);
+  const { data: quizDeptRows } = await supabase.from("quiz_department_access").select("department_id").eq("quiz_id", id);
   quizBuilderDraft = {
     id, title:qRow.title, audienceType:qRow.audience_type, teamId:qRow.team_id, sent:qRow.sent,
-    accessTs: !!qRow.access_ts, accessCs: !!qRow.access_cs, accessTestboard: !!qRow.access_testboard,
+    departmentIds: new Set((quizDeptRows||[]).map(r=>r.department_id)),
     specificIds: (recipients||[]).map(r=>r.user_id),
     questions: (questions||[]).map(q=>({ id:q.id, type:q.question_type, question:q.question, options:q.options||["Option A","Option B"], correct:q.correct_index||0, explain:q.explanation||"" }))
   };
@@ -3268,11 +3407,11 @@ function renderQuizBuilder(){
     </div>`;
   }).join("");
 
-  const quizDepts = DEPARTMENTS.filter(dep=> d[dep.teamField]);
+  const quizDepts = DEPARTMENTS.filter(dep=> d.departmentIds.has(dep.id));
   const deptFieldHtml = locked
     ? `<div class="field"><label>Department</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${quizDepts.map(dep=>dep.label).join(' + ') || 'None'} — set when the quiz was sent, can't be changed after.</p></div>`
     : `<div class="field"><label>Send to which department(s)</label>
-        ${DEPARTMENTS.map(dep=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-qz-dept-check="${dep.id}" ${d[dep.teamField]?'checked':''}> ${escapeHtml(dep.label)}</label>`).join("")}
+        ${DEPARTMENTS.map(dep=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-qz-dept-check="${dep.id}" ${d.departmentIds.has(dep.id)?'checked':''}> ${escapeHtml(dep.label)}</label>`).join("")}
         <p class="hint">Check one or more — only people with access to a checked department can ever see this quiz.</p>
       </div>`;
   const audienceSection = `
@@ -3284,8 +3423,8 @@ function renderQuizBuilder(){
         <option value="specific" ${d.audienceType==='specific'?'selected':''}>Specific people…</option>
       </select>
     </div>
-    ${d.audienceType==='team' ? `<div class="field" id="qz-team-field"><label>Team</label><select id="qz-team-select" ${locked?'disabled':''}>${TEAMS_LIST.filter(t=> quizDepts.some(dep=> t[dep.teamField])).map(t=>`<option value="${t.id}" ${d.teamId===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("") || '<option value="">No teams in these departments yet</option>'}</select></div>` : ""}
-    ${d.audienceType==='specific' ? `<div class="field" id="qz-people-field"><label>Choose people</label><div id="qz-people-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">${teamRows.filter(r=> quizDepts.some(dep=> r[dep.rowField])).map(r=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);"><input type="checkbox" value="${r.id}" class="qz-person-check" ${d.specificIds.includes(r.id)?'checked':''} ${locked?'disabled':''}> ${escapeHtml(r.name)}</label>`).join("")}</div></div>` : ""}
+    ${d.audienceType==='team' ? `<div class="field" id="qz-team-field"><label>Team</label><select id="qz-team-select" ${locked?'disabled':''}>${TEAMS_LIST.filter(t=> quizDepts.some(dep=> t.departmentIds.has(dep.id))).map(t=>`<option value="${t.id}" ${d.teamId===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("") || '<option value="">No teams in these departments yet</option>'}</select></div>` : ""}
+    ${d.audienceType==='specific' ? `<div class="field" id="qz-people-field"><label>Choose people</label><div id="qz-people-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--stroke);border-radius:8px;padding:10px;">${teamRows.filter(r=> quizDepts.some(dep=> r.departmentIds.has(dep.id))).map(r=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);"><input type="checkbox" value="${r.id}" class="qz-person-check" ${d.specificIds.includes(r.id)?'checked':''} ${locked?'disabled':''}> ${escapeHtml(r.name)}</label>`).join("")}</div></div>` : ""}
   `;
 
   renderShell(`
@@ -3335,8 +3474,8 @@ function wireQuizBuilderEvents(){
   const teamSelect = document.getElementById("qz-team-select");
   if(teamSelect) teamSelect.addEventListener("change", (e)=>{ d.teamId = e.target.value; });
   root.querySelectorAll("[data-qz-dept-check]").forEach(el=> el.addEventListener("change", (e)=>{
-    const dep = DEPARTMENTS.find(x=>x.id===el.getAttribute("data-qz-dept-check"));
-    if(dep) d[dep.teamField] = e.target.checked;
+    const depId = el.getAttribute("data-qz-dept-check");
+    if(e.target.checked) d.departmentIds.add(depId); else d.departmentIds.delete(depId);
     renderQuizBuilder(); // re-render so the team/people lists below reflect the new department selection immediately
   }));
 
@@ -3399,7 +3538,7 @@ function wireQuizBuilderEvents(){
   if(sendBtn) sendBtn.addEventListener("click", async ()=>{
     if(!d.title.trim()){ alert("Give the quiz a title first."); return; }
     if(!d.questions.length){ alert("Add at least one question first."); return; }
-    if(!DEPARTMENTS.some(dep=> d[dep.teamField])){ alert("Check at least one department to send this to."); return; }
+    if(!d.departmentIds.size){ alert("Check at least one department to send this to."); return; }
     if(d.audienceType==="team" && !d.teamId){ alert("Pick a team first."); return; }
     if(d.audienceType==="specific" && !d.specificIds.length){ alert("Pick at least one person first."); return; }
     sendBtn.disabled = true; sendBtn.textContent = "Sending…";
@@ -3414,9 +3553,10 @@ function wireQuizBuilderEvents(){
     }
 
     const updateObj = { audience_type:d.audienceType, team_id: d.audienceType==="team"?d.teamId:null, sent:true, sent_at:new Date().toISOString() };
-    DEPARTMENTS.forEach(dep=>{ updateObj[dep.teamDbField] = !!d[dep.teamField]; });
     const { error } = await supabase.from("standalone_quizzes").update(updateObj).eq("id", d.id);
     if(error){ alert("Couldn't send: " + error.message); sendBtn.disabled = false; sendBtn.textContent = "Send quiz →"; return; }
+    const { error: deptErr } = await supabase.rpc("set_quiz_departments", { p_quiz_id: d.id, p_department_ids: Array.from(d.departmentIds) });
+    if(deptErr){ alert("Quiz sent, but couldn't finalize its departments: " + deptErr.message); sendBtn.disabled = false; sendBtn.textContent = "Send quiz →"; return; }
 
     d.sent = true;
     logEdit("sent", "standalone_quiz", d.title);
@@ -3455,15 +3595,19 @@ let quizBuilderDraft = null;
 let expandedQuizQuestionIdx = null;
 
 async function loadStandaloneQuizzes(){
-  const [{ data: quizzes }, { data: questions }, { data: myAttempts }, { data: myTeamMemberships }, { data: myRecipientRows }] = await Promise.all([
+  const [{ data: quizzes }, { data: questions }, { data: myAttempts }, { data: myTeamMemberships }, { data: myRecipientRows }, { data: quizDeptRows }] = await Promise.all([
     supabase.from("standalone_quizzes").select("*").order("created_at", { ascending:false }),
     supabase.from("standalone_quiz_questions").select("*").order("sort_order"),
     supabase.from("standalone_quiz_attempts").select("*").eq("user_id", session.user.id),
     supabase.from("team_members").select("team_id").eq("user_id", session.user.id),
-    supabase.from("standalone_quiz_recipients").select("quiz_id").eq("user_id", session.user.id)
+    supabase.from("standalone_quiz_recipients").select("quiz_id").eq("user_id", session.user.id),
+    supabase.from("quiz_department_access").select("quiz_id,department_id")
   ]);
   const myTeamIds = new Set((myTeamMemberships||[]).map(m=>m.team_id));
   const myRecipientQuizIds = new Set((myRecipientRows||[]).map(r=>r.quiz_id));
+  const quizDeptMap = {};
+  (quizDeptRows||[]).forEach(r=>{ (quizDeptMap[r.quiz_id] = quizDeptMap[r.quiz_id] || new Set()).add(r.department_id); });
+  (quizzes||[]).forEach(q=>{ q.departmentIds = quizDeptMap[q.id] || new Set(); });
 
   QUIZZES = (quizzes||[])
     .filter(q=> myDepartments().some(id=> rawRowHasDeptAccess(q, id)))
@@ -3479,7 +3623,7 @@ async function loadStandaloneQuizzes(){
     }
     return {
       id:q.id, title:q.title, createdBy:q.created_by, createdByName:q.created_by_name,
-      accessTs:!!q.access_ts, accessCs:!!q.access_cs, accessTestboard:!!q.access_testboard,
+      departmentIds: q.departmentIds,
       audienceType:q.audience_type, teamId:q.team_id, sent:q.sent, createdAt:q.created_at,
       questions:(questions||[]).filter(qq=>qq.quiz_id===q.id).map(qq=>({ id:qq.id, type:qq.question_type, question:qq.question, options:qq.options||[], correct:qq.correct_index, explain:qq.explanation||"" })),
       myAttempt: (myAttempts||[]).find(a=>a.quiz_id===q.id) || null,
@@ -3551,7 +3695,7 @@ const EDIT_LOG_ACTION_COLORS = { created:"var(--green)", updated:"var(--cyan)", 
 
 function renderEditLog(){
   const dept = currentActiveDepartment();
-  let rows = EDIT_LOG_ROWS.filter(r=> !r.department || r.department===dept);
+  let rows = EDIT_LOG_ROWS.filter(r=> !r.department_id || r.department_id===dept);
   if(editLogTypeFilter) rows = rows.filter(r=> r.entity_type === editLogTypeFilter);
   if(editLogSearchQuery.trim()){
     const q = editLogSearchQuery.trim().toLowerCase();
@@ -3667,8 +3811,8 @@ async function loadAllNotifications(){
 
   let claimedRoots = [];
   if(admin){
-    NOTIF_UNCLAIMED = (ucRes.data||[]).filter(m=> !m.department || canAccessDepartment(m.department));
-    claimedRoots = (mcRes.data||[]).filter(m=> !m.department || canAccessDepartment(m.department));
+    NOTIF_UNCLAIMED = (ucRes.data||[]).filter(m=> !m.department_id || canAccessDepartment(m.department_id));
+    claimedRoots = (mcRes.data||[]).filter(m=> !m.department_id || canAccessDepartment(m.department_id));
   } else {
     NOTIF_UNCLAIMED = [];
   }
@@ -4040,7 +4184,7 @@ function logEdit(action, entityType, entityLabel, details, department){
   if(!session) return;
   supabase.from("edit_log").insert({
     actor_id: session.user.id, actor_name: profile.name,
-    action, entity_type: entityType, entity_label: entityLabel || "", details: details || null, department: department || null
+    action, entity_type: entityType, entity_label: entityLabel || "", details: details || null, department_id: department || null
   }).then(()=>{}, ()=>{}); // best-effort — never let logging failures affect the actual save
 }
 
@@ -4081,8 +4225,7 @@ function setupRealtime(){
       const oldP = profile;
       await loadProfile(); // re-fetch from source of truth rather than trusting the realtime payload directly —
                             // safer against payload-shape surprises and against two rapid updates racing each other
-      const changed = !oldP || oldP.can_access_ts !== profile.can_access_ts || oldP.can_access_cs !== profile.can_access_cs || oldP.can_access_testboard !== profile.can_access_testboard
-        || oldP.role !== profile.role || oldP.perm_edit_content !== profile.perm_edit_content
+      const changed = !oldP || oldP.role !== profile.role || oldP.perm_edit_content !== profile.perm_edit_content
         || oldP.perm_create_quizzes !== profile.perm_create_quizzes || oldP.perm_manage_people !== profile.perm_manage_people;
       if(changed){
         showToast("Your access was updated.");
@@ -4092,6 +4235,19 @@ function setupRealtime(){
       }
     }).subscribe();
   realtimeChannels.push(chMyProfile);
+
+  // Department access lives in its own junction table now, not a column on
+  // profiles — its changes are INSERT/DELETE rows there, not an UPDATE
+  // event on profiles, so this needs its own subscription.
+  const chMyDeptAccess = supabase.channel("rt-my-dept-access-"+session.user.id)
+    .on("postgres_changes", { event:"*", schema:"public", table:"user_department_access", filter:`user_id=eq.${session.user.id}` }, async ()=>{
+      await loadProfile();
+      showToast("Your access was updated.");
+      activeDepartment = null; refActiveDepartment = null; notesActiveDepartment = null; // let it re-pick a sensible default under the new access
+      await loadEverything();
+      render();
+    }).subscribe();
+  realtimeChannels.push(chMyDeptAccess);
 
   const chAnnounce = supabase.channel("rt-announcements-"+session.user.id)
     .on("postgres_changes", { event:"INSERT", schema:"public", table:"messages", filter:"audience=eq.all" }, (payload)=>{
@@ -4143,7 +4299,7 @@ function openFeedbackModal(type, context){
   document.getElementById("fb-send").addEventListener("click", async ()=>{
     const body = getCleanEditorHtml(document.getElementById(editorId)).trim();
     if(!body || body === "<br>") { closeModal(); return; }
-    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"admins", type, body, context, department: currentActiveDepartment() });
+    await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, audience:"admins", type, body, context, department_id: currentActiveDepartment() });
     closeModal();
     alert("Sent to admins — thanks!");
   });
@@ -4766,7 +4922,7 @@ function promptSiteLinkModal(){
     ).join("");
 
     const refPagesByDept = {};
-    REFERENCE_PAGES.forEach(p=>{ (refPagesByDept[p.department] = refPagesByDept[p.department]||[]).push(p); });
+    REFERENCE_PAGES.forEach(p=>{ (refPagesByDept[p.department_id] = refPagesByDept[p.department_id]||[]).push(p); });
     const refOptionsHtml = Object.keys(refPagesByDept).sort().map(dept=>{
       const pages = refPagesByDept[dept].slice().sort((a,b)=>a.sort_order-b.sort_order);
       const tops = pages.filter(p=>!p.parent_id);
@@ -5766,14 +5922,16 @@ function sanitizeTrackerSheetName(name, used){
 // Pulls everything the tracker needs for one or more people in a handful of
 // bulk queries (not one round-trip per person), then shapes it per-person.
 async function fetchTrackerData(personIds, deptFilter){
-  const [profRes, progRes, quizAttRes, standaloneQRes, standaloneAttRes, recipRes, teamMemRes] = await Promise.all([
+  const [profRes, progRes, quizAttRes, standaloneQRes, standaloneAttRes, recipRes, teamMemRes, userDeptRes, quizDeptRes] = await Promise.all([
     supabase.from("profiles").select("*").in("id", personIds),
     supabase.from("progress").select("*").in("user_id", personIds),
     supabase.from("quiz_attempts").select("*").in("user_id", personIds).order("created_at", { ascending:true }),
     supabase.from("standalone_quizzes").select("*").eq("sent", true),
     supabase.from("standalone_quiz_attempts").select("*").in("user_id", personIds),
     supabase.from("standalone_quiz_recipients").select("*"),
-    supabase.from("team_members").select("*")
+    supabase.from("team_members").select("*"),
+    supabase.from("user_department_access").select("user_id,department_id").in("user_id", personIds),
+    supabase.from("quiz_department_access").select("quiz_id,department_id")
   ]);
   const profiles = profRes.data || [];
   const progressRows = progRes.data || [];
@@ -5782,6 +5940,13 @@ async function fetchTrackerData(personIds, deptFilter){
   const standaloneAttempts = standaloneAttRes.data || [];
   const recipients = recipRes.data || [];
   const teamMembers = teamMemRes.data || [];
+
+  const userDeptMap = {};
+  (userDeptRes.data||[]).forEach(r=>{ (userDeptMap[r.user_id] = userDeptMap[r.user_id] || new Set()).add(r.department_id); });
+  profiles.forEach(p=>{ p.departmentIds = userDeptMap[p.id] || new Set(); });
+  const quizDeptMap = {};
+  (quizDeptRes.data||[]).forEach(r=>{ (quizDeptMap[r.quiz_id] = quizDeptMap[r.quiz_id] || new Set()).add(r.department_id); });
+  standaloneQuizzes.forEach(q=>{ q.departmentIds = quizDeptMap[q.id] || new Set(); });
 
   function buildModuleRow(m, pid){
     const pr = progressRows.find(r=>r.user_id===pid && r.module_id===m.id);
@@ -5824,7 +5989,7 @@ async function fetchTrackerData(personIds, deptFilter){
     // module or standalone quiz belonging to a department they don't have
     // shouldn't show up in their tracker at all. If the admin picked a
     // narrower department filter for this report, intersect with that too.
-    let deptIds = DEPARTMENTS.filter(d=> !!profile[d.profileField]).map(d=>d.id);
+    let deptIds = DEPARTMENTS.filter(d=> profile.departmentIds.has(d.id)).map(d=>d.id);
     if(deptFilter) deptIds = deptIds.filter(dId=> deptFilter.includes(dId));
     const accessibleModules = MODULES.filter(m=> deptIds.some(dId=> teamHasDeptAccess(m, dId)));
     const accessibleModuleIds = new Set(accessibleModules.map(m=>m.id));
@@ -6144,7 +6309,7 @@ async function openPullProgressReportModal(){
       const wb = await buildTrackerWorkbook(personIds, deptFilter);
       const safeScope = (scopeLabel||"Report").replace(/[^a-z0-9]+/gi,"_").slice(0,60);
       const allDepts = deptFilter.length === DEPARTMENTS.length;
-      const deptTag = allDepts ? "" : `_${deptFilter.join("-")}`;
+      const deptTag = allDepts ? "" : `_${deptFilter.map(id=>deptLabel(id).replace(/[^a-z0-9]+/gi,"")).join("-")}`;
       const stamp = new Date().toISOString().slice(0,10);
       await triggerXlsxDownload(wb, `Progress_Report_${safeScope}${deptTag}_${stamp}.xlsx`);
       closeModal();
@@ -6596,7 +6761,7 @@ async function navigateToSiteLink(linkEl){
     await loadReference(); // may not have been fetched yet this session, since it's normally only loaded on opening the Reference Guide
     const page = REFERENCE_PAGES.find(p=>p.id===refId);
     if(!page){ alert("That reference page isn't available — it may have been removed or moved."); return; }
-    refActiveDepartment = page.department;
+    refActiveDepartment = page.department_id;
     currentRefId = refId;
     refEditing = false;
     view = "reference";
@@ -7080,7 +7245,9 @@ async function openEditor(id, openToLessonIdx, openToQuestionIdx){
   if(id){
     editingExistingId = id;
     await ensureQuizSimScreens(modById(id));
-    draftModule = JSON.parse(JSON.stringify(modById(id)));
+    const srcMod = modById(id);
+    draftModule = JSON.parse(JSON.stringify(srcMod));
+    draftModule.departmentIds = new Set(srcMod.departmentIds); // Sets don't survive JSON clone — rebuild explicitly
     expandedLessonIdx = (typeof openToLessonIdx === "number" && draftModule.lessons[openToLessonIdx]) ? openToLessonIdx : null;
     expandedQuestionIdx = (typeof openToQuestionIdx === "number" && draftModule.quiz[openToQuestionIdx]) ? openToQuestionIdx : null;
     view = "editor"; render();
@@ -7089,13 +7256,17 @@ async function openEditor(id, openToLessonIdx, openToQuestionIdx){
   const title = await promptModal("New module", "Module title");
   if(!title) return;
   const newId = slugify(title.trim()) || ("module-" + Date.now());
-  const activeDept = DEPARTMENTS.find(x=>x.id===currentActiveDepartment());
-  const { error } = await supabase.from("modules").insert({ id:newId, title:title.trim(), short:"", led_color:"green", [activeDept.teamDbField]:true, sort_order: MODULES.length+1 });
+  const activeDeptId = currentActiveDepartment();
+  const { error } = await supabase.from("modules").insert({ id:newId, title:title.trim(), short:"", led_color:"green", sort_order: MODULES.length+1 });
   if(error){ alert("Couldn't create module: " + error.message); return; }
+  const { error: deptErr } = await supabase.rpc("set_module_departments", { p_module_id: newId, p_department_ids: [activeDeptId] });
+  if(deptErr){ alert("Module created, but couldn't set its department: " + deptErr.message); }
   logEdit("created", "module", title.trim(), null, currentActiveDepartment());
   await loadEverything();
   editingExistingId = newId;
-  draftModule = JSON.parse(JSON.stringify(modById(newId)));
+  const freshMod = modById(newId);
+  draftModule = JSON.parse(JSON.stringify(freshMod));
+  draftModule.departmentIds = new Set(freshMod.departmentIds);
   expandedLessonIdx = null; expandedQuestionIdx = null;
   view = "editor"; render();
 }
@@ -7159,7 +7330,7 @@ function renderEditor(){
       <div class="field"><label>Module title</label><input type="text" id="mod-title" value="${escapeHtml(d.title)}"></div>
       <div class="field"><label>Department</label>
         ${myDepartments().length>1 ? `
-        ${DEPARTMENTS.filter(dep=>myDepartments().includes(dep.id)).map(dep=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-mod-dept-check="${dep.id}" ${d[dep.teamField]?'checked':''}> ${escapeHtml(dep.label)}</label>`).join("")}
+        ${DEPARTMENTS.filter(dep=>myDepartments().includes(dep.id)).map(dep=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-mod-dept-check="${dep.id}" ${d.departmentIds.has(dep.id)?'checked':''}> ${escapeHtml(dep.label)}</label>`).join("")}
         ` : `<p style="color:var(--text-dim);font-size:13px;margin:0;">${deptLabel(myDepartments()[0])} — you only have access to one department, so this can't be changed here.</p>`}
       </div>
       <div class="field">
@@ -7194,7 +7365,7 @@ function wireEditorEvents(){
     clearTimeout(modAutosaveTimer);
     window.pendingAutosaveKeys.add("mod:"+editingExistingId);
     modAutosaveTimer = setTimeout(async ()=>{
-      const { error } = await silentSave(()=> supabase.from("modules").update({ title:d.title, short:d.short, access_ts:d.accessTs, access_cs:d.accessCs, access_testboard:d.accessTestboard, is_published:d.isPublished, popup_enabled:d.popupEnabled, popup_title:d.popupTitle, popup_body:d.popupBody }).eq("id", editingExistingId));
+      const { error } = await silentSave(()=> supabase.from("modules").update({ title:d.title, short:d.short, is_published:d.isPublished, popup_enabled:d.popupEnabled, popup_title:d.popupTitle, popup_body:d.popupBody }).eq("id", editingExistingId));
       window.pendingAutosaveKeys.delete("mod:"+editingExistingId);
       const el = document.getElementById("mod-save-status");
       if(el){
@@ -7204,15 +7375,20 @@ function wireEditorEvents(){
     }, 600);
   }
   document.getElementById("mod-title").addEventListener("input", e=>{ d.title=e.target.value; scheduleModAutosave(); });
-  root.querySelectorAll("[data-mod-dept-check]").forEach(el=> el.addEventListener("change", (e)=>{
-    const dep = DEPARTMENTS.find(x=>x.id===el.getAttribute("data-mod-dept-check"));
-    if(!dep) return;
-    if(!e.target.checked && [d.accessTs, d.accessCs, d.accessTestboard].filter(Boolean).length<=1){
-      e.target.checked = true; // block leaving zero departments checked, rather than letting a save fail against the database's own at-least-one constraint
+  root.querySelectorAll("[data-mod-dept-check]").forEach(el=> el.addEventListener("change", async (e)=>{
+    const depId = el.getAttribute("data-mod-dept-check");
+    if(!e.target.checked && d.departmentIds.size<=1){
+      e.target.checked = true; // block leaving zero departments checked, rather than letting the save fail against the database's own at-least-one constraint
       alert("A module needs at least one department checked.");
       return;
     }
-    d[dep.teamField] = e.target.checked;
+    const newSet = new Set(d.departmentIds);
+    if(e.target.checked) newSet.add(depId); else newSet.delete(depId);
+    e.target.disabled = true;
+    const { error } = await supabase.rpc("set_module_departments", { p_module_id: editingExistingId, p_department_ids: Array.from(newSet) });
+    e.target.disabled = false;
+    if(error){ alert("Couldn't save: " + error.message); e.target.checked = !e.target.checked; return; }
+    d.departmentIds = newSet;
     scheduleModAutosave();
   }));
   document.getElementById("mod-short").addEventListener("input", e=>{ d.short=e.target.value; scheduleModAutosave(); });
@@ -7698,7 +7874,7 @@ let dragRefId = null;
 let refActiveDepartment = null;
 function currentActiveRefDepartment(){
   const mine = myDepartments();
-  if(mine.length===0) return 'TS';
+  if(mine.length===0) return null;
   if(refActiveDepartment && mine.includes(refActiveDepartment)) return refActiveDepartment;
   refActiveDepartment = mine[0];
   return refActiveDepartment;
@@ -7712,13 +7888,13 @@ async function loadReference(){
 async function openReference(){
   await loadReference();
   refEditing = false;
-  if(!currentRefId || !REFERENCE_PAGES.find(p=>p.id===currentRefId && p.department===currentActiveRefDepartment())){
+  if(!currentRefId || !REFERENCE_PAGES.find(p=>p.id===currentRefId && p.department_id===currentActiveRefDepartment())){
     const top = topLevelPages()[0];
     currentRefId = top ? top.id : null;
   }
   view = "reference"; render();
 }
-function topLevelPages(){ return REFERENCE_PAGES.filter(p=>!p.parent_id && p.department===currentActiveRefDepartment()).sort((a,b)=>a.sort_order-b.sort_order); }
+function topLevelPages(){ return REFERENCE_PAGES.filter(p=>!p.parent_id && p.department_id===currentActiveRefDepartment()).sort((a,b)=>a.sort_order-b.sort_order); }
 function childPages(parentId){ return REFERENCE_PAGES.filter(p=>p.parent_id===parentId).sort((a,b)=>a.sort_order-b.sort_order); }
 
 function renderReference(){
@@ -7874,8 +8050,8 @@ function renderReference(){
 
   const addPageBtn = document.getElementById("add-ref-page");
   if(addPageBtn) addPageBtn.addEventListener("click", async ()=>{
-    const { data, error } = await supabase.from("reference_pages").insert({ title:"New page", body:"<p>Write here.</p>", parent_id:null, department: currentActiveRefDepartment(), sort_order: tops.length }).select().single();
-    if(!error){ logEdit("created", "reference_page", data.title, null, data.department); await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
+    const { data, error } = await supabase.from("reference_pages").insert({ title:"New page", body:"<p>Write here.</p>", parent_id:null, department_id: currentActiveRefDepartment(), sort_order: tops.length }).select().single();
+    if(!error){ logEdit("created", "reference_page", data.title, null, data.department_id); await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render(); }
   });
   root.querySelectorAll("[data-ref-addsub]").forEach(el=> el.addEventListener("click", async (e)=>{
     e.stopPropagation();
@@ -7890,13 +8066,13 @@ function renderReference(){
     const isFirstSub = kids.length===0;
     const newTitle = isFirstSub ? "Overview" : "New subsection";
     const newBody = isFirstSub && parentPage ? parentPage.body : "<p>Write here.</p>";
-    const { data, error } = await supabase.from("reference_pages").insert({ title:newTitle, body:newBody, parent_id:parentId, department: parentPage ? parentPage.department : currentActiveRefDepartment(), sort_order: kids.length }).select().single();
+    const { data, error } = await supabase.from("reference_pages").insert({ title:newTitle, body:newBody, parent_id:parentId, department_id: parentPage ? parentPage.department_id : currentActiveRefDepartment(), sort_order: kids.length }).select().single();
     if(!error){
       if(isFirstSub && parentPage){
         await supabase.from("reference_pages").update({ body:"" }).eq("id", parentId);
         parentPage.body = "";
       }
-      logEdit("created", "reference_page", data.title, null, data.department);
+      logEdit("created", "reference_page", data.title, null, data.department_id);
       await loadReference(); currentRefId = data.id; refDraft = { title:data.title, body:data.body }; refEditing = true; render();
     }
   }));
@@ -7907,7 +8083,7 @@ function renderReference(){
     const hasKids = childPages(id).length>0;
     if(confirm(`Delete "${target.title}"?${hasKids?' This will also delete its subsections.':''}`)){
       await supabase.from("reference_pages").delete().eq("id", id);
-      logEdit("deleted", "reference_page", target.title, null, target.department);
+      logEdit("deleted", "reference_page", target.title, null, target.department_id);
       if(currentRefId===id) currentRefId = null;
       await loadReference(); render();
     }
@@ -7951,14 +8127,14 @@ function renderReference(){
     const titleEl = document.getElementById("ref-title");
     const bodyEl = document.getElementById("ref-body-rte");
     if(titleEl && bodyEl) await flushRefSave(page.id, titleEl, bodyEl);
-    logEdit("updated", "reference_page", page.title, null, page.department);
+    logEdit("updated", "reference_page", page.title, null, page.department_id);
     refEditing=false; render();
   });
   const deleteBtn = document.getElementById("ref-delete");
   if(deleteBtn) deleteBtn.addEventListener("click", async ()=>{
     if(confirm(`Delete "${page.title}"? This can't be undone.`)){
       await supabase.from("reference_pages").delete().eq("id", page.id);
-      logEdit("deleted", "reference_page", page.title, null, page.department);
+      logEdit("deleted", "reference_page", page.title, null, page.department_id);
       refEditing = false; currentRefId = null; await loadReference(); render();
     }
   });
@@ -8043,7 +8219,7 @@ let noteSaveTimer = null;
 let notesActiveDepartment = null;
 function currentActiveNotesDepartment(){
   const mine = myDepartments();
-  if(mine.length===0) return 'TS';
+  if(mine.length===0) return null;
   if(notesActiveDepartment && mine.includes(notesActiveDepartment)) return notesActiveDepartment;
   notesActiveDepartment = mine[0];
   return notesActiveDepartment;
@@ -8056,13 +8232,13 @@ async function loadPersonalNotes(){
 }
 async function openNotes(){
   await loadPersonalNotes();
-  if(!currentNoteId || !PERSONAL_NOTES.find(n=>n.id===currentNoteId && n.department===currentActiveNotesDepartment())){
+  if(!currentNoteId || !PERSONAL_NOTES.find(n=>n.id===currentNoteId && n.department_id===currentActiveNotesDepartment())){
     const top = topLevelNotes()[0];
     currentNoteId = top ? top.id : null;
   }
   view = "notes"; render();
 }
-function topLevelNotes(){ return PERSONAL_NOTES.filter(n=>!n.parent_id && n.department===currentActiveNotesDepartment()).sort((a,b)=>a.sort_order-b.sort_order); }
+function topLevelNotes(){ return PERSONAL_NOTES.filter(n=>!n.parent_id && n.department_id===currentActiveNotesDepartment()).sort((a,b)=>a.sort_order-b.sort_order); }
 function childNotes(parentId){ return PERSONAL_NOTES.filter(n=>n.parent_id===parentId).sort((a,b)=>a.sort_order-b.sort_order); }
 
 function renderNotes(){
@@ -8161,7 +8337,7 @@ function renderNotes(){
 
   const addBtn = document.getElementById("add-note");
   if(addBtn) addBtn.addEventListener("click", async ()=>{
-    const { data, error } = await supabase.from("personal_notes").insert({ user_id: session.user.id, title:"New note", body:"<p>Write here.</p>", parent_id:null, department: currentActiveNotesDepartment(), sort_order: tops.length }).select().single();
+    const { data, error } = await supabase.from("personal_notes").insert({ user_id: session.user.id, title:"New note", body:"<p>Write here.</p>", parent_id:null, department_id: currentActiveNotesDepartment(), sort_order: tops.length }).select().single();
     if(!error){ await loadPersonalNotes(); currentNoteId = data.id; render(); }
   });
   root.querySelectorAll("[data-note-addsub]").forEach(el=> el.addEventListener("click", async (e)=>{
@@ -8170,7 +8346,7 @@ function renderNotes(){
     const kids = childNotes(parentId);
     const parentNote = PERSONAL_NOTES.find(n=>n.id===parentId);
     notesCollapsed.delete(parentId);
-    const { data, error } = await supabase.from("personal_notes").insert({ user_id: session.user.id, title:"New subsection", body:"<p>Write here.</p>", parent_id:parentId, department: parentNote ? parentNote.department : currentActiveNotesDepartment(), sort_order: kids.length }).select().single();
+    const { data, error } = await supabase.from("personal_notes").insert({ user_id: session.user.id, title:"New subsection", body:"<p>Write here.</p>", parent_id:parentId, department_id: parentNote ? parentNote.department_id : currentActiveNotesDepartment(), sort_order: kids.length }).select().single();
     if(!error){ await loadPersonalNotes(); currentNoteId = data.id; render(); }
   }));
   root.querySelectorAll("[data-note-del]").forEach(el=> el.addEventListener("click", async (e)=>{
