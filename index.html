@@ -99,6 +99,7 @@
   footer.foot{ margin-top:60px; text-align:center; font-family:var(--mono); font-size:11px; color:var(--text-faint); }
   .field{ margin-bottom:16px; } .field label{ display:block; font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--text-faint); margin-bottom:6px; }
   .field input[type=text],.field input[type=email],.field input[type=password],.field textarea{ width:100%; background:var(--input-bg); border:1px solid var(--stroke); border-radius:8px; color:var(--text); padding:10px 12px; font-size:13.5px; line-height:1.6; font-family:var(--sans); resize:vertical; }
+  .dept-name-input{ background:var(--input-bg); border:1px solid var(--stroke); border-radius:8px; color:var(--text); padding:10px 12px; font-size:13.5px; font-family:var(--sans); }
   .search-input{ background:var(--input-bg); border:1px solid var(--stroke); border-radius:8px; color:var(--text); padding:9px 12px; font-size:13px; font-family:var(--sans); }
   .search-input:focus{ border-color:var(--cyan); }
   .field textarea{ font-family:var(--mono); font-size:12.5px; min-height:110px; }
@@ -192,6 +193,7 @@
   html.theme-light .opt{ background:var(--input-bg); }
   html.theme-light .sub-card{ background:var(--input-bg); }
   html.theme-light .field input[type=text], html.theme-light .field input[type=email], html.theme-light .field input[type=password], html.theme-light .field textarea{ background:var(--input-bg); }
+  html.theme-light .dept-name-input{ background:var(--input-bg); }
   html.theme-light .search-input{ background:var(--input-bg); }
   html.theme-light .btn{ background:var(--input-bg); }
   html.theme-light .btn.primary{ background:linear-gradient(155deg,#d8f3ea,#c3ecd9); }
@@ -402,7 +404,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r175";
+const BUILD_VERSION = "2026-09-12T00:00Z-r176";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -2345,7 +2347,8 @@ function openDeleteDepartmentConfirmModal(dep){
   openModal(`
     <h3>Delete "${escapeHtml(dep.label)}"?</h3>
     <p class="sub">This permanently deletes every module, team, and standalone quiz that only belongs to this department, along with all of its Reference Guide pages and personal notes. Anything that also belongs to another department just loses this one. This can't be undone.</p>
-    <div class="field"><label>Type "${escapeHtml(dep.label)}" to confirm</label><input type="text" id="dept-delete-confirm-input" autocomplete="off"></div>
+    <p class="sub">Type <strong style="color:var(--text);">${escapeHtml(dep.label)}</strong> to confirm:</p>
+    <div class="field"><input type="text" id="dept-delete-confirm-input" autocomplete="off"></div>
     <div class="modal-error" id="dept-delete-confirm-error" style="display:none;"></div>
     <div class="modal-actions"><button class="btn" id="dept-delete-cancel">Cancel</button><button class="btn danger" id="dept-delete-confirm-btn" disabled>Delete department</button></div>
   `, true);
