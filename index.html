@@ -404,7 +404,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r176";
+const BUILD_VERSION = "2026-09-12T00:00Z-r177";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -717,17 +717,31 @@ async function markLessonViewed(m, lessonId){
   }, { onConflict: "user_id,module_id" });
 }
 let editMode = false;
-function isAdmin(){ return profile && (profile.role === "admin" || profile.role === "supervisor"); }
-function canEditContent(){ return isAdmin() || (profile && profile.perm_edit_content); }
-function canCreateQuizzes(){ return isAdmin() || (profile && profile.perm_create_quizzes); }
-function canManagePeople(){ return isAdmin() || (profile && profile.perm_manage_people); }
-function canCreateAccounts(){ return isAdmin() || (profile && profile.perm_create_accounts); }
+// isAdmin() now means exactly one thing: role === "supervisor". Every gate
+// below is is_admin() OR the matching individual flag, mirroring the RLS
+// side exactly — a Supervisor always passes every one of these regardless
+// of their individual flag values.
+function isAdmin(){ return profile && profile.role === "supervisor"; }
+function canEditContent(){ return isAdmin() || (profile && profile.perm_edit_modules); }
+function canEditReference(){ return isAdmin() || (profile && profile.perm_edit_reference); }
+function canCreateQuizzes(){ return isAdmin() || (profile && profile.perm_edit_quizzes); }
+function canViewRoster(){ return isAdmin() || (profile && profile.perm_view_roster); }
+function canManageTeams(){ return isAdmin() || (profile && profile.perm_manage_teams); }
+function canEditDepartmentAccess(){ return isAdmin() || (profile && profile.perm_edit_department_access); }
+function canEditPermissions(){ return isAdmin() || (profile && profile.perm_edit_permissions); }
+function canEditPersonSettings(){ return isAdmin() || (profile && profile.perm_edit_person_settings); }
+function canCreateAccounts(){ return isAdmin() || (profile && profile.perm_create_users); }
+function canSendAnnouncements(){ return isAdmin() || (profile && profile.perm_send_announcements); }
+function canAdminInbox(){ return isAdmin() || (profile && profile.perm_admin_inbox); }
+function canViewFeedback(){ return isAdmin() || (profile && profile.perm_view_feedback); }
+function canApproveAdminRequests(){ return isAdmin() || (profile && profile.perm_approve_admin_requests); }
+function canPullReports(){ return isAdmin() || (profile && profile.perm_pull_reports); }
+function canViewEditLog(){ return isAdmin() || (profile && profile.perm_view_edit_log); }
+function canFreeMessaging(){ return isAdmin() || (profile && profile.perm_free_messaging); }
+// Whether the People page is worth showing at all — true if any of the
+// permissions that actually do something there are held.
+function canAccessPeoplePage(){ return canViewRoster() || canManageTeams() || canEditPermissions() || canEditPersonSettings() || canCreateAccounts() || canCreateQuizzes(); }
 function canEdit(){ return canEditContent() && editMode; }
-// True for someone with at least one elevated permission who isn't already
-// an admin/supervisor (isAdmin() covers those) — used to give them a
-// discoverable way to reach the tools their permission actually unlocks,
-// instead of those tools being invisible because they're not an admin.
-function hasElevatedPerms(){ return !isAdmin() && (canManagePeople() || canCreateQuizzes() || canCreateAccounts() || canEditContent()); }
 
 /* ============================================================
    DATA LOADING
@@ -1081,25 +1095,20 @@ function renderShell(inner){
         <div class="bell-wrap">
           <button class="gear-btn" id="chat-bubble" title="Conversations">💬${chatBadgeCount()>0?`<span class="notif-dot"></span>`:''}</button>
         </div>
-        ${isAdmin() ? `
-          <div class="admin-menu">
-            <span class="admin-badge">ADMIN ▾</span>
-            <div class="admin-menu-panel">
-              <button id="go-team-btn">👥 People</button>
-              <button id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>
-              <button id="open-announce">📣 Make Announcement</button>
-              <button id="open-edit-log">📋 Edit Log</button>
-              <button id="open-view-feedback">🗣 View Feedback</button>
-              <button id="open-master-tracker">📑 Pull Progress Report</button>
-            </div>
-          </div>` : hasElevatedPerms() ? `
-          <div class="admin-menu">
-            <span class="pill-btn" style="cursor:pointer;">${escapeHtml(profile ? profile.name : "")} ▾</span>
-            <div class="admin-menu-panel">
-              ${(canManagePeople() || canCreateQuizzes() || canCreateAccounts()) ? `<button id="go-team-btn">👥 People</button>` : ""}
-              ${canEditContent() ? `<button id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>` : ""}
-            </div>
-          </div>` : `<span class="pill-btn" style="cursor:default;">${escapeHtml(profile ? profile.name : "")}</span>`}
+        ${(function(){
+          const items = [];
+          if(canAccessPeoplePage()) items.push(`<button id="go-team-btn">👥 People</button>`);
+          if(canEditContent()) items.push(`<button id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>`);
+          if(canSendAnnouncements()) items.push(`<button id="open-announce">📣 Make Announcement</button>`);
+          if(canViewEditLog()) items.push(`<button id="open-edit-log">📋 Edit Log</button>`);
+          if(canViewFeedback()) items.push(`<button id="open-view-feedback">🗣 View Feedback</button>`);
+          if(canPullReports()) items.push(`<button id="open-master-tracker">📑 Pull Progress Report</button>`);
+          if(!items.length) return `<span class="pill-btn" style="cursor:default;">${escapeHtml(profile ? profile.name : "")}</span>`;
+          return `<div class="admin-menu">
+            <span class="${isAdmin() ? 'admin-badge' : 'pill-btn'}" style="cursor:pointer;">${isAdmin() ? 'ADMIN ▾' : escapeHtml(profile ? profile.name : "") + ' ▾'}</span>
+            <div class="admin-menu-panel">${items.join("")}</div>
+          </div>`;
+        })()}
         <button class="pill-btn" id="logout-btn">Log out</button>
       </div>
     </header>
@@ -1772,27 +1781,57 @@ let attemptDetailActiveIdx = 0; // which attempt tab (0 = newest) is currently s
 let TEAMS_LIST = [];
 let teamRosterFilter = "";
 let includeSupervisorsInProgress = false; // supervisors are hidden by default from Module/Quiz Progress rosters — this toggle brings them back in
-let pendingRoleChanges = {}; // userId -> { role, perms:{editContent,createQuizzes,managePeople} }, staged until explicitly saved
-let permissionsPanelOpen = new Set(); // userIds with the Permissions checklist expanded
+let permissionsPanelOpen = new Set(); // userIds with the Department Access checklist expanded
+
+// Single source of truth for the 16 permissions: JS draft-object key, DB
+// column, and the label shown in the Permissions popup. Everything that
+// reads/writes/renders permissions loops over this instead of naming each
+// one individually, so adding a 17th permission later only means adding
+// one entry here plus whatever RLS it needs.
+const PERM_FIELDS = [
+  { key:"editModules", col:"perm_edit_modules", label:"Create, edit and delete lessons and modules" },
+  { key:"editReference", col:"perm_edit_reference", label:"Create, edit and delete reference guides" },
+  { key:"editQuizzes", col:"perm_edit_quizzes", label:"Create, edit, and delete standalone quizzes (include grading functionality)" },
+  { key:"viewRoster", col:"perm_view_roster", label:"View the people/team roster progress" },
+  { key:"manageTeams", col:"perm_manage_teams", label:"Create, edit, and delete teams" },
+  { key:"editDeptAccess", col:"perm_edit_department_access", label:"Edit people's department access" },
+  { key:"editPermissions", col:"perm_edit_permissions", label:"Edit people's permissions" },
+  { key:"editPersonSettings", col:"perm_edit_person_settings", label:"Edit person's settings (name, email, password, delete account)" },
+  { key:"createAccounts", col:"perm_create_users", label:"Create new users" },
+  { key:"sendAnnouncements", col:"perm_send_announcements", label:"Send announcements" },
+  { key:"adminInbox", col:"perm_admin_inbox", label:"View and reply to the admin inbox (comments/flags)" },
+  { key:"viewFeedback", col:"perm_view_feedback", label:"View feedback" },
+  { key:"approveAdminRequests", col:"perm_approve_admin_requests", label:"Request admin permission confirmation and denial" },
+  { key:"pullReports", col:"perm_pull_reports", label:"Pull progress reports" },
+  { key:"viewEditLog", col:"perm_view_edit_log", label:"View edit log" },
+  { key:"freeMessaging", col:"perm_free_messaging", label:"Free messaging" }
+];
 
 const ROLE_PRESETS = {
-  admin:  { editContent:true,  createQuizzes:true,  managePeople:true,  createAccounts:true },
-  supervisor: { editContent:true, createQuizzes:true, managePeople:true, createAccounts:true },
-  editor: { editContent:true,  createQuizzes:false, managePeople:false, createAccounts:false },
-  agent:  { editContent:false, createQuizzes:false, managePeople:false, createAccounts:false }
+  supervisor: Object.fromEntries(PERM_FIELDS.map(f=>[f.key, true])),
+  trainer: {
+    editModules:true, editReference:true, editQuizzes:true, viewRoster:true, manageTeams:true,
+    editDeptAccess:false, editPermissions:false, editPersonSettings:true, createAccounts:true,
+    sendAnnouncements:false, adminInbox:true, viewFeedback:true, approveAdminRequests:false,
+    pullReports:true, viewEditLog:true, freeMessaging:false
+  },
+  editor: Object.fromEntries(PERM_FIELDS.map(f=>[f.key, f.key==="editModules"||f.key==="editReference"])),
+  agent: Object.fromEntries(PERM_FIELDS.map(f=>[f.key, false]))
 };
+function permsFromRow(row){
+  const perms = {};
+  PERM_FIELDS.forEach(f=> perms[f.key] = !!row[f.key]);
+  return perms;
+}
 function computeDisplayRole(perms, actualRole){
-  // admin and supervisor share an identical permission preset (both get
-  // full access everywhere) — permissions alone can't tell them apart, so
-  // check the actual stored role first for exactly these two before
-  // falling back to matching by permission combination for everything else.
-  if(actualRole === "admin" || actualRole === "supervisor"){
-    const preset = ROLE_PRESETS[actualRole];
-    if(preset.editContent===perms.editContent && preset.createQuizzes===perms.createQuizzes && preset.managePeople===perms.managePeople && preset.createAccounts===perms.createAccounts) return actualRole;
-  }
-  for(const roleName of ["admin","editor","agent"]){
+  // A true Supervisor always displays as Supervisor regardless of flag
+  // values — role is the source of truth there, same as the is_admin()
+  // bypass on the backend. Everything else is matched purely by comparing
+  // the 16 flags against each preset in turn.
+  if(actualRole === "supervisor") return "supervisor";
+  for(const roleName of ["trainer","editor","agent"]){
     const preset = ROLE_PRESETS[roleName];
-    if(preset.editContent===perms.editContent && preset.createQuizzes===perms.createQuizzes && preset.managePeople===perms.managePeople && preset.createAccounts===perms.createAccounts) return roleName;
+    if(PERM_FIELDS.every(f=> preset[f.key]===perms[f.key])) return roleName;
   }
   return "custom";
 }
@@ -1873,9 +1912,10 @@ async function openTeamProgress(){
     const overall = values.length ? Math.round(values.reduce((a,b)=>a+b,0)/values.length) : 0;
     const mastered = values.filter(v=>v===100).length;
     const teamIds = (memberships||[]).filter(m=>m.user_id===p.id).map(m=>m.team_id);
-    return { id:p.id, name:p.name, role:p.role, perModule, perModuleRaw, overall, mastered, teamIds,
-      permEditContent: !!p.perm_edit_content, permCreateQuizzes: !!p.perm_create_quizzes, permManagePeople: !!p.perm_manage_people, permCreateAccounts: !!p.perm_create_accounts,
+    const row = { id:p.id, name:p.name, role:p.role, perModule, perModuleRaw, overall, mastered, teamIds,
       departmentIds: userDeptMap[p.id] || new Set() };
+    PERM_FIELDS.forEach(f=> row[f.key] = !!p[f.col]);
+    return row;
   });
   view = "team"; render();
 }
@@ -1909,7 +1949,7 @@ function openAddNewUserModal(){
       <select id="newuser-role">
         <option value="agent">User</option>
         <option value="editor">Editor</option>
-        <option value="admin">Admin</option>
+        <option value="trainer">Trainer</option>
         <option value="supervisor">Supervisor</option>
       </select>
     </div>
@@ -2151,7 +2191,7 @@ function openTeamManageModal(teamId){
   function memberListHtml(includeMap){
     return teamRows.filter(r=> DEPARTMENTS.some(d=> includeMap[d.id] && canAccessDeptForRow(r, d.id))).map(r=>`
       <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);">
-        <input type="checkbox" value="${r.id}" class="team-member-check" ${memberIds.has(r.id)?'checked':''}> ${escapeHtml(r.name)}${r.role==='admin'?' <span class="role-tag admin">ADMIN</span>':r.role==='supervisor'?' <span class="role-tag supervisor">SUPERVISOR</span>':''}
+        <input type="checkbox" value="${r.id}" class="team-member-check" ${memberIds.has(r.id)?'checked':''}> ${escapeHtml(r.name)}${r.role==='supervisor'?' <span class="role-tag supervisor">SUPERVISOR</span>':''}
       </label>`).join("") || `<p style="color:var(--text-faint);font-size:12.5px;">Nobody has access to the selected department(s) yet.</p>`;
   }
 
@@ -2402,44 +2442,25 @@ function renderTeam(){
   // ---- People rows ----
   const peopleRows = filteredRows.map(r=>{
     const isSelf = r.id===profile.id;
-    const pending = pendingRoleChanges[r.id];
-    const storedPerms = { editContent:r.permEditContent, createQuizzes:r.permCreateQuizzes, managePeople:r.permManagePeople, createAccounts:r.permCreateAccounts };
-    const currentPerms = pending ? pending.perms : storedPerms;
-    const displayRole = computeDisplayRole(currentPerms, pending ? pending.role : r.role);
+    const displayRole = computeDisplayRole(permsFromRow(r), r.role);
     const panelOpen = permissionsPanelOpen.has(r.id);
-    const isDirty = !!pending && (pending.role !== r.role || pending.perms.editContent !== r.permEditContent || pending.perms.createQuizzes !== r.permCreateQuizzes || pending.perms.managePeople !== r.permManagePeople);
 
     const roleCell = isSelf
       ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-          <span class="role-tag ${r.role==='admin'?'admin':r.role==='supervisor'?'supervisor':''}">${r.role.toUpperCase()} (YOU)</span>
+          <span class="role-tag ${r.role==='supervisor'?'supervisor':''}">${displayRole.toUpperCase()} (YOU)</span>
           <button class="mini-btn" data-perm-toggle="${r.id}">Department access ${panelOpen?'▾':'▸'}</button>
         </div>`
-      : canManagePeople()
-      ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-          <select class="mini-btn" data-role-select="${r.id}">
-            <option value="agent" ${displayRole==='agent'?'selected':''}>User</option>
-            <option value="editor" ${displayRole==='editor'?'selected':''}>Editor</option>
-            <option value="admin" ${displayRole==='admin'?'selected':''}>Admin</option>
-            <option value="supervisor" ${displayRole==='supervisor'?'selected':''}>Supervisor</option>
-            <option value="custom" ${displayRole==='custom'?'selected':''}>Custom</option>
-          </select>
-          <button class="mini-btn" data-perm-toggle="${r.id}">Permissions ${panelOpen?'▾':'▸'}</button>
-          ${isDirty ? `<button class="mini-btn" data-role-save="${r.id}" style="color:var(--green);border-color:var(--green-dim);">Save</button>` : ""}
-        </div>`
-      : `<span class="role-tag ${r.role==='admin'?'admin':r.role==='supervisor'?'supervisor':''}">${displayRole.toUpperCase()}</span>`;
-    const editPersonBtn = (!isSelf && canManagePeople()) ? `<button class="mini-btn" data-edit-person="${r.id}" data-edit-person-name="${escapeHtml(r.name)}">Edit</button>` : "";
+      : `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span class="role-tag ${r.role==='supervisor'?'supervisor':''}">${displayRole.toUpperCase()}</span>
+          ${canEditPermissions() ? `<button class="mini-btn" data-open-permissions="${r.id}">Permissions</button>` : ""}
+          ${canEditDepartmentAccess() ? `<button class="mini-btn" data-perm-toggle="${r.id}">Department access ${panelOpen?'▾':'▸'}</button>` : ""}
+        </div>`;
+    const editPersonBtn = (!isSelf && canEditPersonSettings()) ? `<button class="mini-btn" data-edit-person="${r.id}" data-edit-person-name="${escapeHtml(r.name)}">Edit</button>` : "";
     const mainRow = `<tr><td>${escapeHtml(r.name)}</td><td>${roleCell}</td><td>${editPersonBtn}</td></tr>`;
     const panelRow = panelOpen ? `
       <tr class="team-row-detail"><td colspan="3">
         <div style="padding:10px 4px 16px;display:flex;flex-direction:column;gap:8px;">
-          ${!isSelf ? `
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:editContent" ${currentPerms.editContent?'checked':''}> Can edit modules, lessons and module quizzes</label>
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:createQuizzes" ${currentPerms.createQuizzes?'checked':''}> Can create quizzes</label>
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:managePeople" ${currentPerms.managePeople?'checked':''}> Can edit users and teams</label>
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-check="${r.id}:createAccounts" ${currentPerms.createAccounts?'checked':''}> Can add new user accounts</label>
-          <div style="border-top:1px solid var(--stroke);margin-top:6px;padding-top:10px;">` : ""}
-            ${DEPARTMENTS.map(d=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-top:4px;"><input type="checkbox" data-dept-check="${r.id}:${d.id}" ${canAccessDeptForRow(r, d.id)?'checked':''}> Can access ${escapeHtml(d.label)}</label>`).join("")}
-          ${!isSelf ? `</div>` : ""}
+          ${DEPARTMENTS.map(d=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-top:4px;"><input type="checkbox" data-dept-check="${r.id}:${d.id}" ${canAccessDeptForRow(r, d.id)?'checked':''}> Can access ${escapeHtml(d.label)}</label>`).join("")}
         </div>
       </td></tr>` : "";
     return mainRow + panelRow;
@@ -2593,13 +2614,13 @@ function renderTeam(){
 
   renderShell(`
     ${teamPageDeptTabsHtml}
-    ${(canManagePeople() || isAdmin()) ? `
+    ${(canManageTeams() || isAdmin()) ? `
     <div style="display:flex;gap:10px;margin-bottom:16px;">
-      ${canManagePeople() ? `<button class="btn" id="manage-teams-btn">Manage Teams</button>` : ""}
+      ${canManageTeams() ? `<button class="btn" id="manage-teams-btn">Manage Teams</button>` : ""}
       ${isAdmin() ? `<button class="btn" id="manage-departments-btn">Manage Departments</button>` : ""}
     </div>` : ""}
 
-    ${(canManagePeople() || canCreateAccounts()) ? `
+    ${(canViewRoster() || canCreateAccounts()) ? `
     <div class="card" style="margin-top:16px;">
       ${sectionHeader('people', 'People', deptRows.length)}
       ${teamsSectionOpen.people ? `
@@ -2608,8 +2629,8 @@ function renderTeam(){
             <input type="text" id="team-search-people" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" class="search-input" style="width:180px;">
             <select id="team-filter-people" style="width:auto;">
               <option value="">All teams</option>
-              <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
               <option value="role:supervisor" ${teamRosterFilter==='role:supervisor'?'selected':''}>Supervisors</option>
+              <option value="role:trainer" ${teamRosterFilter==='role:trainer'?'selected':''}>Trainers</option>
               <option value="role:editor" ${teamRosterFilter==='role:editor'?'selected':''}>Editors</option>
               <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
               ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
@@ -2620,7 +2641,7 @@ function renderTeam(){
         </div>` : ""}
     </div>` : ""}
 
-    ${canManagePeople() ? `
+    ${canViewRoster() ? `
     <div class="card" style="margin-top:16px;">
       ${sectionHeader('modules', 'Module Progress')}
       ${teamsSectionOpen.modules ? `
@@ -2629,8 +2650,8 @@ function renderTeam(){
             <input type="text" id="team-search-modules" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" class="search-input" style="width:180px;">
             <select id="team-filter-modules" style="width:auto;">
               <option value="">All teams</option>
-              <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
               <option value="role:supervisor" ${teamRosterFilter==='role:supervisor'?'selected':''}>Supervisors</option>
+              <option value="role:trainer" ${teamRosterFilter==='role:trainer'?'selected':''}>Trainers</option>
               <option value="role:editor" ${teamRosterFilter==='role:editor'?'selected':''}>Editors</option>
               <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
               ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
@@ -2651,7 +2672,7 @@ function renderTeam(){
         </div>` : ""}
     </div>` : ""}
 
-    ${(canManagePeople() || canCreateQuizzes()) ? `
+    ${(canViewRoster() || canCreateQuizzes()) ? `
     <div class="card" style="margin-top:16px;">
       ${sectionHeader('quizzes', 'Quiz Progress')}
       ${teamsSectionOpen.quizzes ? `
@@ -2660,8 +2681,8 @@ function renderTeam(){
             <input type="text" id="team-search-quizzes" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" class="search-input" style="width:180px;">
             <select id="team-filter-quizzes" style="width:auto;">
               <option value="">All teams</option>
-              <option value="role:admin" ${teamRosterFilter==='role:admin'?'selected':''}>Admins</option>
               <option value="role:supervisor" ${teamRosterFilter==='role:supervisor'?'selected':''}>Supervisors</option>
+              <option value="role:trainer" ${teamRosterFilter==='role:trainer'?'selected':''}>Trainers</option>
               <option value="role:editor" ${teamRosterFilter==='role:editor'?'selected':''}>Editors</option>
               <option value="role:agent" ${teamRosterFilter==='role:agent'?'selected':''}>Users</option>
               ${TEAMS_LIST.map(t=>`<option value="${t.id}" ${teamRosterFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join("")}
@@ -2731,36 +2752,15 @@ function renderTeam(){
     }
   });
 
-  root.querySelectorAll("[data-role-select]").forEach(el=> el.addEventListener("change", (e)=>{
-    const id = el.getAttribute("data-role-select");
-    const row = teamRows.find(r=>r.id===id);
-    const newRole = e.target.value;
-    if(newRole === "custom"){
-      permissionsPanelOpen.add(id);
-      if(!pendingRoleChanges[id]){
-        pendingRoleChanges[id] = { role: row.role, perms: { editContent:row.permEditContent, createQuizzes:row.permCreateQuizzes, managePeople:row.permManagePeople, createAccounts:row.permCreateAccounts } };
-      }
-    } else {
-      pendingRoleChanges[id] = { role: newRole, perms: { ...ROLE_PRESETS[newRole] } };
-    }
-    renderTeam();
+  root.querySelectorAll("[data-open-permissions]").forEach(el=> el.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    openPermissionsModal(el.getAttribute("data-open-permissions"));
   }));
   root.querySelectorAll("[data-perm-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
     e.stopPropagation();
     const id = el.getAttribute("data-perm-toggle");
     if(permissionsPanelOpen.has(id)) permissionsPanelOpen.delete(id); else permissionsPanelOpen.add(id);
     render();
-  }));
-  root.querySelectorAll("[data-perm-check]").forEach(el=> el.addEventListener("change", (e)=>{
-    const [id, key] = el.getAttribute("data-perm-check").split(":");
-    const row = teamRows.find(r=>r.id===id);
-    if(!pendingRoleChanges[id]){
-      pendingRoleChanges[id] = { role: row.role, perms: { editContent:row.permEditContent, createQuizzes:row.permCreateQuizzes, managePeople:row.permManagePeople, createAccounts:row.permCreateAccounts } };
-    }
-    pendingRoleChanges[id].perms[key] = e.target.checked;
-    const newDisplayRole = computeDisplayRole(pendingRoleChanges[id].perms, pendingRoleChanges[id].role);
-    pendingRoleChanges[id].role = newDisplayRole === "custom" ? "agent" : newDisplayRole;
-    renderTeam();
   }));
   root.querySelectorAll("[data-dept-check]").forEach(el=> el.addEventListener("change", async (e)=>{
     const [id, depId] = el.getAttribute("data-dept-check").split(":");
@@ -2778,28 +2778,12 @@ function renderTeam(){
     logEdit("updated", "department_access", `${row?row.name:id} — ${dep.label} ${checked?'granted':'removed'}`);
     showToast("Access updated.");
   }));
-  root.querySelectorAll("[data-role-save]").forEach(el=> el.addEventListener("click", async (e)=>{
-    e.stopPropagation();
-    const id = el.getAttribute("data-role-save");
-    const pending = pendingRoleChanges[id];
-    if(!pending) return;
-    const { error } = await supabase.from("profiles").update({
-      role: pending.role,
-      perm_edit_content: pending.perms.editContent,
-      perm_create_quizzes: pending.perms.createQuizzes,
-      perm_manage_people: pending.perms.managePeople,
-      perm_create_accounts: pending.perms.createAccounts
-    }).eq("id", id);
-    if(error){ alert("Couldn't save: " + error.message); return; }
-    delete pendingRoleChanges[id];
-    await openTeamProgress();
-  }));
   root.querySelectorAll("[data-edit-person]").forEach(el=> el.addEventListener("click", (e)=>{
     e.stopPropagation();
     openEditPersonModal(el.getAttribute("data-edit-person"), el.getAttribute("data-edit-person-name"));
   }));
   root.querySelectorAll("[data-team-toggle]").forEach(el=> el.addEventListener("click", (e)=>{
-    if(e.target.closest("[data-role-select]")||e.target.closest("[data-role-save]")||e.target.closest("[data-edit-person]")) return;
+    if(e.target.closest("[data-open-permissions]")||e.target.closest("[data-edit-person]")) return;
     const id = el.getAttribute("data-team-toggle");
     if(teamExpandedRows.has(id)) teamExpandedRows.delete(id); else teamExpandedRows.add(id);
     render();
@@ -3815,7 +3799,7 @@ function renderEditLog(){
    ============================================================ */
 async function loadAllNotifications(){
   const joinCutoff = (profile && profile.created_at) ? profile.created_at : "1970-01-01T00:00:00Z";
-  const admin = isAdmin();
+  const admin = canAdminInbox();
   // None of these seven depend on each other — only followUps below does
   // (needs rootIds from these). Batched into one round trip instead of
   // running sequentially.
@@ -3880,7 +3864,8 @@ async function loadAllNotifications(){
 }
 
 function notifBadgeCount(){
-  return isAdmin() ? NOTIF_UNCLAIMED.length : 0;
+  if(!canAdminInbox()) return 0;
+  return NOTIF_UNCLAIMED.filter(m=> m.type !== "admin_request" || canApproveAdminRequests()).length;
 }
 function chatBadgeCount(){
   let unread = 0;
@@ -3997,7 +3982,7 @@ function renderNotifications(){
       <div style="font-size:14px;color:var(--text);">${sanitizeHtml(a.body)}</div>
     </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;">No announcements yet.</p>`;
 
-  const unclaimedHtml = NOTIF_UNCLAIMED.map(m=>{
+  const unclaimedHtml = NOTIF_UNCLAIMED.filter(m=> m.type !== "admin_request" || canApproveAdminRequests()).map(m=>{
     if(m.type === "admin_request"){
       return `
         <div class="sub-card">
@@ -4029,7 +4014,7 @@ function renderNotifications(){
       </div>
       ${announceHtml}
     </div>
-    ${isAdmin() ? `
+    ${canAdminInbox() ? `
     <div class="card" style="margin-top:16px;">
       <div class="k-label">ADMIN</div>
       <h2 style="margin-bottom:4px;">Needs a reply</h2>
@@ -4065,8 +4050,8 @@ function renderNotifications(){
     const msgId = el.getAttribute("data-admreq-accept");
     const userId = el.getAttribute("data-admreq-user");
     const name = el.getAttribute("data-admreq-name");
-    if(!confirm(`Make ${name} an admin?`)) return;
-    const { error: roleErr } = await supabase.from("profiles").update({ role:"admin" }).eq("id", userId);
+    if(!confirm(`Make ${name} a Supervisor?`)) return;
+    const { error: roleErr } = await supabase.from("profiles").update({ role:"supervisor" }).eq("id", userId);
     if(roleErr){ alert("Couldn't update their role: " + roleErr.message); return; }
     await supabase.from("messages").insert({ sender_id: session.user.id, sender_name: profile.name, recipient_id: userId, audience:"user", type:"reply", claimed_by: session.user.id, body:`<p>Your admin request was approved by ${escapeHtml(profile.name)}. Log out and back in (or refresh) to see your new access.</p>` });
     await supabase.from("messages").delete().eq("id", msgId);
@@ -4256,8 +4241,7 @@ function setupRealtime(){
       const oldP = profile;
       await loadProfile(); // re-fetch from source of truth rather than trusting the realtime payload directly —
                             // safer against payload-shape surprises and against two rapid updates racing each other
-      const changed = !oldP || oldP.role !== profile.role || oldP.perm_edit_content !== profile.perm_edit_content
-        || oldP.perm_create_quizzes !== profile.perm_create_quizzes || oldP.perm_manage_people !== profile.perm_manage_people;
+      const changed = !oldP || oldP.role !== profile.role || PERM_FIELDS.some(f=> oldP[f.col] !== profile[f.col]);
       if(changed){
         showToast("Your access was updated.");
         activeDepartment = null; refActiveDepartment = null; // let it re-pick a sensible default under the new access
@@ -4346,7 +4330,7 @@ async function openAnnouncementModal(prefillBody){
       <label>Send to</label>
       <select id="ann-scope">
         <option value="all">Everyone</option>
-        <option value="admin">Admins only</option>
+        <option value="admin">Supervisors only</option>
         <option value="agent">Agents only</option>
         <option value="team">A specific team…</option>
         <option value="specific">Specific people…</option>
@@ -4378,7 +4362,7 @@ async function openAnnouncementModal(prefillBody){
         list.dataset.loaded = "1";
         list.innerHTML = (people||[]).length ? (people||[]).map(p=>`
           <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;color:var(--text);">
-            <input type="checkbox" value="${p.id}" class="ann-person-check"> ${escapeHtml(p.name)}${p.role==='admin'?' <span class="role-tag admin">ADMIN</span>':p.role==='supervisor'?' <span class="role-tag supervisor">SUPERVISOR</span>':''}
+            <input type="checkbox" value="${p.id}" class="ann-person-check"> ${escapeHtml(p.name)}${p.role==='supervisor'?' <span class="role-tag supervisor">SUPERVISOR</span>':''}
           </label>`).join("") : `<p style="color:var(--text-faint);font-size:12.5px;">No one else found.</p>`;
       }
     } else {
@@ -4417,25 +4401,25 @@ async function openAnnouncementModal(prefillBody){
 
 async function openNewConversationModal(){
   let people;
-  if(isAdmin()){
+  if(canFreeMessaging()){
     const { data } = await supabase.from("profiles").select("id,name,role").neq("id", session.user.id).order("name");
     people = data || [];
   } else {
-    const { data } = await supabase.from("profiles").select("id,name,role").in("role",["admin","supervisor"]).order("name");
+    const { data } = await supabase.from("profiles").select("id,name,role").eq("role","supervisor").order("name");
     people = data || [];
   }
   if(!people.length){
-    alert(isAdmin() ? "No one else to message yet." : "No admins found to message yet.");
+    alert(canFreeMessaging() ? "No one else to message yet." : "No admins found to message yet.");
     return;
   }
   const editorId = "newconvo-rte";
   openModal(`
     <h3>New conversation</h3>
-    <p class="sub">${isAdmin() ? "Message anyone on the team." : "Send a message to an admin."}</p>
+    <p class="sub">${canFreeMessaging() ? "Message anyone on the team." : "Send a message to an admin."}</p>
     <div class="field">
       <label>To</label>
       <select id="newconvo-person">
-        ${people.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}${p.role==='admin'?' (Admin)':p.role==='supervisor'?' (Supervisor)':''}</option>`).join("")}
+        ${people.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}${p.role==='supervisor'?' (Supervisor)':''}</option>`).join("")}
       </select>
     </div>
     ${richEditorHtml(editorId, "")}
@@ -4473,6 +4457,74 @@ function openCoachingModal(targetUserId, targetName, context){
     closeModal();
     alert(`Sent — you'll find this conversation in Chat.`);
   });
+}
+
+// ------------------------------------------------------------
+// Permissions popup — role preset + all 16 individual permissions
+// for one person, in a modal rather than an inline expand. Per the
+// department/team deletion decisions earlier: "Edit people's
+// permissions" is intentionally unrestricted here — it can grant
+// anyone (including the editor's own account) any permission or
+// role, whether or not the editor currently holds it themselves.
+// ------------------------------------------------------------
+function openPermissionsModal(userId){
+  const row = teamRows.find(r=>r.id===userId);
+  if(!row) return;
+  let draft = { role: row.role, perms: permsFromRow(row) };
+
+  function renderBody(){
+    const displayRole = computeDisplayRole(draft.perms, draft.role);
+    return `
+      <h3>Permissions — ${escapeHtml(row.name)}</h3>
+      <div class="field"><label>Role</label>
+        <select id="perm-role-select">
+          <option value="agent" ${displayRole==='agent'?'selected':''}>User</option>
+          <option value="editor" ${displayRole==='editor'?'selected':''}>Editor</option>
+          <option value="trainer" ${displayRole==='trainer'?'selected':''}>Trainer</option>
+          <option value="supervisor" ${displayRole==='supervisor'?'selected':''}>Supervisor</option>
+          <option value="custom" ${displayRole==='custom'?'selected':''}>Custom</option>
+        </select>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto;border-top:1px solid var(--stroke);padding-top:12px;">
+        ${PERM_FIELDS.map(f=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-field="${f.key}" ${draft.perms[f.key]?'checked':''}> ${escapeHtml(f.label)}</label>`).join("")}
+      </div>
+      <div class="modal-actions"><button class="btn" id="perm-cancel-btn">Cancel</button><button class="btn primary" id="perm-save-btn">Save</button></div>
+    `;
+  }
+
+  function wire(){
+    document.getElementById("perm-role-select").addEventListener("change", (e)=>{
+      const val = e.target.value;
+      if(val !== "custom"){
+        draft.role = val;
+        draft.perms = { ...ROLE_PRESETS[val] };
+      }
+      rerender();
+    });
+    document.querySelectorAll("[data-perm-field]").forEach(el=> el.addEventListener("change", (e)=>{
+      draft.perms[el.getAttribute("data-perm-field")] = e.target.checked;
+      const newDisplayRole = computeDisplayRole(draft.perms, draft.role);
+      draft.role = newDisplayRole === "custom" ? "agent" : newDisplayRole; // "custom" isn't a real role value — falls back to the lowest-privilege one, same as the old 4-flag version did
+      rerender();
+    }));
+    document.getElementById("perm-cancel-btn").addEventListener("click", closeModal);
+    document.getElementById("perm-save-btn").addEventListener("click", async ()=>{
+      const saveBtn = document.getElementById("perm-save-btn");
+      saveBtn.disabled = true; saveBtn.textContent = "Saving…";
+      const updateObj = { role: draft.role };
+      PERM_FIELDS.forEach(f=> updateObj[f.col] = draft.perms[f.key]);
+      const { error } = await supabase.from("profiles").update(updateObj).eq("id", userId);
+      if(error){ alert("Couldn't save: " + error.message); saveBtn.disabled = false; saveBtn.textContent = "Save"; return; }
+      closeModal();
+      await openTeamProgress();
+    });
+  }
+  function rerender(){
+    document.querySelector(".modal").innerHTML = renderBody();
+    wire();
+  }
+  openModal(renderBody(), false, true);
+  wire();
 }
 
 function openEditPersonModal(userId, name){
