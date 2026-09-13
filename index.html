@@ -404,7 +404,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r178";
+const BUILD_VERSION = "2026-09-12T00:00Z-r179";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1830,6 +1830,20 @@ function computeDisplayRole(perms, actualRole){
   // the 16 flags against each preset in turn.
   if(actualRole === "supervisor") return "supervisor";
   for(const roleName of ["trainer","editor","agent"]){
+    const preset = ROLE_PRESETS[roleName];
+    if(PERM_FIELDS.every(f=> preset[f.key]===perms[f.key])) return roleName;
+  }
+  return "custom";
+}
+// Used specifically while actively editing a checkbox in the Permissions
+// popup — unlike computeDisplayRole above, this never trusts the
+// currently-stored role, since that's exactly what's being edited right
+// now. If it did, unchecking one box on a Supervisor's account would
+// always loop back to "supervisor" no matter what was unchecked, because
+// computeDisplayRole's own bypass would keep firing on the still-"supervisor"
+// draft role — checked purely against what the 16 boxes say, every time.
+function roleMatchingPermsOnly(perms){
+  for(const roleName of ["supervisor","trainer","editor","agent"]){
     const preset = ROLE_PRESETS[roleName];
     if(PERM_FIELDS.every(f=> preset[f.key]===perms[f.key])) return roleName;
   }
@@ -4504,8 +4518,8 @@ function openPermissionsModal(userId){
     });
     document.querySelectorAll("[data-perm-field]").forEach(el=> el.addEventListener("change", (e)=>{
       draft.perms[el.getAttribute("data-perm-field")] = e.target.checked;
-      const newDisplayRole = computeDisplayRole(draft.perms, draft.role);
-      draft.role = newDisplayRole === "custom" ? "agent" : newDisplayRole; // "custom" isn't a real role value — falls back to the lowest-privilege one, same as the old 4-flag version did
+      const matched = roleMatchingPermsOnly(draft.perms);
+      draft.role = matched === "custom" ? "agent" : matched; // "custom" isn't a real role value — falls back to the lowest-privilege one, same as the old 4-flag version did
       rerender();
     }));
     document.getElementById("perm-cancel-btn").addEventListener("click", closeModal);
