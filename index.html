@@ -404,7 +404,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r180";
+const BUILD_VERSION = "2026-09-12T00:00Z-r181";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -738,6 +738,7 @@ function canApproveAdminRequests(){ return isAdmin() || (profile && profile.perm
 function canPullReports(){ return isAdmin() || (profile && profile.perm_pull_reports); }
 function canViewEditLog(){ return isAdmin() || (profile && profile.perm_view_edit_log); }
 function canFreeMessaging(){ return isAdmin() || (profile && profile.perm_free_messaging); }
+function canManageDepartments(){ return isAdmin() || (profile && profile.perm_manage_departments); }
 // Whether the People page is worth showing at all — true if any of the
 // permissions that actually do something there are held.
 function canAccessPeoplePage(){ return canViewRoster() || canManageTeams() || canEditPermissions() || canEditPersonSettings() || canCreateAccounts() || canCreateQuizzes(); }
@@ -1804,7 +1805,8 @@ const PERM_FIELDS = [
   { key:"approveAdminRequests", col:"perm_approve_admin_requests", label:"Request admin permission confirmation and denial" },
   { key:"pullReports", col:"perm_pull_reports", label:"Pull progress reports" },
   { key:"viewEditLog", col:"perm_view_edit_log", label:"View edit log" },
-  { key:"freeMessaging", col:"perm_free_messaging", label:"Free messaging" }
+  { key:"freeMessaging", col:"perm_free_messaging", label:"Free messaging" },
+  { key:"manageDepartments", col:"perm_manage_departments", label:"Manage Departments (create, rename, reorder, delete)" }
 ];
 
 const ROLE_PRESETS = {
@@ -1813,7 +1815,7 @@ const ROLE_PRESETS = {
     editModules:true, editReference:true, editQuizzes:true, viewRoster:true, manageTeams:true,
     editDeptAccess:false, editPermissions:false, editPersonSettings:true, createAccounts:true,
     sendAnnouncements:false, adminInbox:true, viewFeedback:true, approveAdminRequests:false,
-    pullReports:true, viewEditLog:true, freeMessaging:false
+    pullReports:true, viewEditLog:true, freeMessaging:false, manageDepartments:false
   },
   editor: Object.fromEntries(PERM_FIELDS.map(f=>[f.key, f.key==="editModules"||f.key==="editReference"])),
   agent: Object.fromEntries(PERM_FIELDS.map(f=>[f.key, false]))
@@ -2629,10 +2631,10 @@ function renderTeam(){
 
   renderShell(`
     ${teamPageDeptTabsHtml}
-    ${(canManageTeams() || isAdmin()) ? `
+    ${(canManageTeams() || canManageDepartments()) ? `
     <div style="display:flex;gap:10px;margin-bottom:16px;">
       ${canManageTeams() ? `<button class="btn" id="manage-teams-btn">Manage Teams</button>` : ""}
-      ${isAdmin() ? `<button class="btn" id="manage-departments-btn">Manage Departments</button>` : ""}
+      ${canManageDepartments() ? `<button class="btn" id="manage-departments-btn">Manage Departments</button>` : ""}
     </div>` : ""}
 
     ${(canViewRoster() || canCreateAccounts()) ? `
