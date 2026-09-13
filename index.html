@@ -404,7 +404,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r179";
+const BUILD_VERSION = "2026-09-12T00:00Z-r180";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -4500,7 +4500,7 @@ function openPermissionsModal(userId){
           <option value="custom" ${displayRole==='custom'?'selected':''}>Custom</option>
         </select>
       </div>
-      <div style="display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto;border-top:1px solid var(--stroke);padding-top:12px;">
+      <div id="perm-checkbox-scroll" style="display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto;border-top:1px solid var(--stroke);padding-top:12px;">
         ${PERM_FIELDS.map(f=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);"><input type="checkbox" data-perm-field="${f.key}" ${draft.perms[f.key]?'checked':''}> ${escapeHtml(f.label)}</label>`).join("")}
       </div>
       <div class="modal-actions"><button class="btn" id="perm-cancel-btn">Cancel</button><button class="btn primary" id="perm-save-btn">Save</button></div>
@@ -4539,8 +4539,12 @@ function openPermissionsModal(userId){
     });
   }
   function rerender(){
+    const scrollEl = document.getElementById("perm-checkbox-scroll");
+    const scrollTop = scrollEl ? scrollEl.scrollTop : 0;
     document.querySelector(".modal").innerHTML = renderBody();
     wire();
+    const newScrollEl = document.getElementById("perm-checkbox-scroll");
+    if(newScrollEl) newScrollEl.scrollTop = scrollTop;
   }
   openModal(renderBody(), false, true);
   wire();
@@ -8628,7 +8632,21 @@ function render(){
   }
 
   supabase.auth.onAuthStateChange((event, newSession)=>{
-    if(event === "SIGNED_OUT"){ session=null; profile=null; view="auth"; render(); }
+    if(event === "SIGNED_OUT"){
+      // Supabase shares the session across every tab of the same origin via
+      // localStorage, so signing out in one tab correctly signs out every
+      // other open tab too — that part is expected. What this tab needs to
+      // do on its own, since it never went through the logout() function
+      // itself, is the same cleanup logout() does: tear down realtime,
+      // close any open overlays, and remove the feedback button — that
+      // last one lives outside the normal render() cycle (appended
+      // directly to document.body), so render() alone never touches it.
+      teardownRealtime();
+      closeAllFullscreenOverlays();
+      session=null; profile=null; MODULES=[]; progressMap={};
+      removeFeedbackButton();
+      view="auth"; authMode="login"; render();
+    }
   });
 })();
 
