@@ -404,7 +404,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r177";
+const BUILD_VERSION = "2026-09-12T00:00Z-r178";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -2448,6 +2448,7 @@ function renderTeam(){
     const roleCell = isSelf
       ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <span class="role-tag ${r.role==='supervisor'?'supervisor':''}">${displayRole.toUpperCase()} (YOU)</span>
+          ${canEditPermissions() ? `<button class="mini-btn" data-open-permissions="${r.id}">Permissions</button>` : ""}
           <button class="mini-btn" data-perm-toggle="${r.id}">Department access ${panelOpen?'▾':'▸'}</button>
         </div>`
       : `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
@@ -4475,7 +4476,7 @@ function openPermissionsModal(userId){
   function renderBody(){
     const displayRole = computeDisplayRole(draft.perms, draft.role);
     return `
-      <h3>Permissions — ${escapeHtml(row.name)}</h3>
+      <h3>Permissions — ${escapeHtml(row.name)}${userId===profile.id ? ' (You)' : ''}</h3>
       <div class="field"><label>Role</label>
         <select id="perm-role-select">
           <option value="agent" ${displayRole==='agent'?'selected':''}>User</option>
@@ -4509,6 +4510,10 @@ function openPermissionsModal(userId){
     }));
     document.getElementById("perm-cancel-btn").addEventListener("click", closeModal);
     document.getElementById("perm-save-btn").addEventListener("click", async ()=>{
+      const isSelf = userId === profile.id;
+      if(isSelf && draft.role !== "supervisor" && !draft.perms.editPermissions){
+        if(!confirm("This removes your own ability to edit permissions — including reopening this screen for yourself. Continue?")) return;
+      }
       const saveBtn = document.getElementById("perm-save-btn");
       saveBtn.disabled = true; saveBtn.textContent = "Saving…";
       const updateObj = { role: draft.role };
