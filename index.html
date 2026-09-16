@@ -404,7 +404,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r181";
+const BUILD_VERSION = "2026-09-12T00:00Z-r182";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -6273,14 +6273,18 @@ function appendPersonTrackerSheets(wb, d, usedNames, includeNameInSheet){
 // top-level navigation to a server response carrying a genuine
 // Content-Disposition header, so this posts the generated file to a small
 // edge function (deliver-xlsx) that just relays the bytes back with that
-// header — see edge-function/deliver-xlsx.ts.
+// header — see edge-function/deliver-xlsx.ts. The apikey is passed as a
+// query param on the form's action URL rather than a header, since a real
+// top-level form POST can't set custom headers — Supabase's gateway
+// requires an apikey on every request regardless of that function's own
+// "Verify JWT" setting, and a query param is the only way to supply one here.
 async function triggerXlsxDownload(wb, filename){
   const wbout = XLSX.write(wb, { bookType:"xlsx", type:"base64", bookSST:true });
   const { data:{ session:activeSession } } = await supabase.auth.getSession();
   if(!activeSession){ alert("Your session has expired — please log in again, then try the download again."); return; }
   const form = document.createElement("form");
   form.method = "POST";
-  form.action = `${SUPABASE_URL}/functions/v1/deliver-xlsx`;
+  form.action = `${SUPABASE_URL}/functions/v1/deliver-xlsx?apikey=${encodeURIComponent(SUPABASE_ANON_KEY)}`;
   form.target = "_self";
   form.style.display = "none";
   const addField = (name, value)=>{
