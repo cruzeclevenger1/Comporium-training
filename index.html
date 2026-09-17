@@ -403,7 +403,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r185";
+const BUILD_VERSION = "2026-09-12T00:00Z-r186";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1110,7 +1110,7 @@ function renderShell(inner){
         ${(function(){
           const items = [];
           if(canAccessPeoplePage()) items.push(`<button id="go-team-btn">👥 People</button>`);
-          if(canEditContent()) items.push(`<button id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>`);
+          if(canEditContent() || canEditReference()) items.push(`<button id="toggle-edit-mode">${editMode ? "✓ Edit mode is ON" : "Enter edit mode"}</button>`);
           if(canSendAnnouncements()) items.push(`<button id="open-announce">📣 Make Announcement</button>`);
           if(canViewEditLog()) items.push(`<button id="open-edit-log">📋 Edit Log</button>`);
           if(canViewFeedback()) items.push(`<button id="open-view-feedback">🗣 View Feedback</button>`);
@@ -7561,8 +7561,13 @@ async function openReference(){
 function topLevelPages(){ return REFERENCE_PAGES.filter(p=>!p.parent_id && p.department_id===currentActiveRefDepartment()).sort((a,b)=>a.sort_order-b.sort_order); }
 function childPages(parentId){ return REFERENCE_PAGES.filter(p=>p.parent_id===parentId).sort((a,b)=>a.sort_order-b.sort_order); }
 
+// Reference Guide editing needs its own permission-and-editMode gate,
+// separate from canEdit() (which checks perm_edit_modules specifically) —
+// otherwise a modules-only editor could edit reference pages too, and a
+// reference-only editor couldn't edit anything, which is exactly backwards.
+function canEditRef(){ return canEditReference() && editMode; }
 function renderReference(){
-  const editOn = canEdit();
+  const editOn = canEditRef();
   const tops = topLevelPages();
 
   function sidebarRow(p, isChild){
