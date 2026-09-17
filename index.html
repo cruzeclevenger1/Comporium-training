@@ -932,7 +932,20 @@ async function submitSetPassword(){
   // the invite-link path, where this runs before afterLogin/loadProfile has
   // ever executed at all, so profile would still be null.
   if(profile && profile.must_change_password){
-    await supabase.from("profiles").update({ must_change_password:false }).eq("id", session.user.id);
+    const { error: clearErr } = await supabase.from("profiles").update({ must_change_password:false }).eq("id", session.user.id);
+    if(clearErr){
+      // This error was previously swallowed entirely — the password change
+      // itself had already succeeded, but if this specific update silently
+      // failed, must_change_password stayed true in the database. The code
+      // used to set it false only in memory and move on, so the very next
+      // loadProfile() (inside afterLogin() below) would re-fetch the real,
+      // still-true value from the database and send the person right back
+      // to this same screen with no explanation — a silent, confusing loop.
+      authError = "Your password was changed, but something went wrong finishing setup: " + clearErr.message + " — try logging in again with your new password.";
+      btn.disabled = false; btn.textContent = "Set password & continue";
+      renderSetPassword();
+      return;
+    }
     profile.must_change_password = false;
   }
   await afterLogin();
