@@ -403,7 +403,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r186";
+const BUILD_VERSION = "2026-09-12T00:00Z-r187";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -739,7 +739,13 @@ function canFreeMessaging(){ return isAdmin() || (profile && profile.perm_free_m
 function canManageDepartments(){ return isAdmin() || (profile && profile.perm_manage_departments); }
 // Whether the People page is worth showing at all — true if any of the
 // permissions that actually do something there are held.
-function canAccessPeoplePage(){ return canViewRoster() || canManageTeams() || canEditPermissions() || canEditPersonSettings() || canCreateAccounts() || canCreateQuizzes(); }
+function canAccessPeoplePage(){ return canViewRoster() || canManageTeams() || canEditPermissions() || canEditPersonSettings() || canCreateAccounts() || canCreateQuizzes() || canEditDepartmentAccess() || canManageDepartments(); }
+// Narrower than canAccessPeoplePage() — specifically "does this person get
+// to see the existing roster of names," as opposed to just reaching the
+// People page at all. createAccounts-only and manageTeams-only shouldn't
+// see who's already there; the permissions below all mean touching an
+// existing person somehow, which requires seeing them first.
+function canSeeRosterTable(){ return canViewRoster() || canEditPermissions() || canEditPersonSettings() || canEditDepartmentAccess(); }
 function canEdit(){ return canEditContent() && editMode; }
 
 /* ============================================================
@@ -2462,14 +2468,8 @@ function renderTeam(){
     const displayRole = computeDisplayRole(permsFromRow(r), r.role);
     const panelOpen = permissionsPanelOpen.has(r.id);
 
-    const roleCell = isSelf
-      ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-          <span class="role-tag ${r.role==='supervisor'?'supervisor':''}">${displayRole.toUpperCase()} (YOU)</span>
-          ${canEditPermissions() ? `<button class="mini-btn" data-open-permissions="${r.id}">Permissions</button>` : ""}
-          <button class="mini-btn" data-perm-toggle="${r.id}">Department access ${panelOpen?'▾':'▸'}</button>
-        </div>`
-      : `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-          <span class="role-tag ${r.role==='supervisor'?'supervisor':''}">${displayRole.toUpperCase()}</span>
+    const roleCell = `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span class="role-tag ${r.role==='supervisor'?'supervisor':''}">${displayRole.toUpperCase()}${isSelf?' (YOU)':''}</span>
           ${canEditPermissions() ? `<button class="mini-btn" data-open-permissions="${r.id}">Permissions</button>` : ""}
           ${canEditDepartmentAccess() ? `<button class="mini-btn" data-perm-toggle="${r.id}">Department access ${panelOpen?'▾':'▸'}</button>` : ""}
         </div>`;
@@ -2638,11 +2638,12 @@ function renderTeam(){
       ${canManageDepartments() ? `<button class="btn" id="manage-departments-btn">Manage Departments</button>` : ""}
     </div>` : ""}
 
-    ${(canViewRoster() || canCreateAccounts()) ? `
+    ${(canSeeRosterTable() || canCreateAccounts()) ? `
     <div class="card" style="margin-top:16px;">
-      ${sectionHeader('people', 'People', deptRows.length)}
+      ${sectionHeader('people', 'People', canSeeRosterTable() ? deptRows.length : undefined)}
       ${teamsSectionOpen.people ? `
         <div style="margin-top:14px;">
+          ${canSeeRosterTable() ? `
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
             <input type="text" id="team-search-people" data-no-enter-submit placeholder="Search by name…" value="${escapeHtml(teamSearchQuery)}" class="search-input" style="width:180px;">
             <select id="team-filter-people" style="width:auto;">
@@ -2656,6 +2657,10 @@ function renderTeam(){
             ${canCreateAccounts() ? `<button class="btn primary" id="add-new-user-btn" style="margin-left:auto;">+ Add New User</button>` : ""}
           </div>
           <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>Role</th><th></th></tr></thead><tbody>${peopleRows || `<tr><td colspan="3" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
+          ` : `
+          <p style="color:var(--text-dim);font-size:13px;margin:0 0 14px;">You can add new accounts, but don't have permission to view the existing roster.</p>
+          <button class="btn primary" id="add-new-user-btn">+ Add New User</button>
+          `}
         </div>` : ""}
     </div>` : ""}
 
