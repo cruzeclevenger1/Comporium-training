@@ -403,7 +403,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r187";
+const BUILD_VERSION = "2026-09-12T00:00Z-r188";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -6762,6 +6762,14 @@ function searchableModules(){
   const mine = myDepartments();
   return MODULES.filter(m=> m.isPublished && mine.some(d=> teamHasDeptAccess(m, d)));
 }
+// Same idea, for Reference Guide pages — a reference-editor actively
+// editing sees every page regardless of department; everyone else only
+// searches pages in a department they actually have access to.
+function searchableReferencePages(){
+  if(canEditReference() && editMode) return REFERENCE_PAGES;
+  const mine = myDepartments();
+  return REFERENCE_PAGES.filter(p=> mine.includes(p.department_id));
+}
 
 let searchDrillModId = null; // null = showing the top-level module list
 let searchDrillKey = null;   // null = showing the lesson/quiz list within searchDrillModId; set = showing instances within that lesson/quiz
@@ -6771,12 +6779,12 @@ let searchDrillKey = null;   // null = showing the lesson/quiz list within searc
 // group rather than a wall of near-duplicate rows.
 function buildSearchGroups(q){
   const groups = [];
-  function addOccurrences(modId, modTitle, label, text, source, lessonIdx, questionIdx){
+  function addOccurrences(modId, modTitle, label, text, source, lessonIdx, questionIdx, type){
     const positions = findAllOccurrences(text, q);
     if(!positions.length) return;
-    const key = `${lessonIdx!==undefined?'L'+lessonIdx:'Q'+questionIdx}`;
+    const key = type==='reference' ? 'REF' : (lessonIdx!==undefined?'L'+lessonIdx:'Q'+questionIdx);
     let group = groups.find(g=>g.modId===modId && g.key===key);
-    if(!group){ group = { key, modId, modTitle, label, lessonIdx, questionIdx, instances: [] }; groups.push(group); }
+    if(!group){ group = { key, modId, modTitle, label, lessonIdx, questionIdx, type: type||'module', instances: [] }; groups.push(group); }
     positions.forEach(pos=> group.instances.push({ source, snippet: snippetAt(text, q, pos) }));
   }
   searchableModules().forEach(m=>{
@@ -6791,6 +6799,14 @@ function buildSearchGroups(q){
       const hay = [qq.q, ...(qq.opts||[]), qq.explain||""].join(" ");
       addOccurrences(m.id, m.title, `Quiz Q${qi+1}`, hay, "quiz", undefined, qi);
     });
+  });
+  // Each reference page is its own single-"lesson" group — pages don't
+  // subdivide the way a module does into lessons/quiz questions, so there's
+  // no natural level-2 grouping for them beyond the page itself.
+  searchableReferencePages().forEach(p=>{
+    if(p.title) addOccurrences(p.id, p.title, "Page content", p.title, "title", undefined, undefined, "reference");
+    const plainBody = stripHtml(p.body||"");
+    if(plainBody) addOccurrences(p.id, p.title, "Page content", plainBody, "body", undefined, undefined, "reference");
   });
   return groups;
 }
@@ -6830,7 +6846,7 @@ function runContentSearch(query){
   // Level 2: lessons/quiz questions with a match, within one module.
   if(searchDrillModId){
     const modGroups = groups.filter(g=> g.modId===searchDrillModId);
-    const modTitle = modGroups[0] ? modGroups[0].modTitle : (modById(searchDrillModId)||{}).title || "";
+    const modTitle = modGroups[0] ? modGroups[0].modTitle : ((modById(searchDrillModId) || REFERENCE_PAGES.find(p=>p.id===searchDrillModId) || {}).title || "");
     resultsEl.innerHTML = `
       <button class="mini-btn" data-search-back-modules style="margin-bottom:10px;">← All modules</button>
       ${modGroups.length ? modGroups.map((g,i)=>{
@@ -6851,16 +6867,16 @@ function runContentSearch(query){
     return;
   }
 
-  // Level 1: modules with any match at all.
+  // Level 1: modules and reference pages with any match at all.
   const byModule = [];
   groups.forEach(g=>{
     let entry = byModule.find(e=> e.modId===g.modId);
-    if(!entry){ entry = { modId:g.modId, modTitle:g.modTitle, count:0 }; byModule.push(entry); }
+    if(!entry){ entry = { modId:g.modId, modTitle:g.modTitle, count:0, type:g.type }; byModule.push(entry); }
     entry.count += g.instances.length;
   });
   resultsEl.innerHTML = byModule.length ? byModule.map((e,i)=>`
     <div class="sub-card" data-search-module="${i}" style="cursor:pointer;margin-bottom:8px;">
-      <div class="sub-card-head"><span class="tag">${escapeHtml(e.modTitle)}</span> <span style="color:var(--text-faint);font-size:12px;">${e.count} match${e.count===1?'':'es'}</span></div>
+      <div class="sub-card-head">${e.type==='reference'?'<span class="tag" style="opacity:.7;">Reference Guide</span> ':''}<span class="tag">${escapeHtml(e.modTitle)}</span> <span style="color:var(--text-faint);font-size:12px;">${e.count} match${e.count===1?'':'es'}</span></div>
     </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;padding:10px 0;">No matches.</p>`;
   resultsEl.querySelectorAll("[data-search-module]").forEach(el=> el.addEventListener("click", (e)=>{
     searchDrillModId = byModule[+e.currentTarget.getAttribute("data-search-module")].modId;
@@ -6873,6 +6889,21 @@ function runContentSearch(query){
 // to and briefly highlighting the exact matched text when it's on a page
 // that can show it directly (a lesson title or body).
 function navigateToSearchResult(g, instance){
+  if(g.type === 'reference'){
+    const p = REFERENCE_PAGES.find(rp=>rp.id===g.modId);
+    if(!p) return;
+    refActiveDepartment = p.department_id;
+    currentRefId = p.id;
+    if(p.parent_id) refExpanded.add(p.parent_id); // so the sidebar tree shows it rather than leaving it collapsed under its parent
+    if(canEditReference() && editMode){
+      refDraft = { title:p.title, body:p.body };
+      refEditing = true;
+    } else {
+      refEditing = false;
+    }
+    view = "reference"; render();
+    return;
+  }
   if(canEditContent() && editMode){
     openEditor(g.modId, g.lessonIdx, g.questionIdx);
     return;
@@ -6890,12 +6921,13 @@ function navigateToSearchResult(g, instance){
 
 const SEARCH_SOURCE_LABEL = { title:"Lesson title", body:"Lesson text", quiz:"Quiz text" };
 
-function openContentSearchModal(){
+async function openContentSearchModal(){
   searchDrillModId = null;
   searchDrillKey = null;
   lastContentSearchQuery = "";
+  await loadReference(); // may not have been fetched yet this session, since it's normally only loaded on opening the Reference Guide
   openModal(`
-    <h3>Search All Modules</h3>
+    <h3>Search Modules & Reference Guide</h3>
     <div class="field"><input type="text" id="content-search-input" placeholder="Search text…"></div>
     <div id="content-search-results" style="max-height:400px;overflow-y:auto;margin-top:10px;"></div>
     <div class="modal-actions"><button class="btn" id="content-search-close">Close</button></div>
