@@ -403,7 +403,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r188";
+const BUILD_VERSION = "2026-09-12T00:00Z-r189";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -828,7 +828,6 @@ async function loadProfile(){
   }
   simWarningDismissed = !!(profile && profile.sim_warning_dismissed);
   dashboardShowCompleted = !!(profile && profile.dashboard_show_completed);
-  showSearchPreview = !(profile && profile.show_search_preview === false);
 }
 
 /* ============================================================
@@ -1227,8 +1226,7 @@ async function reorderModuleDrop(draggedId, targetId, pos){
 }
 
 let dashboardShowCompleted = false; // hidden by default; loaded from profile.dashboard_show_completed at login
-let showSearchPreview = true; // shown by default; loaded from profile.show_search_preview at login
-let lastContentSearchQuery = ""; // lets "back to results" in the instances drill-down re-run the same search
+let lastContentSearchQuery = ""; // lets "back to results" re-run the same search when returning to it
 let pendingSearchHighlight = null; // { query, source } — consumed once by renderLesson() right after navigating to a search result
 let activeDepartment = null; // a department id — only meaningful for people with access to more than one; set on first render
 // Fullscreen overlays (Simulated Navigation player/editor, Interactive
@@ -1480,8 +1478,17 @@ function renderLesson(){
   if(pendingSearchHighlight){
     const hl = pendingSearchHighlight;
     pendingSearchHighlight = null;
-    const targetSelector = hl.source === "title" ? "#lesson-title-content" : "#lesson-body-content";
-    requestAnimationFrame(()=> scrollToAndHighlightText(targetSelector, hl.query));
+    // No longer tracks which specific source had the match (that was only
+    // ever known at the now-removed instance-picking step) — highlight
+    // wherever it actually is, body first since that's the likelier and
+    // more useful scroll target, title as well regardless.
+    requestAnimationFrame(()=>{
+      // Title first, body last — when both have a match, the later call's
+      // scroll position is the one that actually sticks, and body is the
+      // more useful place to land (the title's already visible up top).
+      scrollToAndHighlightText("#lesson-title-content", hl.query);
+      scrollToAndHighlightText("#lesson-body-content", hl.query);
+    });
   }
 }
 
@@ -6725,23 +6732,41 @@ function snippetAt(text, query, idx){
 // Finds the first occurrence of query inside containerSelector, scrolls it
 // into view, and briefly highlights it — the highlight fades out on its
 // own rather than needing to be dismissed.
+// Marks every occurrence of `query` inside containerSelector (not just the
+// first) and scrolls to the first one. Re-walks from scratch after each
+// match found, since wrapping a match in a <mark> splits/mutates the text
+// node it came from — a single TreeWalker pass can't reliably continue
+// past a mutation like that, so restarting fresh (skipping nodes already
+// inside a highlight) is the safe way to find the next one.
 function scrollToAndHighlightText(containerSelector, query){
   const container = document.querySelector(containerSelector);
   if(!container || !query) return;
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   const needle = query.toLowerCase();
-  let node;
-  while((node = walker.nextNode())){
-    const idx = node.nodeValue.toLowerCase().indexOf(needle);
-    if(idx === -1) continue;
-    const range = document.createRange();
-    range.setStart(node, idx);
-    range.setEnd(node, idx + query.length);
-    const mark = document.createElement("mark");
-    mark.className = "search-jump-highlight";
-    try{ range.surroundContents(mark); } catch(e){ return; } // extremely unlikely for a plain text-node slice, but don't break the page if it happens
-    mark.scrollIntoView({ behavior:"smooth", block:"center" });
-    setTimeout(()=>{
+  const marks = [];
+  let found = true;
+  while(found){
+    found = false;
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    let node;
+    while((node = walker.nextNode())){
+      if(node.parentNode && node.parentNode.classList && node.parentNode.classList.contains("search-jump-highlight")) continue;
+      const idx = node.nodeValue.toLowerCase().indexOf(needle);
+      if(idx === -1) continue;
+      const range = document.createRange();
+      range.setStart(node, idx);
+      range.setEnd(node, idx + query.length);
+      const mark = document.createElement("mark");
+      mark.className = "search-jump-highlight";
+      try{ range.surroundContents(mark); } catch(e){ found = false; break; } // extremely unlikely for a plain text-node slice, but don't loop forever if it happens
+      marks.push(mark);
+      found = true;
+      break; // restart the walker fresh since the DOM just changed underneath it
+    }
+  }
+  if(!marks.length) return;
+  marks[0].scrollIntoView({ behavior:"smooth", block:"center" });
+  setTimeout(()=>{
+    marks.forEach(mark=>{
       mark.classList.add("fade-out");
       setTimeout(()=>{
         const parent = mark.parentNode;
@@ -6750,9 +6775,8 @@ function scrollToAndHighlightText(containerSelector, query){
         parent.removeChild(mark);
         parent.normalize();
       }, 700); // matches the CSS transition duration below
-    }, 2000);
-    return;
-  }
+    });
+  }, 2000);
 }
 // Editors actively editing can search everything, including drafts and
 // other departments' content — everyone else only searches what they'd
@@ -6771,8 +6795,7 @@ function searchableReferencePages(){
   return REFERENCE_PAGES.filter(p=> mine.includes(p.department_id));
 }
 
-let searchDrillModId = null; // null = showing the top-level module list
-let searchDrillKey = null;   // null = showing the lesson/quiz list within searchDrillModId; set = showing instances within that lesson/quiz
+let searchDrillModId = null; // null = showing the top-level module list; set = showing the lesson/quiz list within it
 
 // Every occurrence of the query, one entry per module+lesson (or
 // module+quiz-question) so repeated hits in the same spot count as one
@@ -6817,33 +6840,15 @@ function runContentSearch(query){
   const q = query.trim();
   const queryChanged = lastContentSearchQuery !== query;
   lastContentSearchQuery = query;
-  if(queryChanged){ searchDrillModId = null; searchDrillKey = null; } // typing a new query starts back at the top
+  if(queryChanged){ searchDrillModId = null; } // typing a new query starts back at the top
   if(!q){ resultsEl.innerHTML = ""; return; }
 
   const groups = buildSearchGroups(q);
 
-  // Level 3: instances within one specific lesson/quiz question.
-  if(searchDrillModId && searchDrillKey){
-    const g = groups.find(g=> g.modId===searchDrillModId && g.key===searchDrillKey);
-    if(!g){ searchDrillKey = null; runContentSearch(query); return; }
-    resultsEl.innerHTML = `
-      <button class="mini-btn" data-search-back-lessons style="margin-bottom:10px;">← ${escapeHtml(g.modTitle)}</button>
-      <div class="sub-card-head" style="margin-bottom:8px;"><span class="tag">${escapeHtml(g.label)}</span> <span style="color:var(--text-faint);font-size:12px;">${g.instances.length} match${g.instances.length===1?'':'es'}</span></div>
-      ${g.instances.map((inst,i)=>`
-        <div class="sub-card" data-search-instance="${i}" style="cursor:pointer;margin-bottom:8px;">
-          <div class="sub-card-head"><span class="tag">${SEARCH_SOURCE_LABEL[inst.source]||""}</span></div>
-          <div style="font-size:13px;color:var(--text-dim);">${inst.snippet}</div>
-        </div>`).join("")}`;
-    resultsEl.querySelector("[data-search-back-lessons]").addEventListener("click", ()=>{ searchDrillKey = null; runContentSearch(query); });
-    resultsEl.querySelectorAll("[data-search-instance]").forEach(el=> el.addEventListener("click", (e)=>{
-      const inst = g.instances[+e.currentTarget.getAttribute("data-search-instance")];
-      closeModal();
-      navigateToSearchResult(g, inst);
-    }));
-    return;
-  }
-
   // Level 2: lessons/quiz questions with a match, within one module.
+  // Clicking one jumps straight to it now — there's no longer a third
+  // step to pick a specific occurrence; every match in that lesson gets
+  // highlighted at once when you land on it.
   if(searchDrillModId){
     const modGroups = groups.filter(g=> g.modId===searchDrillModId);
     const modTitle = modGroups[0] ? modGroups[0].modTitle : ((modById(searchDrillModId) || REFERENCE_PAGES.find(p=>p.id===searchDrillModId) || {}).title || "");
@@ -6852,26 +6857,27 @@ function runContentSearch(query){
       ${modGroups.length ? modGroups.map((g,i)=>{
         const count = g.instances.length;
         const countBadge = count>1 ? ` <span style="color:var(--text-faint);font-size:12px;">(${count} matches)</span>` : "";
-        const showPreview = showSearchPreview && count===1;
         return `
         <div class="sub-card" data-search-lesson="${i}" style="cursor:pointer;margin-bottom:8px;">
           <div class="sub-card-head"><span class="tag">${escapeHtml(g.label)}</span>${countBadge}</div>
-          ${showPreview ? `<div style="font-size:13px;color:var(--text-dim);margin-top:4px;">${g.instances[0].snippet}</div>` : ""}
         </div>`;
       }).join("") : `<p style="color:var(--text-faint);font-size:13px;padding:10px 0;">No matches in "${escapeHtml(modTitle)}" anymore.</p>`}`;
     resultsEl.querySelector("[data-search-back-modules]").addEventListener("click", ()=>{ searchDrillModId = null; runContentSearch(query); });
     resultsEl.querySelectorAll("[data-search-lesson]").forEach(el=> el.addEventListener("click", (e)=>{
-      searchDrillKey = modGroups[+e.currentTarget.getAttribute("data-search-lesson")].key;
-      runContentSearch(query);
+      const g = modGroups[+e.currentTarget.getAttribute("data-search-lesson")];
+      closeModal();
+      navigateToSearchResult(g);
     }));
     return;
   }
 
-  // Level 1: modules and reference pages with any match at all.
+  // Level 1: modules and reference pages with any match at all. A
+  // reference-page entry navigates straight there on click, since a page
+  // has nothing to choose between the way a module's lessons do.
   const byModule = [];
   groups.forEach(g=>{
     let entry = byModule.find(e=> e.modId===g.modId);
-    if(!entry){ entry = { modId:g.modId, modTitle:g.modTitle, count:0, type:g.type }; byModule.push(entry); }
+    if(!entry){ entry = { modId:g.modId, modTitle:g.modTitle, count:0, type:g.type, group:g }; byModule.push(entry); }
     entry.count += g.instances.length;
   });
   resultsEl.innerHTML = byModule.length ? byModule.map((e,i)=>`
@@ -6879,16 +6885,21 @@ function runContentSearch(query){
       <div class="sub-card-head">${e.type==='reference'?'<span class="tag" style="opacity:.7;">Reference Guide</span> ':''}<span class="tag">${escapeHtml(e.modTitle)}</span> <span style="color:var(--text-faint);font-size:12px;">${e.count} match${e.count===1?'':'es'}</span></div>
     </div>`).join("") : `<p style="color:var(--text-faint);font-size:13px;padding:10px 0;">No matches.</p>`;
   resultsEl.querySelectorAll("[data-search-module]").forEach(el=> el.addEventListener("click", (e)=>{
-    searchDrillModId = byModule[+e.currentTarget.getAttribute("data-search-module")].modId;
+    const entry = byModule[+e.currentTarget.getAttribute("data-search-module")];
+    if(entry.type === 'reference'){
+      closeModal();
+      navigateToSearchResult(entry.group);
+      return;
+    }
+    searchDrillModId = entry.modId;
     runContentSearch(query);
   }));
 }
 
 // Takes someone to the match itself — the editor if they're actively
 // editing content, or the normal lesson/module view otherwise, scrolling
-// to and briefly highlighting the exact matched text when it's on a page
-// that can show it directly (a lesson title or body).
-function navigateToSearchResult(g, instance){
+// to and highlighting every occurrence of the query on that page.
+function navigateToSearchResult(g){
   if(g.type === 'reference'){
     const p = REFERENCE_PAGES.find(rp=>rp.id===g.modId);
     if(!p) return;
@@ -6913,17 +6924,14 @@ function navigateToSearchResult(g, instance){
   currentModId = g.modId;
   currentLessonIdx = (typeof g.lessonIdx === "number") ? g.lessonIdx : resumeLessonIdx(m);
   pendingSearchHighlight = (typeof g.lessonIdx === "number" && lastContentSearchQuery)
-    ? { query: lastContentSearchQuery, source: (instance && instance.source) || "body" }
+    ? { query: lastContentSearchQuery }
     : null;
   view = "lesson"; render();
   if(!pendingSearchHighlight) window.scrollTo(0,0); // quiz matches land on the module page with nothing specific to scroll to yet
 }
 
-const SEARCH_SOURCE_LABEL = { title:"Lesson title", body:"Lesson text", quiz:"Quiz text" };
-
 async function openContentSearchModal(){
   searchDrillModId = null;
-  searchDrillKey = null;
   lastContentSearchQuery = "";
   await loadReference(); // may not have been fetched yet this session, since it's normally only loaded on opening the Reference Guide
   openModal(`
@@ -7433,14 +7441,6 @@ function renderSettings(){
         })()}
       </div>
 
-      <div class="editor-section">
-        <div class="editor-section-head"><h3>Search</h3></div>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13.5px;color:var(--text);">
-          <input type="checkbox" id="set-search-preview" ${showSearchPreview ? "checked" : ""}>
-          Show search preview
-        </label>
-      </div>
-
       ${!isAdmin() ? `
       <div class="editor-section">
         <div class="editor-section-head"><h3>Admin access</h3></div>
@@ -7454,11 +7454,6 @@ function renderSettings(){
   `);
 
   document.getElementById("back-dash-settings").addEventListener("click", ()=>{ view="home"; render(); });
-
-  document.getElementById("set-search-preview").addEventListener("change", async (e)=>{
-    showSearchPreview = e.target.checked;
-    await supabase.from("profiles").update({ show_search_preview: showSearchPreview }).eq("id", session.user.id);
-  });
 
   const reqAdminBtn = document.getElementById("request-admin-btn");
   if(reqAdminBtn) reqAdminBtn.addEventListener("click", async ()=>{
