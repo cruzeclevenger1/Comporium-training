@@ -74,7 +74,7 @@
   .lesson-tab{ font-family:var(--mono); font-size:11.5px; padding:7px 12px; border-radius:8px; border:1px solid var(--stroke); background:var(--panel); color:var(--text-dim); cursor:pointer; }
   .lesson-tab.active{ border-color:var(--cyan); color:var(--cyan); background:var(--cyan-dim); } .lesson-tab.quiz{ margin-left:auto; }
   .card{ background:var(--panel); border:1px solid var(--stroke); border-radius:12px; padding:26px; position:relative; }
-  .ref-content .card{ border:none; }
+  .ref-content .card{ border:none; padding:38px 44px; }
   .card h2{ margin:0 0 4px; font-size:20px; } .card .k-label{ font-family:var(--mono); font-size:11px; color:var(--text-faint); letter-spacing:.1em; text-transform:uppercase; margin-bottom:14px; }
   .card .body{ color:#C7CFE0; }
   .card .body p{ color:#C7CFE0; font-size:14.5px; line-height:1.75; margin:0 0 14px; }
@@ -122,7 +122,7 @@
   .auth-wrap{ max-width:400px; margin:60px auto; }
   .error-msg{ color:var(--red); font-size:12.5px; font-family:var(--mono); margin:-6px 0 12px; }
   .info-msg{ color:var(--cyan); font-size:12.5px; font-family:var(--mono); margin:-6px 0 12px; }
-  @media (max-width:640px){ .hero h1{ font-size:21px; } .card{ padding:18px; } }
+  @media (max-width:640px){ .hero h1{ font-size:21px; } .card{ padding:18px; } .ref-content .card{ padding:18px; } }
   html.theme-light{
     --bg:#F3F5FA; --panel:#FFFFFF; --stroke:#DCE3F0; --text:#1B2233; --text-dim:#5B6478; --text-faint:#8891A3;
     --input-bg:#eef1f8; --body-bg-glow:none;
@@ -403,7 +403,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r189";
+const BUILD_VERSION = "2026-09-12T00:00Z-r190";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
