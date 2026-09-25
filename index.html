@@ -403,7 +403,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r190";
+const BUILD_VERSION = "2026-09-12T00:00Z-r191";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -1768,7 +1768,7 @@ function renderResults(){
   const currentPct = s.total ? Math.round((s.lastScore/s.total)*100) : 0;
   if(quizJustFinished){ quizJustFinished = false; if(currentPct===100) launchConfetti(); }
   const leds = Array.from({length:5}).map((_,i)=>{ const lit = i < Math.round((s.lastScore/s.total)*5); const color = currentPct===100?"on-green":currentPct>=60?"on-amber":"on-red"; return `<span class="led ${lit?color:''}"></span>`; }).join("");
-  const verdict = currentPct===100?"Fully registered. This module is locked in.":currentPct>=60?"Mostly holding — worth a second pass before it's live-call ready.":"Signal's not there yet. Revisit the lessons and retake when ready.";
+  const verdict = currentPct===100?"Fully registered. This module is locked in.":currentPct>=60?"Close to locked in — a little more practice first.":"Signal's not there yet. Revisit the lessons and retake when ready.";
   const attemptsUsed = s.attempts || 0;
   const attemptsExhausted = attemptsUsed >= MAX_QUIZ_ATTEMPTS && !canEditContent();
   const hasMissed = s.lastScore < s.total && !attemptsExhausted;
@@ -2903,6 +2903,7 @@ function renderLessonsViewedHtml(person, m){
   if(!m.lessons.length) return "";
   const raw = person.perModuleRaw[m.id];
   const viewedIds = new Set(raw ? raw.lessonsViewed : []);
+  const accurateCount = viewedLessonCount(raw ? raw.lessonsViewed : [], m); // viewedIds.size can include stale ids from lessons that were since deleted — filtered here the same way every other lesson-viewed count in the app already is
   const rows = m.lessons.map(l=>{
     const seen = viewedIds.has(l.id);
     return `<div style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--stroke);">
@@ -2913,7 +2914,7 @@ function renderLessonsViewedHtml(person, m){
   return `
     <div class="card" style="margin:0 4px 14px;">
       <h3 style="margin-bottom:4px;">Lessons viewed</h3>
-      <p style="color:var(--text-dim);font-size:13px;margin:0 0 10px;">${viewedIds.size}/${m.lessons.length} lessons opened at least once.</p>
+      <p style="color:var(--text-dim);font-size:13px;margin:0 0 10px;">${accurateCount}/${m.lessons.length} lessons opened at least once.</p>
       ${rows}
     </div>`;
 }
@@ -4778,7 +4779,7 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
     if(isFinalScreen){
       overlay.innerHTML = `
         <div style="width:100%;max-width:1300px;margin-bottom:14px;">
-          <h2 style="color:var(--text);font-size:20px;font-weight:700;margin:0 0 12px;">${escapeHtml(q.q)}</h2>
+          <h2 style="color:#E7ECF6;font-size:20px;font-weight:700;margin:0 0 12px;">${escapeHtml(q.q)}</h2>
           <div style="display:flex;justify-content:flex-end;"><button class="btn" id="sim-play-fullscreen-close">✕ Exit fullscreen</button></div>
         </div>
         <div style="position:relative;display:inline-block;max-width:min(94vw,1300px);max-height:76vh;border-radius:12px;box-shadow:0 0 0 3px var(--green), 0 0 34px 6px #2ecc7166;">
@@ -4799,10 +4800,10 @@ function openSimPlayFullscreen(q, quizIdx, handleZoneClick){
     // Bigger and color-escalating (dim → amber → red as strikes approach the
     // limit) rather than small and uniformly faint — the count needs to
     // actually catch the eye during a fast-moving exercise, not blend in.
-    const misclickColor = misclickCount>=2 ? "var(--red)" : misclickCount>=1 ? "var(--amber)" : "var(--text-dim)";
+    const misclickColor = misclickCount>=2 ? "var(--red)" : misclickCount>=1 ? "var(--amber)" : "#8A96AD";
     overlay.innerHTML = `
       <div style="width:100%;max-width:1300px;margin-bottom:14px;">
-        <h2 style="color:var(--text);font-size:20px;font-weight:700;margin:0 0 12px;">${escapeHtml(q.q)}</h2>
+        <h2 style="color:#E7ECF6;font-size:20px;font-weight:700;margin:0 0 12px;">${escapeHtml(q.q)}</h2>
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <span style="color:${misclickColor};font-family:var(--mono);font-size:18px;font-weight:700;">MISCLICKS: ${misclickCount}/3</span>
           <button class="btn" id="sim-play-fullscreen-close">✕ Exit fullscreen</button>
