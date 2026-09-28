@@ -401,7 +401,7 @@
    ============================================================ */
 // Bumped every time this file is delivered — powers the "an update is
 // available" banner, which polls this same file and compares versions.
-const BUILD_VERSION = "2026-09-12T00:00Z-r192";
+const BUILD_VERSION = "2026-09-12T00:00Z-r193";
 
 const SUPABASE_URL = "https://lstevbfkiooknptjdpjg.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Nt7ZCMg7PfeRssw1dGqA9w_xa8EyhiM";
@@ -613,6 +613,16 @@ document.addEventListener("keydown", (e)=>{
 });
 function modById(id){ return MODULES.find(m=>m.id===id); }
 function pct(s){ return s && s.total ? Math.round((s.best/s.total)*100) : 0; }
+// A plain Math.round() on an averaged percentage can round up to 100% even
+// when not everything actually is — e.g. 20 modules at 100 and 1 at 95
+// averages to 99.76, which rounds to 100. Showing "100%" for someone who
+// hasn't truly finished everything is misleading on a compliance tracker,
+// so this caps the display at 99 unless the average is genuinely, exactly
+// 100 (only possible when every value going into it already was).
+function roundProgressPct(avg){
+  const rounded = Math.round(avg);
+  return (rounded===100 && avg!==100) ? 99 : rounded;
+}
 // lessons_viewed accumulates lesson IDs forever and is never pruned — if a
 // module's lessons get deleted/recreated during a content edit, the old IDs
 // stick around in that array even though they no longer correspond to any
@@ -1882,7 +1892,7 @@ async function openTeamProgress(){
       perModuleRaw[m.id] = { best: r ? (r.best_score||0) : 0, total: m.quiz.length, attempts: r ? (r.attempts||0) : 0, lessonsViewed: r && r.lessons_viewed ? r.lessons_viewed : [] };
     });
     const values = Object.values(perModule);
-    const overall = values.length ? Math.round(values.reduce((a,b)=>a+b,0)/values.length) : 0;
+    const overall = values.length ? roundProgressPct(values.reduce((a,b)=>a+b,0)/values.length) : 0;
     const mastered = values.filter(v=>v===100).length;
     const teamIds = (memberships||[]).filter(m=>m.user_id===p.id).map(m=>m.team_id);
     const row = { id:p.id, name:p.name, role:p.role, perModule, perModuleRaw, overall, mastered, teamIds,
@@ -2442,7 +2452,7 @@ function renderTeam(){
   // with zero modules in it.
   function deptOverallFor(r){
     const values = publishedModulesForRoster.map(m=> r.perModule[m.id]).filter(v=> v!==undefined);
-    return values.length ? Math.round(values.reduce((a,b)=>a+b,0)/values.length) : 0;
+    return values.length ? roundProgressPct(values.reduce((a,b)=>a+b,0)/values.length) : 0;
   }
   function deptMasteredFor(r){
     return publishedModulesForRoster.filter(m=> r.perModule[m.id]===100).length;
