@@ -1283,7 +1283,7 @@ function renderDashboard(){
     <section class="hero">
       <h1>${T('dashboard.h1','Comporium Training Modules')}</h1>
       <div class="panel-row"><div class="stat"><div class="num">${modsMastered}/${publishedDeptModules.length}</div><div class="lbl">MODULES MASTERED</div></div>
-      <div class="stat"><div class="num">${doneQ}/${totalQ}</div><div class="lbl">BEST-SCORE QUESTIONS CORRECT</div></div></div>
+      <div class="stat"><div class="num">${doneQ}/${totalQ}</div><div class="lbl">TOTAL QUIZ QUESTIONS CORRECT</div></div></div>
     </section>
     ${deptTabsHtml}
     <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
@@ -2177,7 +2177,7 @@ function openTeamManageModal(teamId){
   }
 
   const deptFieldHtml = team
-    ? `<div class="field"><label>Department access</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${DEPARTMENTS.filter(d=>team.departmentIds.has(d.id)).map(d=>d.label).join(' + ')} — set when the team was created, can't be changed after.</p></div>`
+    ? `<div class="field"><label>Department access</label><p style="color:var(--text-dim);font-size:13px;margin:0;">${DEPARTMENTS.filter(d=>team.departmentIds.has(d.id)).map(d=>d.label).join(' + ')}</p></div>`
     : `<div class="field"><label>Department access</label>
         ${DEPARTMENTS.map(d=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-team-dept-check="${d.id}" ${initial[d.id]?'checked':''}> ${escapeHtml(d.label)}</label>`).join("")}
         <p class="hint">Check one or more — only people with access to a checked department will be selectable below.</p>
