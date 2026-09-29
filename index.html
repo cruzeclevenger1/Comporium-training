@@ -1249,7 +1249,7 @@ function renderDashboard(){
   const editOn = canEdit();
   const dept = currentActiveDepartment();
   const deptModules = MODULES.filter(m=> teamHasDeptAccess(m, dept));
-  const visibleModules = dashboardShowCompleted ? deptModules : deptModules.filter(m=> moduleStatus(m.id)!=="mastered");
+  const visibleModules = dashboardShowCompleted ? deptModules : deptModules.filter(m=> moduleStatus(m.id)!=="lessons mastered");
   const cards = visibleModules.map(m=>{
     const status = moduleStatus(m.id); const s = progressMap[m.id];
     const pillHtml = status==="mastered" ? `<span class="status-pill done">Mastered</span>`
