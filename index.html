@@ -1938,7 +1938,6 @@ function openAddNewUserModal(){
     </div>
     <div class="field"><label>Department access</label>
       ${DEPARTMENTS.map(d=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin-bottom:6px;"><input type="checkbox" data-newuser-dept="${d.id}" ${mine.includes(d.id)?'checked':''}> ${escapeHtml(d.label)}</label>`).join("")}
-      <p class="hint">Check one or more.</p>
     </div>
     <div class="modal-error" id="newuser-error" style="display:none;"></div>
     <div class="modal-actions"><button class="btn" id="newuser-cancel">Cancel</button><button class="btn primary" id="newuser-submit">Create Account</button></div>
