@@ -1249,7 +1249,7 @@ function renderDashboard(){
   const editOn = canEdit();
   const dept = currentActiveDepartment();
   const deptModules = MODULES.filter(m=> teamHasDeptAccess(m, dept));
-  const visibleModules = dashboardShowCompleted ? deptModules : deptModules.filter(m=> moduleStatus(m.id)!=="lessons mastered");
+  const visibleModules = dashboardShowCompleted ? deptModules : deptModules.filter(m=> moduleStatus(m.id)!=="mastered");
   const cards = visibleModules.map(m=>{
     const status = moduleStatus(m.id); const s = progressMap[m.id];
     const pillHtml = status==="mastered" ? `<span class="status-pill done">Mastered</span>`
@@ -2645,7 +2645,7 @@ function renderTeam(){
             <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-dim);white-space:nowrap;"><input type="checkbox" id="include-supervisors-modules" ${includeSupervisorsInProgress?'checked':''}> Include Supervisors</label>
             <button class="mini-btn" id="refresh-module-progress" style="margin-left:auto;">🔄 Refresh</button>
           </div>
-          <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>${focusModule ? escapeHtml(focusModule.title) : "Overall"}</th><th>${focusModule ? "Score" : "Mastered"}</th><th></th></tr></thead><tbody>${moduleRows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
+          <div style="overflow-x:auto;"><table class="team"><thead><tr><th>Name</th><th>${focusModule ? escapeHtml(focusModule.title) : "Overall"}</th><th>${focusModule ? "Score" : "Lessons Mastered"}</th><th></th></tr></thead><tbody>${moduleRows || `<tr><td colspan="4" style="color:var(--text-faint);font-size:13px;padding:16px 4px;">No one matches.</td></tr>`}</tbody></table></div>
         </div>` : ""}
     </div>` : ""}
 
